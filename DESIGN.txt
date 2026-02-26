@@ -1,0 +1,1062 @@
+matey - opinionated dbmate wrapper for repeatable migrations + schema safety
+
+USAGE:
+  matey [global options] <command> [args]
+
+GLOBAL OPTIONS:
+  --target NAME            Select a database target.
+                           Required when multiple targets are configured.
+  --all                    Run command for all configured targets (where supported).
+  --config PATH            Config file (default: ./matey.toml; if absent, also reads pyproject.toml [tool.matey] if present)
+  --dir PATH               Database directory root (defaults to "db" or config value).
+                           Single DB: uses <dir>/migrations and <dir>/schema.sql
+                           Multi DB:  uses <dir>/<target>/migrations and <dir>/<target>/schema.sql
+  --base BRANCH            Base branch for upgrade-path checks.
+                           Default: CI PR target branch if available, else upstream tracking branch, else origin/main.
+
+  --url DBURL              Override the selected target's real database URL for this run.
+                           Allowed only when a single target is selected (single-db mode, or with --target).
+  --test-url DBURL         Override the scratch server URL used for schema workflows.
+                           Allowed only when a single target is selected (single-db mode, or with --target/--all).
+                           If not set, Matey uses test_url_env from config/env; otherwise Docker (Postgres) when available.
+
+  --keep-scratch           Do not delete scratch DB/dataset (prints connection info).
+  --verbose                More logging.
+  --quiet                  Less logging.
+  --help                   Show help.
+  --version                Show version.
+
+CONVENTIONS (enforced):
+  Single DB:
+    migrations: <dir>/migrations
+    schema:     <dir>/schema.sql
+  Multi DB (targets):
+    migrations: <dir>/<target>/migrations
+    schema:     <dir>/<target>/schema.sql
+
+COMMANDS:
+
+  Schema workflows (scratch-based by default):
+    schema validate         CI gate: validate schema.sql and upgrade-path safety
+    schema regen            Regenerate canonical schema.sql after successful validation
+    schema diff             Show schema diffs (scratch), or diff against a real DB with --live
+
+  DB commands (dbmate verbs; Matey resolves target + convention paths):
+    new <name>              Create a new migration file
+    up                      Apply pending migrations
+    migrate                 Apply all migrations
+    rollback [N]            Roll back last migration (or N)
+    down [N]                Alias for rollback
+    status                  Show migration status
+    dump                    Dump schema to stdout
+    load                    Load schema from schema file
+    create                  Create database/dataset (where supported)
+    drop                    Drop database/dataset (where supported)
+    wait                    Wait for database to become available
+    dbmate                  Pass-through escape hatch
+
+  CI helpers:
+    ci init                 Write CI workflow templates
+    ci print                Print CI workflow templates to stdout
+
+  CD helpers:
+    cd init                 Write CD workflow templates
+    cd print                Print CD workflow templates to stdout
+
+  Config helpers:
+    config init             Write matey.toml skeleton
+    config print            Print matey.toml skeleton to stdout
+
+EXAMPLES:
+  # Single DB (zero-config):
+  matey up
+  matey schema validate
+  matey schema regen
+  matey schema diff
+
+  # Multi DB:
+  matey --target core up
+  matey --target analytics schema validate
+  matey --all status
+
+  # Override URLs (only when target selection is unambiguous):
+  matey --target core --url "$CORE_DATABASE_URL" up
+  matey --target core --test-url "$PG_SERVER_URL" schema validate
+
+  # Diff a live DB against expected schema:
+  matey --target core --url "$STAGING_DATABASE_URL" schema diff --live
+
+  # Generate GitHub Actions workflow:
+  matey ci init github
+
+  # Generate GitHub Actions CD workflow:
+  matey cd init github
+
+  # Generate matey.toml skeleton:
+  matey config init --targets core,analytics
+
+matey schema validate --help
+
+USAGE:
+  matey schema validate [options]
+
+DESCRIPTION:
+  Validates that migrations and schema are safe and consistent.
+
+  By default it runs BOTH checks on scratch targets:
+    A) Clean install consistency (empty -> HEAD)
+       - creates an empty scratch DB/dataset
+       - runs migrations to HEAD
+       - dumps schema (clean) and checks it matches the repo's canonical schema.sql
+
+    B) Upgrade-path safety (BASE -> HEAD)
+       - creates a scratch DB/dataset
+       - applies migrations at BASE (merge-base(BASE, HEAD))
+       - applies migrations at HEAD
+       - ensures the upgrade succeeds
+       - dumps schema (upgrade) and compares it to the clean schema (fails and prints diff if different)
+
+OPTIONS:
+  --base BRANCH            Base branch for upgrade-path checks.
+                           Default: CI PR target branch if available, else upstream tracking branch, else origin/main.
+  --schema-only            Run only check (A). Skips upgrade-path checks.
+  --path-only              Run only check (B). Skips clean install + repo schema check.
+  --no-upgrade-diff        Do not compare clean vs upgrade schemas (still requires upgrade applies cleanly).
+  --no-repo-check          Do not compare repo schema.sql vs clean schema (still computes clean schema).
+  --keep-scratch           Keep scratch DB/dataset on exit (prints connection info).
+  --verbose                More logging.
+  --quiet                  Less logging.
+
+EXIT CODES:
+  0  All enabled checks passed.
+  1  Any enabled check failed (including upgrade apply failure or schema diffs).
+
+matey schema regen --help
+
+USAGE:
+  matey schema regen [options]
+
+DESCRIPTION:
+  Regenerates the canonical schema.sql file(s) from a clean scratch install AFTER validation.
+
+  Default behavior:
+    - runs the same checks as `matey schema validate`
+    - if validation passes, writes the clean schema output to the canonical schema.sql path
+
+  Safety:
+    - refuses to write schema.sql if clean schema != upgrade schema, unless --force is provided
+
+OPTIONS:
+  --base BRANCH            Base branch for upgrade-path validation.
+  --schema-only            Only compute clean schema and write schema.sql (skips upgrade-path checks).
+  --path-only              Only run upgrade-path checks (does not write schema.sql).
+  --no-upgrade-diff        Skip clean vs upgrade schema comparison.
+  --no-repo-check          Skip comparing repo schema.sql vs clean schema (still writes schema.sql).
+  --force                  Write schema.sql even if clean != upgrade (prints diff).
+  --keep-scratch           Keep scratch DB/dataset on exit (prints connection info).
+  --verbose                More logging.
+  --quiet                  Less logging.
+
+EXIT CODES:
+  0  Schema regenerated successfully (or no changes needed).
+  1  Validation failed, or writing was refused (e.g., clean != upgrade without --force).
+
+matey schema diff --help
+
+USAGE:
+  matey schema diff [options]
+
+DESCRIPTION:
+  Without --live (scratch mode):
+    - computes clean schema from scratch (empty -> HEAD)
+    - computes upgrade schema from scratch (BASE -> HEAD)
+    - prints:
+        1) repo schema.sql  ↔ clean schema (what `schema regen` would change)
+        2) clean schema     ↔ upgrade schema (only if they differ)
+
+  With --live (live mode):
+    - dumps schema from the selected target's real DB URL (using dbmate dump)
+      (resolved from url_env, optionally overridden by global --url)
+    - diffs it against expected schema:
+        default expected: repo schema.sql
+        optionally: clean scratch schema (use --expected clean)
+
+OPTIONS:
+  --live                   Compare a live DB schema against expected schema (enables live mode).
+  --expected {repo|clean}  Live mode only:
+                           repo  = expected schema is the repo's canonical schema.sql (default)
+                           clean = expected schema is generated from clean scratch install
+
+  --base BRANCH            Base branch used for upgrade schema computation in scratch mode.
+  --schema-only            Only print repo ↔ clean diff (scratch mode), or only do live diff (live mode).
+  --path-only              Only print clean ↔ upgrade diff (scratch mode). Incompatible with --live.
+  --no-upgrade-diff        Do not print clean ↔ upgrade diff (scratch mode).
+  --keep-scratch           Keep scratch DB/dataset on exit (scratch mode; prints connection info).
+  --verbose                More logging.
+  --quiet                  Less logging.
+
+EXIT CODES:
+  0  No differences found for the enabled comparisons.
+  1  Differences found or an enabled operation failed.
+
+matey ci init --help
+
+USAGE:
+  matey ci init <provider> [options]
+
+PROVIDERS:
+  github                  Write GitHub Actions workflow(s)
+  gitlab                   Write GitLab CI template/snippet
+  buildkite               Write Buildkite pipeline snippet
+
+DESCRIPTION:
+  Writes CI workflow templates that run `matey schema validate`.
+
+OPTIONS:
+  --print                 Print files to stdout instead of writing them.
+  --force                 Overwrite existing workflow/template files.
+  --targets NAMES         Comma-separated target names to include (e.g., core,analytics).
+  --verbose               More logging.
+
+EXIT CODES:
+  0  Templates written (or printed) successfully.
+  1  Error writing files, invalid provider, or refused overwrite without --force.
+
+matey ci print --help
+
+USAGE:
+  matey ci print <provider> [options]
+
+DESCRIPTION:
+  Prints CI workflow templates to stdout.
+
+OPTIONS:
+  --targets NAMES         Comma-separated target names to include (e.g., core,analytics).
+  --verbose               More logging.
+
+matey cd init --help
+
+USAGE:
+  matey cd init <provider> [options]
+
+PROVIDERS:
+  github                  Write GitHub Actions workflow(s)
+  gitlab                   Write GitLab CI template/snippet
+  buildkite               Write Buildkite pipeline snippet
+
+DESCRIPTION:
+  Writes CD workflow templates that run:
+    1) migrations (`matey up`)
+    2) post-migration drift gate (`matey schema diff --live --expected repo`)
+
+OPTIONS:
+  --print                 Print files to stdout instead of writing them.
+  --force                 Overwrite existing workflow/template files.
+  --targets NAMES         Comma-separated target names to include (e.g., core,analytics).
+  --verbose               More logging.
+
+EXIT CODES:
+  0  Templates written (or printed) successfully.
+  1  Error writing files, invalid provider, or refused overwrite without --force.
+
+matey cd print --help
+
+USAGE:
+  matey cd print <provider> [options]
+
+DESCRIPTION:
+  Prints CD workflow templates to stdout.
+
+OPTIONS:
+  --targets NAMES         Comma-separated target names to include (e.g., core,analytics).
+  --verbose               More logging.
+
+matey config init --help
+
+USAGE:
+  matey config init [options]
+
+DESCRIPTION:
+  Writes a matey.toml skeleton for one or more targets.
+
+OPTIONS:
+  --targets NAMES         Comma-separated target names to include (e.g., core,analytics).
+  --force                 Overwrite existing matey.toml.
+  --verbose               More logging.
+
+EXIT CODES:
+  0  Config file written successfully.
+  1  Refused overwrite without --force, or write failure.
+
+matey config print --help
+
+USAGE:
+  matey config print [options]
+
+DESCRIPTION:
+  Prints matey.toml skeleton content to stdout.
+
+OPTIONS:
+  --targets NAMES         Comma-separated target names to include (e.g., core,analytics).
+  --verbose               More logging.
+
+matey dbmate --help
+
+USAGE:
+  matey dbmate [dbmate args...]
+
+DESCRIPTION:
+  Execute dbmate directly, bypassing Matey target resolution and directory conventions.
+  dbmate reads its normal flags and environment variables.
+
+NOTES:
+  Matey will still redact secrets in its own logs unless --verbose is used with --show-secrets (if supported).
+
+Matey Design Doc
+Summary
+
+Matey is an opinionated, multi-database CLI wrapper around dbmate that standardizes:
+
+    directory conventions for migrations and schema.sql
+
+    scratch-based validation and schema regeneration
+
+    upgrade-path safety checks (base → head)
+
+    explicit live DB schema diffing via schema diff --live
+
+    CI template generation
+
+    config skeleton generation
+
+Matey is the primary interface; dbmate is the execution engine.
+
+Code layout (current)
+
+    src/matey/cli/
+
+        app.py                 Root Typer app + subcommand registration
+
+        common.py              Global options, context, and shared execution helpers
+
+        commands/db.py         dbmate-verb commands (new/up/migrate/...)
+
+        commands/schema.py     schema validate/regen/diff commands
+
+        commands/ci.py         CI template commands
+
+        commands/cd.py         CD template commands
+
+        commands/config.py     matey.toml skeleton commands
+
+        commands/dbmate.py     dbmate pass-through escape hatch
+
+    src/matey/templates/
+
+        cd.py                  CD workflow template rendering
+
+        ci.py                  CI workflow template rendering
+
+        config.py              matey.toml template rendering
+
+        targets.py             target list parsing/validation
+
+        types.py               shared template file dataclass
+
+    src/matey/settings/
+
+        config.py              Config loading/parsing (matey.toml + pyproject)
+
+        resolve.py             Target selection, path resolution, URL resolution
+
+    src/matey/drivers/
+
+        dbmate.py              dbmate binary resolution + subprocess execution
+
+        scratch.py             Scratch target planning/provisioning
+
+    src/matey/workflows/
+
+        schema.py              Schema validate/regen/diff orchestration
+
+        schema_diff.py         SQL normalization + unified diff helpers
+
+        schema_git.py          Base-branch/merge-base + worktree helpers
+
+        schema_exec.py         Retry + dump extraction execution helpers
+
+    src/matey/env.py           Environment parsing for runtime/build behavior
+
+    src/matey/domain.py        Domain dataclasses and typed error hierarchy
+Goals
+
+    Make schema/migration workflows repeatable and fast in dev + CI.
+
+    Provide guardrails against “works from scratch but not on upgrade” problems.
+
+    Support multi-DB repos with minimal config and consistent conventions.
+
+    Never require storing secrets (DB URLs/passwords) in config.
+
+    Keep the CLI small, coherent, and predictable.
+
+Non-Goals
+
+    Continuous drift monitoring / scheduled drift checks.
+
+    Supporting arbitrary project layouts beyond a single configurable directory root (dir) per repo/target.
+
+    Storing secrets in config files.
+
+Core Concepts
+Targets
+
+A target is one logical database migration unit.
+
+    Single-DB repos operate in “implicit single target mode” (zero-config).
+
+    Multi-DB repos define targets and must use --target or --all when ambiguity exists.
+
+Conventions (enforced)
+
+Matey enforces that schema.sql is always co-located with migrations under a single “db directory root”.
+
+Let dir be the database directory root (default db or configured).
+
+Single DB
+
+    migrations: <dir>/migrations
+
+    schema: <dir>/schema.sql
+
+Multi DB
+
+    migrations: <dir>/<target>/migrations
+
+    schema: <dir>/<target>/schema.sql
+
+Policy:
+
+    No schema_file override exists anywhere. Schema paths are always derived from dir and target.
+
+Scratch execution (mandatory for schema workflows)
+
+All schema workflows (schema validate, schema regen, schema diff in scratch mode) run on scratch databases/datasets.
+
+Scratch backend selection is automatic per target and uses:
+
+    --test-url (CLI) if provided
+
+    test_url_env (target) if configured
+
+    test_url_env (defaults) if configured
+
+    Docker (for Postgres / MySQL / ClickHouse)
+
+    local temp files (for SQLite)
+
+    explicit BigQuery scratch base from --test-url / test_url_env
+
+    Spanner is not supported for schema workflows (dbmate dump is unavailable)
+
+Scratch always creates unique names per run and cleans up by default.
+CLI Specification
+Top-level help (matey --help)
+
+Global options
+
+    --target NAME
+    Select database target. Required when multiple targets are configured.
+
+    --all
+    Run command for all configured targets (where supported).
+
+    --config PATH
+    Config file (default: ./matey.toml; if absent, also reads pyproject.toml [tool.matey] if present).
+
+    --dir PATH
+    Database directory root. Single DB uses <dir>/...; multi DB uses <dir>/<target>/....
+
+    --base BRANCH
+    Base branch for upgrade-path checks. Default:
+
+        CI PR target branch if available, else
+
+        upstream tracking branch if set, else
+
+        origin/main
+
+URL overrides (scoped by target selection)
+
+    --url DBURL
+    Override the selected target’s real DB URL for this run.
+    Allowed only when a single target is selected (single-db mode, or with --target NAME).
+
+    --test-url DBURL
+    Override scratch server/project URL used for schema workflows.
+    Allowed only when a single target is selected (single-db mode, or with --target NAME / --all).
+
+Scratch
+
+    --keep-scratch
+    Do not delete scratch DB/dataset; print identifiers and redacted connection info.
+
+Logging
+
+    --verbose, --quiet
+
+    --help, --version
+
+Commands
+
+    Schema workflows:
+
+        schema validate
+
+        schema regen
+
+        schema diff
+
+    DB commands (dbmate verbs via Matey conventions):
+
+        new, up, migrate, rollback (down alias), status, dump, load, create, drop, wait, dbmate
+
+    CI helpers:
+
+        ci init, ci print
+
+    CD helpers:
+
+        cd init, cd print
+
+    Config helpers:
+
+        config init, config print
+
+Detailed Command Behavior
+matey schema validate
+
+Purpose: CI gate. Validates correctness and deploy safety.
+
+Default behavior runs both checks (scratch-only):
+
+A) Clean install consistency (empty → HEAD)
+
+    Create scratch DB/dataset
+
+    Apply migrations at HEAD
+
+    Dump schema to temp file: clean.sql
+
+    Compare repo canonical schema.sql ↔ clean.sql
+
+        On mismatch: print unified diff and fail (unless --no-repo-check)
+
+B) Upgrade-path safety (BASE → HEAD)
+
+    Create scratch DB/dataset
+
+    Checkout BASE commit (merge-base(BASE, HEAD))
+
+    Apply migrations at BASE
+
+    Checkout HEAD
+
+    Apply migrations at HEAD
+
+    Dump schema to temp file: upgrade.sql
+
+    Compare clean.sql ↔ upgrade.sql
+
+        On mismatch: print unified diff and fail (unless --no-upgrade-diff)
+
+Flags:
+
+    --base BRANCH
+
+    --schema-only (only A)
+
+    --path-only (only B)
+
+    --no-upgrade-diff (still require upgrade applies successfully)
+
+    --no-repo-check (still compute clean.sql but don’t compare to repo)
+
+    --keep-scratch
+
+    verbosity flags
+
+Exit codes:
+
+    0 success
+
+    1 any enabled check fails
+
+matey schema regen
+
+Purpose: regenerate canonical schema.sql from migrations, but only when safe.
+
+Default behavior (scratch-only):
+
+    Run the same steps as schema validate (A and B)
+
+    If clean.sql ≠ upgrade.sql: refuse to write schema.sql unless --force
+
+    Write canonical schema.sql from clean.sql to:
+
+        single DB: <dir>/schema.sql
+
+        multi DB: <dir>/<target>/schema.sql
+
+Flags:
+
+    All validate flags plus:
+
+    --force (write schema.sql even if clean.sql ≠ upgrade.sql; still prints the diff)
+
+Exit codes:
+
+    0 wrote successfully or no changes needed
+
+    1 validation failure or refused to write
+
+matey schema diff
+
+Purpose: print diffs without modifying repo files, and optionally diff against a real DB.
+
+Modes:
+
+Scratch mode (no --live)
+
+    Compute clean.sql (empty → HEAD)
+
+    Compute upgrade.sql (BASE → HEAD)
+
+    Print:
+
+        repo schema.sql ↔ clean.sql (what regen would change) if non-empty
+
+        clean.sql ↔ upgrade.sql (only if non-empty, unless --no-upgrade-diff)
+
+Live mode (--live)
+
+    Dump schema from the selected target's real DB URL using dbmate dump into live.sql
+    (resolved from url_env, optionally overridden by global --url)
+
+    Determine expected schema:
+
+        default: repo canonical schema.sql
+
+        optional: clean.sql (compute empty → HEAD) if --expected clean
+
+    Print unified diff expected ↔ live.sql if non-empty
+
+Flags:
+
+    --live (enables live mode)
+
+    --expected {repo|clean} (live mode only; default repo)
+
+    scratch mode flags:
+
+        --base BRANCH, --schema-only, --path-only, --no-upgrade-diff
+
+    --keep-scratch (scratch mode)
+
+    verbosity flags
+
+Exit codes:
+
+    0 no diffs
+
+    1 diffs found or enabled step fails
+
+Design note:
+
+    Matey never prints repo ↔ upgrade diffs. Output is limited to:
+
+        repo ↔ clean
+
+        clean ↔ upgrade
+
+        expected ↔ live (in live mode)
+
+DB commands (matey up, matey status, etc.)
+
+Purpose: first-class dbmate-like UX with Matey conventions.
+
+Behavior:
+
+    Resolve target selection:
+
+        If config has 2+ targets, require --target (or --all where supported).
+
+        If config has 0 or 1 target, implicit single target.
+
+    Resolve directory root:
+
+        --dir overrides config/default.
+
+        Derive migrations dir + schema path via conventions.
+
+    Resolve real DB URL for each target:
+
+        If --url provided, use it (only allowed when single target selected).
+
+        Else read env var indicated by config url_env.
+
+        In zero-config single-DB mode, read MATEY_URL.
+
+    Invoke dbmate with explicit flags:
+
+        --url <resolved>
+
+        --migrations-dir <derived>
+
+        --schema-file <derived>
+
+        plus the chosen dbmate verb and args
+
+Commands supported:
+
+    new <name>
+
+    up
+
+    migrate
+
+    rollback [N] and alias down
+
+    status
+
+    dump
+
+    load
+
+    create
+
+    drop
+
+    wait
+
+matey ci init
+
+Purpose: write CI templates.
+
+Usage:
+
+    matey ci init github|gitlab|buildkite
+
+Behavior:
+
+    Writes provider-specific workflow templates that run matey schema validate
+
+    Supports --print to stdout
+
+Flags:
+
+    --print, --force
+
+    --targets core,analytics
+
+matey ci print
+
+Print templates to stdout. Same --targets option.
+
+matey cd init
+
+Purpose: write CD templates.
+
+Usage:
+
+    matey cd init github|gitlab|buildkite
+
+Behavior:
+
+    Writes provider-specific workflow templates that run:
+      1) matey up
+      2) matey schema diff --live --expected repo
+
+    Supports --print to stdout
+
+Flags:
+
+    --print, --force
+
+    --targets core,analytics
+
+matey cd print
+
+Print templates to stdout. Same --targets option.
+
+matey config init
+
+Purpose: write matey.toml skeleton.
+
+Usage:
+
+    matey config init --targets core,analytics
+
+Behavior:
+
+    Writes a matey.toml skeleton with [defaults] and per-target url_env entries.
+
+Flags:
+
+    --targets core,analytics
+
+    --force
+
+matey config print
+
+Print matey.toml skeleton to stdout. Same --targets option.
+
+matey dbmate
+
+Purpose: escape hatch.
+
+Behavior:
+
+    Exec dbmate directly, inheriting environment and flags.
+
+    Does not apply Matey conventions, target logic, scratch, or base-branch logic.
+
+Configuration File Spec (matey.toml)
+File discovery & precedence
+
+Configuration sources (highest priority first):
+
+    CLI flags
+
+    matey.toml at repo root (or --config PATH)
+
+    If no matey.toml, read pyproject.toml [tool.matey] if present
+
+    Defaults (including implicit single-db behavior)
+
+Schema
+
+[defaults]
+dir = "db"                    # optional; default "db"
+url_env = "MATEY_URL"         # optional; global real DB URL env var
+test_url_env = "MATEY_TEST_URL"  # optional; global scratch server/project env var
+
+[targets.core]
+url_env = "CORE_DATABASE_URL"     # required for multi-target
+# optional overrides:
+# dir = "services/core/db"
+# test_url_env = "CORE_TEST_URL"
+
+[targets.analytics]
+url_env = "ANALYTICS_DATABASE_URL"
+
+Rules:
+
+    Multi-target repo (2+ targets): each target must define url_env.
+
+    dir can be set globally or per target.
+
+    test_url_env can be set globally or per target.
+
+    URLs are never stored in config; only env var names are stored.
+
+Single-DB zero-config mode
+
+If no config exists:
+
+    dir defaults to db (or --dir)
+
+    real DB URL: MATEY_URL
+
+    scratch server/project URL:
+
+        --test-url if given, else
+
+        MATEY_TEST_URL if set, else
+
+        Docker Postgres
+
+No legacy fallback env names are supported in zero-config mode.
+
+Target-scoped override rules
+
+    --url is permitted only when a single target is selected.
+
+    --test-url is permitted when:
+
+        a single target is selected, or
+
+        --all is set (applies to all targets in that invocation).
+
+Internal Execution Model
+How Matey invokes dbmate
+
+Matey uses dbmate as a subprocess with explicit flags. Matey does not rely on dbmate’s default paths.
+
+Example (conceptual):
+
+    dbmate --url <url> --migrations-dir <path> --schema-file <path> up
+
+    dbmate --url <url> dump
+
+Upgrade-path checks (Job B)
+
+    Determine base branch:
+
+        --base if provided, else detect from CI env vars, else upstream tracking, else origin/main
+
+    Compute baseline commit:
+
+        baseline = git merge-base <base> HEAD
+
+    Use temporary git worktrees:
+
+        worktree at baseline for base-phase migration apply
+
+        current workspace for head-phase migration apply
+
+Worktrees avoid changing the developer’s working tree and simplify cleanup.
+Scratch provisioning (mandatory)
+
+Scratch always creates isolated names and cleans up.
+Postgres scratch
+
+Input: scratch “server URL” from --test-url / test_url_env, or Docker.
+
+Algorithm:
+
+    Produce a unique scratch DB name: matey_<sha7>_<epoch>_<rand>
+
+    Construct scratch DB URL (same host/user/pass/port, dbname replaced)
+
+    Use dbmate:
+
+        dbmate --url <scratch_url> create
+
+        apply migrations (up/migrate)
+
+        dump schema (dump)
+
+        dbmate --url <scratch_url> drop in finally unless --keep-scratch
+
+BigQuery scratch
+
+Input: --test-url / test_url_env is required for BigQuery scratch.
+Accepted base forms:
+
+    bigquery://<project>
+
+    bigquery://<project>/<location>
+
+    bigquery://<project>/<dataset_placeholder>
+
+    bigquery://<project>/<location>/<dataset_placeholder>
+
+Algorithm:
+
+    Produce unique dataset name: matey_<sha7>_<epoch>_<rand>
+
+    Construct scratch URL by injecting/replacing dataset name while preserving query params
+    (e.g. endpoint / disable_auth for emulator mode).
+
+    Use dbmate:
+
+        create (dataset)
+
+        migrations
+
+        dump
+
+        drop (dataset) in finally unless --keep-scratch
+
+Schema dumping and temp files
+
+For clean.sql, upgrade.sql, and (live mode) live.sql:
+
+    Use dbmate dump and capture stdout.
+
+    Store temp files in:
+
+        OS temp dir in CI
+
+        .matey/tmp/ locally (recommended) for inspectability
+
+    Always normalize line endings to \n before diffing.
+
+Diff printing
+
+    Use unified diff output (diff -u style).
+
+    Include headers:
+
+        === repo vs clean (regen would change) ===
+
+        === clean vs upgrade (upgrade differs from fresh install) ===
+
+        === expected vs live (--live) ===
+
+    Non-empty diff => exit code 1.
+
+Security Requirements
+
+    Never log full DB URLs by default; redact passwords.
+
+    --keep-scratch prints redacted URLs plus the scratch DB/dataset name separately.
+
+    Do not write secrets into matey.toml.
+
+Implementation Notes (Python)
+
+    TOML parsing:
+
+        Python 3.11+: tomllib
+
+        Older: tomli
+
+    CLI:
+
+        click or typer (must match help output and error behavior)
+
+    Git:
+
+        invoke git via subprocess (merge-base, worktree add/remove)
+
+    Diff:
+
+        difflib.unified_diff or shell diff -u
+
+    Process execution:
+
+        subprocess.run with careful env handling and redaction in logs
+
+Acceptance Criteria
+
+    matey schema validate fails if:
+
+        repo schema.sql is not produced by clean scratch (unless --no-repo-check)
+
+        upgrade apply fails
+
+        upgrade schema differs from clean schema (unless --no-upgrade-diff)
+
+    matey schema regen:
+
+        writes canonical schema.sql from clean scratch output
+
+        refuses to write if clean≠upgrade unless --force
+
+    Multi-target:
+
+        matey --all schema validate runs each target independently and aggregates failures
+
+    Scratch:
+
+        uses --test-url / test_url_env when present, else Docker for Postgres targets
+
+        always cleans up unless --keep-scratch
+
+    matey ci init generates templates that run matey schema validate
+
+    matey cd init generates templates that run post-migration live drift checks
+
+    matey config init generates a safe matey.toml skeleton without secrets

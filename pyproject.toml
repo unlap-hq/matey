@@ -1,0 +1,80 @@
+[build-system]
+requires = ["environs>=14.6.0,<15", "hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "matey"
+version = "0.1.0"
+description = "Opinionated dbmate wrapper for repeatable migrations and schema safety"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11,<3.15"
+dependencies = [
+  "environs>=14.6.0,<15",
+  "typer>=0.24.1,<0.25",
+]
+
+[project.scripts]
+matey = "matey.cli:app"
+
+[dependency-groups]
+dev = [
+  "build>=1.4.0,<2",
+  "pytest>=9.0.2,<10",
+  "ruff>=0.15.2,<0.16",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/matey"]
+artifacts = ["src/matey/_vendor/dbmate/**"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "src/matey",
+  "build_hooks",
+  "README.md",
+  "LICENSE",
+  "pyproject.toml",
+  "ruff.toml",
+]
+
+[tool.hatch.build.hooks.custom]
+path = "build_hooks/build_dbmate.py"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["src"]
+markers = [
+  "integration: tests requiring real runtime dependencies",
+]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
+
+[tool.pixi.dependencies]
+clang = ">=21.1.8,<22"
+clangxx = ">=21.1.8,<22"
+go = ">=1.26.0,<2"
+mysql-client = ">=9.5.0,<10"
+python = "3.11.*"
+
+[tool.pixi.pypi-dependencies]
+matey = { path = ".", editable = true }
+
+[tool.pixi.environments]
+default = ["dev"]
+
+[tool.pixi.tasks]
+format = "ruff format ."
+format-check = "ruff format --check ."
+lint = "ruff check ."
+lint-fix = "ruff check --fix ."
+test-unit = "pytest -q -m 'not integration'"
+test-integration = "pytest -q -m integration"
+test = "pytest -q -m 'not integration'"
+build-dbmate = "python build_hooks/build_dbmate.py"
+build-wheel = { cmd = "python -m build --wheel", depends-on = ["build-dbmate"] }
+build-sdist = "python -m build --sdist"
+build = { depends-on = ["build-wheel", "build-sdist"] }
