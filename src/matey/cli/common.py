@@ -10,6 +10,7 @@ from matey import __version__
 from matey.cli.output import OutputOptions, RichDbmateRenderer
 from matey.domain import (
     ConfigError,
+    LockfileError,
     MateyConfig,
     PathResolutionError,
     ResolvedPaths,
@@ -18,9 +19,10 @@ from matey.domain import (
     URLResolutionError,
 )
 from matey.drivers.dbmate import DbmateLogContext, resolve_dbmate_binary, run_dbmate
+from matey.drivers.scratch import detect_engine
 from matey.settings.config import load_config
 from matey.settings.resolve import derive_paths, resolve_real_url, resolve_test_url, select_targets
-from matey.templates.types import TemplateFile
+from matey.workflows.lockfile import load_schema_lock, lockfile_path
 from matey.workflows.schema import read_schema_sql
 
 
@@ -72,7 +74,11 @@ def main_callback(
     ] = None,
     base_branch: Annotated[
         str | None,
-        typer.Option("--base", help="Base branch for upgrade-path checks.", rich_help_panel="Config"),
+        typer.Option(
+            "--base",
+            help="Base branch for lockfile divergence checks.",
+            rich_help_panel="Config",
+        ),
     ] = None,
     url_override: Annotated[
         str | None,
@@ -212,12 +218,6 @@ def require_real_url(real_url: str | None) -> str:
     return real_url
 
 
-def run_clean_upgrade_modes(*, schema_only: bool, path_only: bool) -> tuple[bool, bool]:
-    run_clean = schema_only or (not schema_only and not path_only)
-    run_upgrade = path_only or (not schema_only and not path_only)
-    return run_clean, run_upgrade
-
-
 def write_schema_file(schema_file: Path, schema_sql: str) -> bool:
     normalized_schema = schema_sql
     previous = read_schema_sql(schema_file) if schema_file.exists() else ""
@@ -234,13 +234,31 @@ def config_output_path(options: GlobalOptions) -> Path:
     return Path("matey.toml")
 
 
-def print_rendered_files(rendered_files: list[TemplateFile]) -> None:
-    for index, rendered_file in enumerate(rendered_files):
-        if len(rendered_files) > 1:
-            typer.echo(f"=== {rendered_file.path} ===")
-        typer.echo(rendered_file.content.rstrip())
-        if len(rendered_files) > 1 and index < len(rendered_files) - 1:
-            typer.echo("")
+def resolve_lock_engine_for_sync(
+    *,
+    paths: ResolvedPaths,
+    real_url: str | None,
+    test_url: str | None,
+) -> str:
+    lock_path = lockfile_path(paths)
+    if lock_path.exists():
+        lock_engine = load_schema_lock(lock_path).engine
+        url = test_url or real_url
+        if url is not None:
+            detected = detect_engine(url)
+            if detected != lock_engine:
+                raise LockfileError(
+                    "Engine mismatch between existing lockfile and provided URL "
+                    f"({lock_engine} != {detected})."
+                )
+        return lock_engine
+
+    url = test_url or real_url
+    if url:
+        return detect_engine(url)
+    raise LockfileError(
+        "Unable to infer engine for lock sync. Provide --test-url/--url or create a lockfile first."
+    )
 
 
 def run_db_verb(ctx: typer.Context, *, verb: str, extra_args: list[str] | None = None) -> None:

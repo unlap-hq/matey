@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+import shutil
 import tempfile
 import time
 from collections.abc import Mapping
@@ -43,6 +44,7 @@ __all__ = [
     "dump_schema_for_url",
     "normalize_sql_text",
     "read_schema_sql",
+    "run_clean_check",
     "schema_diff_text",
     "validate_schema_clean_target",
 ]
@@ -149,6 +151,9 @@ def _run_check_on_scratch(
 
     error_message: str | None = None
     schema_sql: str | None = None
+    runtime_schema_dir = Path(tempfile.mkdtemp(prefix=f"matey-{check_name}-schema-file-"))
+    runtime_schema_file = runtime_schema_dir / f"{target_name}.{check_name}.sql"
+    runtime_schema_file.write_text("", encoding="utf-8")
 
     try:
         # For BigQuery scratch datasets, wait-before-create fails by definition
@@ -161,7 +166,7 @@ def _run_check_on_scratch(
                     dbmate_binary=dbmate_binary,
                     url=scratch_url,
                     migrations_dir=head_paths.migrations_dir,
-                    schema_file=head_paths.schema_file,
+                    schema_file=runtime_schema_file,
                     verb="wait",
                     global_args=["--wait-timeout", wait_timeout],
                     log_context=DbmateLogContext(
@@ -183,7 +188,7 @@ def _run_check_on_scratch(
                 dbmate_binary=dbmate_binary,
                 url=scratch_url,
                 migrations_dir=head_paths.migrations_dir,
-                schema_file=head_paths.schema_file,
+                schema_file=runtime_schema_file,
                 verb="create",
                 log_context=DbmateLogContext(
                     target=target_name,
@@ -205,8 +210,9 @@ def _run_check_on_scratch(
                     dbmate_binary=dbmate_binary,
                     url=scratch_url,
                     migrations_dir=phase_paths.migrations_dir,
-                    schema_file=phase_paths.schema_file,
+                    schema_file=runtime_schema_file,
                     verb="up",
+                    global_args=["--no-dump-schema"],
                     log_context=DbmateLogContext(
                         target=target_name,
                         phase=check_name,
@@ -226,7 +232,7 @@ def _run_check_on_scratch(
                 dbmate_binary=dbmate_binary,
                 url=scratch_url,
                 migrations_dir=head_paths.migrations_dir,
-                schema_file=head_paths.schema_file,
+                schema_file=runtime_schema_file,
                 verb="dump",
                 log_context=DbmateLogContext(
                     target=target_name,
@@ -243,7 +249,7 @@ def _run_check_on_scratch(
 
         schema_sql = _extract_dump_schema(
             dump_result=dump_result,
-            schema_file=head_paths.schema_file,
+            schema_file=runtime_schema_file,
         )
     finally:
         cleanup_error: str | None = None
@@ -252,7 +258,7 @@ def _run_check_on_scratch(
                 dbmate_binary=dbmate_binary,
                 url=scratch_url,
                 migrations_dir=head_paths.migrations_dir,
-                schema_file=head_paths.schema_file,
+                schema_file=runtime_schema_file,
                 verb="drop",
                 log_context=DbmateLogContext(
                     target=target_name,
@@ -265,6 +271,7 @@ def _run_check_on_scratch(
                 cleanup_error = "dbmate drop failed while cleaning scratch target."
         if not keep_scratch:
             scratch_plan.cleanup()
+        shutil.rmtree(runtime_schema_dir, ignore_errors=True)
         if cleanup_error and error_message is None:
             error_message = cleanup_error
 
@@ -292,6 +299,29 @@ def _run_clean_check(
         keep_scratch=keep_scratch,
         wait_timeout=wait_timeout,
         check_name="clean",
+        on_dbmate_result=on_dbmate_result,
+    )
+
+
+def run_clean_check(
+    *,
+    target_name: str,
+    engine: str,
+    dbmate_binary: Path,
+    head_paths: ResolvedPaths,
+    test_url: str | None,
+    keep_scratch: bool,
+    wait_timeout: str,
+    on_dbmate_result: DbmateResultCallback | None,
+) -> _ScratchRunResult:
+    return _run_clean_check(
+        target_name=target_name,
+        engine=engine,
+        dbmate_binary=dbmate_binary,
+        head_paths=head_paths,
+        test_url=test_url,
+        keep_scratch=keep_scratch,
+        wait_timeout=wait_timeout,
         on_dbmate_result=on_dbmate_result,
     )
 

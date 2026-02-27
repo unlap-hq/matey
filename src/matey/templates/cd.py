@@ -19,8 +19,8 @@ def _github_content(targets: list[str]) -> str:
             "      - uses: actions/checkout@v4\n"
             "      - uses: prefix-dev/setup-pixi@v0\n"
             "      - run: pixi install\n"
-            "      - run: pixi run matey up\n"
-            "      - run: pixi run matey schema diff --live --expected repo\n"
+            "      - run: pixi run matey db up\n"
+            "      - run: pixi run matey db diff\n"
         )
 
     matrix_targets = ", ".join(f'"{target}"' for target in targets)
@@ -39,8 +39,8 @@ def _github_content(targets: list[str]) -> str:
         "      - uses: actions/checkout@v4\n"
         "      - uses: prefix-dev/setup-pixi@v0\n"
         "      - run: pixi install\n"
-        "      - run: pixi run matey --target \"${{ matrix.target }}\" up\n"
-        "      - run: pixi run matey --target \"${{ matrix.target }}\" schema diff --live --expected repo\n"
+        "      - run: pixi run matey --target \"${{ matrix.target }}\" db up\n"
+        "      - run: pixi run matey --target \"${{ matrix.target }}\" db diff\n"
     )
 
 
@@ -55,14 +55,14 @@ def _gitlab_content(targets: list[str]) -> str:
             "  image: ghcr.io/prefix-dev/pixi:latest\n"
             "  script:\n"
             "    - pixi install\n"
-            "    - pixi run matey up\n"
-            "    - pixi run matey schema diff --live --expected repo\n"
+            "    - pixi run matey db up\n"
+            "    - pixi run matey db diff\n"
         )
 
     lines: list[str] = []
     for target in targets:
-        lines.append(f"      pixi run matey --target {target} up")
-        lines.append(f"      pixi run matey --target {target} schema diff --live --expected repo")
+        lines.append(f"      pixi run matey --target {target} db up")
+        lines.append(f"      pixi run matey --target {target} db diff")
     joined = "\n".join(lines)
     return (
         "stages:\n"
@@ -85,8 +85,8 @@ def _buildkite_content(targets: list[str]) -> str:
             "  - label: \":matey: schema cd\"\n"
             "    command:\n"
             "      - pixi install\n"
-            "      - pixi run matey up\n"
-            "      - pixi run matey schema diff --live --expected repo\n"
+            "      - pixi run matey db up\n"
+            "      - pixi run matey db diff\n"
         )
 
     steps = [
@@ -95,8 +95,8 @@ def _buildkite_content(targets: list[str]) -> str:
                 f'  - label: ":matey: schema cd ({target})"',
                 "    command:",
                 "      - pixi install",
-                f"      - pixi run matey --target {target} up",
-                f"      - pixi run matey --target {target} schema diff --live --expected repo",
+                f"      - pixi run matey --target {target} db up",
+                f"      - pixi run matey --target {target} db diff",
             ]
         )
         for target in targets

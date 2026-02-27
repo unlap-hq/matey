@@ -32,6 +32,10 @@ class SchemaValidationError(MateyError):
     """Schema validation failed before diff evaluation."""
 
 
+class LockfileError(MateyError):
+    """Lockfile/checkpoint integrity validation failed."""
+
+
 @dataclass(frozen=True)
 class DefaultsConfig:
     dir: str = "db"

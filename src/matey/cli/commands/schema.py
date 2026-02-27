@@ -1,57 +1,173 @@
 from __future__ import annotations
 
-from typing import Annotated, Literal
+import os
+import tempfile
+from pathlib import Path
+from typing import Annotated
 
 import typer
 
 from matey.cli.common import (
     build_execution_context,
     get_options,
+    read_schema_sql,
+    resolve_lock_engine_for_sync,
     resolve_target_execution,
-    run_clean_upgrade_modes,
-    write_schema_file,
 )
 from matey.cli.output import OutputOptions, RichDbmateRenderer
 from matey.domain import (
     ConfigError,
+    LockfileError,
     PathResolutionError,
+    ResolvedPaths,
     SchemaValidationError,
     TargetSelectionError,
     URLResolutionError,
 )
-from matey.workflows.schema import (
-    dump_schema_for_url,
-    read_schema_sql,
-    schema_diff_text,
-    validate_schema_clean_target,
+from matey.workflows.lockfile import (
+    build_schema_lock,
+    lockfile_path,
+    write_schema_lock,
+)
+from matey.workflows.schema_lock import (
+    SchemaReplayResult,
+    evaluate_schema_lock_target,
+    validate_schema_lock_down_target,
 )
 
 
+def _write_temp_text(path: Path, content: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    return tmp_path
+
+
+def _write_temp_lock(path: Path, lock) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    try:
+        write_schema_lock(tmp_path, lock)
+        with tmp_path.open("rb") as handle:
+            os.fsync(handle.fileno())
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    return tmp_path
+
+
+def _fsync_parent(path: Path) -> None:
+    dir_fd = os.open(str(path.parent), os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def _restore_previous_file(path: Path, previous: str | None) -> None:
+    if previous is None:
+        path.unlink(missing_ok=True)
+        return
+    tmp_path = _write_temp_text(path, previous)
+    tmp_path.replace(path)
+    _fsync_parent(path)
+
+
+def _atomic_write_schema_and_lock(
+    *,
+    paths: ResolvedPaths,
+    schema_sql: str,
+    real_url: str | None,
+    test_url: str | None,
+    target_name: str,
+) -> tuple[bool, object]:
+    lock_path = lockfile_path(paths)
+    previous_schema = read_schema_sql(paths.schema_file) if paths.schema_file.exists() else None
+    previous_lock = lock_path.read_text(encoding="utf-8") if lock_path.exists() else None
+
+    schema_tmp: Path | None = None
+    lock_tmp: Path | None = None
+    schema_replaced = False
+    lock_replaced = False
+    try:
+        changed = previous_schema != schema_sql
+        engine = resolve_lock_engine_for_sync(
+            paths=paths,
+            real_url=real_url,
+            test_url=test_url,
+        )
+        lock = build_schema_lock(
+            paths=paths,
+            engine=engine,
+            target=target_name,
+            schema_sql_override=schema_sql,
+        )
+        schema_tmp = _write_temp_text(paths.schema_file, schema_sql)
+        lock_tmp = _write_temp_lock(lock_path, lock)
+
+        schema_tmp.replace(paths.schema_file)
+        schema_replaced = True
+        lock_tmp.replace(lock_path)
+        lock_replaced = True
+        _fsync_parent(paths.schema_file)
+        _fsync_parent(lock_path)
+    except Exception:
+        if schema_tmp is not None:
+            schema_tmp.unlink(missing_ok=True)
+        if lock_tmp is not None:
+            lock_tmp.unlink(missing_ok=True)
+        if schema_replaced or lock_replaced:
+            _restore_previous_file(paths.schema_file, previous_schema)
+            _restore_previous_file(lock_path, previous_lock)
+        raise
+    return changed, lock
+
+
+def _run_schema_replay(
+    *,
+    target_name: str,
+    dbmate_binary,
+    paths: ResolvedPaths,
+    test_url: str | None,
+    keep_scratch: bool,
+    base_branch: str | None,
+    clean: bool,
+    renderer: RichDbmateRenderer,
+) -> SchemaReplayResult:
+    return evaluate_schema_lock_target(
+        target_name=target_name,
+        dbmate_binary=dbmate_binary,
+        paths=paths,
+        test_url=test_url,
+        keep_scratch=keep_scratch,
+        base_branch=base_branch,
+        clean=clean,
+        on_dbmate_result=renderer.handle,
+    )
+
+
 def register(schema_app: typer.Typer) -> None:
-    @schema_app.command("validate", help="Validate canonical schema against a clean scratch install.")
+    @schema_app.command("validate", help="Validate schema.sql against lockfile replay.")
     def schema_validate(
         ctx: typer.Context,
-        schema_only: Annotated[
-            bool, typer.Option("--schema-only", help="Run schema consistency checks only.")
+        clean: Annotated[
+            bool, typer.Option("--clean", help="Force full replay from empty scratch.")
         ] = False,
-        path_only: Annotated[
-            bool, typer.Option("--path-only", help="Run upgrade-path checks only.")
-        ] = False,
-        no_upgrade_diff: Annotated[
-            bool, typer.Option("--no-upgrade-diff", help="Disable clean vs upgrade diff checks.")
-        ] = False,
-        no_repo_check: Annotated[
-            bool, typer.Option("--no-repo-check", help="Skip repo schema.sql comparison.")
-        ] = False,
-        keep_scratch: Annotated[
-            bool, typer.Option("--keep-scratch", help="Keep scratch DB/dataset after validation.")
+        down: Annotated[
+            bool, typer.Option("--down", help="Validate changed-tail downgrade round-trip.")
         ] = False,
     ) -> None:
         options = get_options(ctx)
-        if schema_only and path_only:
-            raise typer.BadParameter("--schema-only and --path-only cannot be used together.")
-
-        keep_resources = keep_scratch or options.keep_scratch
         renderer = RichDbmateRenderer(
             options=OutputOptions(verbose=options.verbose, quiet=options.quiet),
         )
@@ -64,27 +180,29 @@ def register(schema_app: typer.Typer) -> None:
         failures = 0
         for selected_target in context.selected_targets:
             try:
-                paths, real_url, test_url = resolve_target_execution(
+                paths, _real_url, test_url = resolve_target_execution(
                     context=context,
                     options=options,
                     target=selected_target,
                     require_real_url=False,
                 )
-                result = validate_schema_clean_target(
+                result = _run_schema_replay(
                     target_name=selected_target.name,
                     dbmate_binary=context.dbmate_binary,
                     paths=paths,
-                    real_url=real_url,
                     test_url=test_url,
-                    keep_scratch=keep_resources,
-                    no_repo_check=no_repo_check,
-                    schema_only=schema_only,
-                    path_only=path_only,
-                    no_upgrade_diff=no_upgrade_diff,
+                    keep_scratch=options.keep_scratch,
                     base_branch=options.base_branch,
-                    on_dbmate_result=renderer.handle,
+                    clean=clean,
+                    renderer=renderer,
                 )
-            except (PathResolutionError, URLResolutionError, ConfigError, SchemaValidationError) as error:
+            except (
+                PathResolutionError,
+                URLResolutionError,
+                ConfigError,
+                SchemaValidationError,
+                LockfileError,
+            ) as error:
                 typer.secho(f"[matey] target={selected_target.name} validation error: {error}", fg="red")
                 failures += 1
                 continue
@@ -97,62 +215,60 @@ def register(schema_app: typer.Typer) -> None:
                 continue
 
             if result.diff_text:
-                typer.echo(f"=== repo vs clean (regen would change) [target={selected_target.name}] ===")
+                typer.echo(f"=== schema replay diff [target={selected_target.name}] ===")
                 typer.echo(result.diff_text.rstrip())
-            if result.upgrade_diff_text:
-                typer.echo(
-                    "=== clean vs upgrade (upgrade differs from fresh install) "
-                    f"[target={selected_target.name}] ==="
-                )
-                typer.echo(result.upgrade_diff_text.rstrip())
             if result.error:
                 typer.secho(f"[matey] target={selected_target.name}: {result.error}", fg="red")
-            elif not options.quiet:
-                typer.secho(f"[matey] target={selected_target.name}: schema validation passed.", fg="green")
+                failures += 1
+                continue
 
-            if keep_resources:
-                urls = result.scratch_urls or (result.scratch_url,)
-                for url in urls:
-                    typer.echo(f"[matey] target={selected_target.name}: keeping scratch at {url}")
+            if options.keep_scratch and result.scratch_url:
+                typer.echo(f"[matey] target={selected_target.name}: keeping scratch at {result.scratch_url}")
 
             if not result.success:
                 failures += 1
+                continue
+
+            if down:
+                down_result = validate_schema_lock_down_target(
+                    target_name=selected_target.name,
+                    dbmate_binary=context.dbmate_binary,
+                    paths=paths,
+                    test_url=test_url,
+                    keep_scratch=options.keep_scratch,
+                    base_branch=options.base_branch,
+                    on_dbmate_result=renderer.handle,
+                )
+                if down_result.diff_text:
+                    typer.echo(f"=== down round-trip diff [target={selected_target.name}] ===")
+                    typer.echo(down_result.diff_text.rstrip())
+                if down_result.error:
+                    typer.secho(f"[matey] target={selected_target.name}: {down_result.error}", fg="red")
+                if options.keep_scratch and down_result.scratch_url:
+                    typer.echo(
+                        f"[matey] target={selected_target.name}: keeping scratch at {down_result.scratch_url}"
+                    )
+                if not down_result.success:
+                    failures += 1
+                    continue
+
+            if not options.quiet:
+                typer.secho(f"[matey] target={selected_target.name}: schema validation passed.", fg="green")
 
         if failures:
             raise typer.Exit(1)
 
-    @schema_app.command("regen", help="Regenerate canonical schema.sql from a clean scratch install.")
+    @schema_app.command("regen", help="Regenerate schema.sql and schema.lock.toml from replay.")
     def schema_regen(
         ctx: typer.Context,
-        schema_only: Annotated[
-            bool, typer.Option("--schema-only", help="Run schema consistency checks only.")
-        ] = False,
-        path_only: Annotated[
-            bool, typer.Option("--path-only", help="Run upgrade-path checks only.")
-        ] = False,
-        no_upgrade_diff: Annotated[
-            bool, typer.Option("--no-upgrade-diff", help="Disable clean vs upgrade diff checks.")
-        ] = False,
-        no_repo_check: Annotated[
-            bool, typer.Option("--no-repo-check", help="Skip repo schema.sql comparison.")
-        ] = False,
-        force: Annotated[
-            bool,
-            typer.Option("--force", help="Write schema.sql even when clean and upgrade schema differ."),
-        ] = False,
-        keep_scratch: Annotated[
-            bool, typer.Option("--keep-scratch", help="Keep scratch DB/dataset after regen.")
+        clean: Annotated[
+            bool, typer.Option("--clean", help="Force full replay from empty scratch.")
         ] = False,
     ) -> None:
         options = get_options(ctx)
-        if schema_only and path_only:
-            raise typer.BadParameter("--schema-only and --path-only cannot be used together.")
-
-        keep_resources = keep_scratch or options.keep_scratch
         renderer = RichDbmateRenderer(
             options=OutputOptions(verbose=options.verbose, quiet=options.quiet),
         )
-        run_clean, run_upgrade = run_clean_upgrade_modes(schema_only=schema_only, path_only=path_only)
 
         try:
             context = build_execution_context(options)
@@ -168,21 +284,23 @@ def register(schema_app: typer.Typer) -> None:
                     target=selected_target,
                     require_real_url=False,
                 )
-                result = validate_schema_clean_target(
+                result = _run_schema_replay(
                     target_name=selected_target.name,
                     dbmate_binary=context.dbmate_binary,
                     paths=paths,
-                    real_url=real_url,
                     test_url=test_url,
-                    keep_scratch=keep_resources,
-                    no_repo_check=no_repo_check,
-                    schema_only=schema_only,
-                    path_only=path_only,
-                    no_upgrade_diff=no_upgrade_diff,
+                    keep_scratch=options.keep_scratch,
                     base_branch=options.base_branch,
-                    on_dbmate_result=renderer.handle,
+                    clean=clean,
+                    renderer=renderer,
                 )
-            except (PathResolutionError, URLResolutionError, ConfigError, SchemaValidationError) as error:
+            except (
+                PathResolutionError,
+                URLResolutionError,
+                ConfigError,
+                SchemaValidationError,
+                LockfileError,
+            ) as error:
                 typer.secho(f"[matey] target={selected_target.name} regen error: {error}", fg="red")
                 failures += 1
                 continue
@@ -195,50 +313,39 @@ def register(schema_app: typer.Typer) -> None:
                 continue
 
             if result.diff_text:
-                typer.echo(f"=== repo vs clean (regen would change) [target={selected_target.name}] ===")
+                typer.echo(f"=== schema replay diff [target={selected_target.name}] ===")
                 typer.echo(result.diff_text.rstrip())
-            if result.upgrade_diff_text:
-                typer.echo(
-                    "=== clean vs upgrade (upgrade differs from fresh install) "
-                    f"[target={selected_target.name}] ==="
-                )
-                typer.echo(result.upgrade_diff_text.rstrip())
             if result.error:
                 typer.secho(f"[matey] target={selected_target.name}: {result.error}", fg="red")
-
-            if keep_resources:
-                urls = result.scratch_urls or (result.scratch_url,)
-                for url in urls:
-                    typer.echo(f"[matey] target={selected_target.name}: keeping scratch at {url}")
-
-            if run_upgrade:
-                upgrade_schema = result.upgrade_schema_sql
-                clean_schema = result.clean_schema_sql
-                schemas_match = upgrade_schema is None or clean_schema == upgrade_schema
-                if not schemas_match and not force:
-                    typer.secho(
-                        f"[matey] target={selected_target.name}: refusing to write schema.sql "
-                        "because clean and upgrade schema differ (use --force to override).",
-                        fg="red",
-                    )
-                    failures += 1
-                    continue
-
-            if not run_clean:
-                if result.error:
-                    failures += 1
+                failures += 1
                 continue
 
-            clean_schema = result.clean_schema_sql
-            if clean_schema is None:
+            try:
+                changed, lock = _atomic_write_schema_and_lock(
+                    paths=paths,
+                    schema_sql=result.expected_schema_sql,
+                    real_url=real_url,
+                    test_url=test_url,
+                    target_name=selected_target.name,
+                )
+            except LockfileError as error:
                 typer.secho(
-                    f"[matey] target={selected_target.name}: missing clean schema output.",
+                    f"[matey] target={selected_target.name}: unable to sync lockfile: {error}",
+                    fg="red",
+                )
+                failures += 1
+                continue
+            except Exception as error:
+                typer.secho(
+                    f"[matey] target={selected_target.name}: unable to update schema artifacts: {error}",
                     fg="red",
                 )
                 failures += 1
                 continue
 
-            changed = write_schema_file(paths.schema_file, clean_schema)
+            if options.keep_scratch and result.scratch_url:
+                typer.echo(f"[matey] target={selected_target.name}: keeping scratch at {result.scratch_url}")
+
             if not options.quiet:
                 if changed:
                     typer.secho(
@@ -250,46 +357,20 @@ def register(schema_app: typer.Typer) -> None:
                         f"[matey] target={selected_target.name}: schema already up to date.",
                         fg="green",
                     )
-
-            if result.error and not changed:
-                failures += 1
+                typer.secho(
+                    f"[matey] target={selected_target.name}: synced {lockfile_path(paths)} "
+                    f"(engine={lock.engine}, steps={lock.head_index}).",
+                    fg="green",
+                )
 
         if failures:
             raise typer.Exit(1)
 
-    @schema_app.command("diff", help="Show schema differences in scratch or live mode.")
+    @schema_app.command("diff", help="Show schema.sql vs lockfile replay diff.")
     def schema_diff(
         ctx: typer.Context,
-        live: Annotated[
-            bool,
-            typer.Option("--live", help="Compare live DB schema against expected schema."),
-        ] = False,
-        expected: Annotated[
-            Literal["repo", "clean"],
-            typer.Option("--expected", help="Live mode expected schema source."),
-        ] = "repo",
-        schema_only: Annotated[
-            bool, typer.Option("--schema-only", help="Run schema consistency checks only.")
-        ] = False,
-        path_only: Annotated[
-            bool, typer.Option("--path-only", help="Run upgrade-path checks only.")
-        ] = False,
-        no_upgrade_diff: Annotated[
-            bool, typer.Option("--no-upgrade-diff", help="Disable clean vs upgrade diff checks.")
-        ] = False,
-        keep_scratch: Annotated[
-            bool, typer.Option("--keep-scratch", help="Keep scratch DB/dataset after diff.")
-        ] = False,
     ) -> None:
         options = get_options(ctx)
-        if schema_only and path_only:
-            raise typer.BadParameter("--schema-only and --path-only cannot be used together.")
-        if live and path_only:
-            raise typer.BadParameter("--path-only is incompatible with live mode.")
-        if options.url_override and not live:
-            raise typer.BadParameter("--url can only be used with schema diff --live.")
-
-        keep_resources = keep_scratch or options.keep_scratch
         renderer = RichDbmateRenderer(
             options=OutputOptions(verbose=options.verbose, quiet=options.quiet),
         )
@@ -302,103 +383,29 @@ def register(schema_app: typer.Typer) -> None:
         failures = 0
         for selected_target in context.selected_targets:
             try:
-                paths, real_url, test_url = resolve_target_execution(
+                paths, _real_url, test_url = resolve_target_execution(
                     context=context,
                     options=options,
                     target=selected_target,
-                    require_real_url=live,
+                    require_real_url=False,
                 )
-            except (PathResolutionError, URLResolutionError, ConfigError) as error:
-                typer.secho(f"[matey] target={selected_target.name} diff error: {error}", fg="red")
-                failures += 1
-                continue
-
-            if live:
-                try:
-                    if expected == "clean":
-                        clean_result = validate_schema_clean_target(
-                            target_name=selected_target.name,
-                            dbmate_binary=context.dbmate_binary,
-                            paths=paths,
-                            real_url=real_url,
-                            test_url=test_url,
-                            keep_scratch=keep_resources,
-                            no_repo_check=True,
-                            schema_only=True,
-                            path_only=False,
-                            no_upgrade_diff=True,
-                            base_branch=options.base_branch,
-                            on_dbmate_result=renderer.handle,
-                        )
-                        if clean_result.error:
-                            typer.secho(
-                                f"[matey] target={selected_target.name}: {clean_result.error}",
-                                fg="red",
-                            )
-                            failures += 1
-                            continue
-                        expected_sql = clean_result.clean_schema_sql or ""
-                        expected_label = "clean scratch schema"
-                        if keep_resources:
-                            urls = clean_result.scratch_urls or (clean_result.scratch_url,)
-                            for url in urls:
-                                typer.echo(f"[matey] target={selected_target.name}: keeping scratch at {url}")
-                    else:
-                        expected_sql = read_schema_sql(paths.schema_file)
-                        expected_label = str(paths.schema_file)
-
-                    live_schema = dump_schema_for_url(
-                        dbmate_binary=context.dbmate_binary,
-                        paths=paths,
-                        url=real_url,
-                        target_name=selected_target.name,
-                        on_dbmate_result=renderer.handle,
-                    )
-                except (URLResolutionError, ConfigError, SchemaValidationError) as error:
-                    typer.secho(f"[matey] target={selected_target.name} live diff error: {error}", fg="red")
-                    failures += 1
-                    continue
-                except Exception as error:
-                    typer.secho(
-                        f"[matey] target={selected_target.name} unexpected live diff error: {error}",
-                        fg="red",
-                    )
-                    failures += 1
-                    continue
-
-                live_diff_text = schema_diff_text(
-                    expected_sql,
-                    live_schema,
-                    expected_name=f"expected ({expected_label})",
-                    actual_name="live",
-                )
-                if live_diff_text:
-                    typer.echo(f"=== expected vs live (--live) [target={selected_target.name}] ===")
-                    typer.echo(live_diff_text.rstrip())
-                    failures += 1
-                elif not options.quiet:
-                    typer.secho(
-                        f"[matey] target={selected_target.name}: no schema differences found.",
-                        fg="green",
-                    )
-                continue
-
-            try:
-                result = validate_schema_clean_target(
+                result = _run_schema_replay(
                     target_name=selected_target.name,
                     dbmate_binary=context.dbmate_binary,
                     paths=paths,
-                    real_url=real_url,
                     test_url=test_url,
-                    keep_scratch=keep_resources,
-                    no_repo_check=False,
-                    schema_only=schema_only,
-                    path_only=path_only,
-                    no_upgrade_diff=no_upgrade_diff,
+                    keep_scratch=options.keep_scratch,
                     base_branch=options.base_branch,
-                    on_dbmate_result=renderer.handle,
+                    clean=False,
+                    renderer=renderer,
                 )
-            except (URLResolutionError, ConfigError, SchemaValidationError) as error:
+            except (
+                PathResolutionError,
+                URLResolutionError,
+                ConfigError,
+                SchemaValidationError,
+                LockfileError,
+            ) as error:
                 typer.secho(f"[matey] target={selected_target.name} diff error: {error}", fg="red")
                 failures += 1
                 continue
@@ -411,22 +418,14 @@ def register(schema_app: typer.Typer) -> None:
                 continue
 
             if result.diff_text:
-                typer.echo(f"=== repo vs clean (regen would change) [target={selected_target.name}] ===")
+                typer.echo(f"=== schema replay diff [target={selected_target.name}] ===")
                 typer.echo(result.diff_text.rstrip())
-            if result.upgrade_diff_text:
-                typer.echo(
-                    "=== clean vs upgrade (upgrade differs from fresh install) "
-                    f"[target={selected_target.name}] ==="
-                )
-                typer.echo(result.upgrade_diff_text.rstrip())
             if result.error:
                 typer.secho(f"[matey] target={selected_target.name}: {result.error}", fg="red")
                 failures += 1
                 continue
-            if keep_resources:
-                urls = result.scratch_urls or (result.scratch_url,)
-                for url in urls:
-                    typer.echo(f"[matey] target={selected_target.name}: keeping scratch at {url}")
+            if options.keep_scratch and result.scratch_url:
+                typer.echo(f"[matey] target={selected_target.name}: keeping scratch at {result.scratch_url}")
             if not result.success:
                 failures += 1
             elif not options.quiet:

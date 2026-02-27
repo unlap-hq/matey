@@ -17,8 +17,8 @@ def test_cd_print_github_default(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     result = runner.invoke(app, ["cd", "print", "github"])
     assert result.exit_code == 0
-    assert "matey schema diff --live --expected repo" in result.output
-    assert "matey up" in result.output
+    assert "matey db diff" in result.output
+    assert "matey db up" in result.output
 
 
 def test_cd_print_github_with_targets_includes_matrix(tmp_path: Path, monkeypatch) -> None:
@@ -37,8 +37,8 @@ def test_cd_init_writes_workflow_file(tmp_path: Path, monkeypatch) -> None:
     assert result.exit_code == 0
     assert workflow_path.exists()
     workflow_text = _read(workflow_path)
-    assert "matey up" in workflow_text
-    assert "matey schema diff --live --expected repo" in workflow_text
+    assert "matey db up" in workflow_text
+    assert "matey db diff" in workflow_text
 
 
 def test_cd_init_targets_only_writes_workflow(tmp_path: Path, monkeypatch) -> None:
@@ -50,11 +50,11 @@ def test_cd_init_targets_only_writes_workflow(tmp_path: Path, monkeypatch) -> No
     assert not (tmp_path / "matey.toml").exists()
 
 
-def test_cd_init_print_mode_does_not_write_files(tmp_path: Path, monkeypatch) -> None:
+def test_cd_init_rejects_print_flag(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     result = runner.invoke(app, ["cd", "init", "github", "--targets", "core", "--print"])
-    assert result.exit_code == 0
-    assert "matey-schema-cd" in result.output
+    assert result.exit_code != 0
+    assert "No such option: --print" in result.output
     assert not (tmp_path / ".github" / "workflows" / "matey-schema-cd.yml").exists()
 
 
@@ -78,7 +78,7 @@ def test_cd_init_force_overwrites(tmp_path: Path, monkeypatch) -> None:
 
     result = runner.invoke(app, ["cd", "init", "github", "--force"])
     assert result.exit_code == 0
-    assert "matey schema diff --live --expected repo" in _read(workflow_path)
+    assert "matey db diff" in _read(workflow_path)
     assert _read(workflow_path) != "existing\n"
 
 

@@ -8,8 +8,8 @@ from matey.cli.common import get_options
 from matey.drivers.dbmate import resolve_dbmate_binary
 
 
-def register(app: typer.Typer) -> None:
-    @app.command(
+def register(db_app: typer.Typer) -> None:
+    @db_app.command(
         "dbmate",
         context_settings={
             "allow_extra_args": True,
@@ -17,7 +17,6 @@ def register(app: typer.Typer) -> None:
             "help_option_names": [],
         },
         help="Run bundled dbmate directly.",
-        rich_help_panel="Database Commands",
     )
     def dbmate_passthrough(ctx: typer.Context) -> None:
         options = get_options(ctx)

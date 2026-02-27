@@ -92,7 +92,7 @@ Hashing + Canonicalization
 - Digest of canonicalized SQL output (canonicalizer versioned by `canonicalizer`).
 
 A/B Definitions
-- A: current branch `schema.sql` canonicalized (HEAD by default, worktree when `--worktree` is set).
+- A: current workspace `schema.sql` canonicalized.
 - B: computed schema from replay anchored on verified base checkpoint plus head migration tail.
 
 A invariant
@@ -100,9 +100,8 @@ A invariant
 
 Base and Head Input Rules
 - Base side: merge-base snapshot (or `--base` override), always committed content.
-- Head side default: committed HEAD content.
-- Head side with `--worktree`: staged/unstaged local content.
-- Same algorithm in local and CI; only input source differs by `--worktree`.
+- Head side: current workspace content.
+- Same algorithm in local and CI.
 
 Default Algorithm (validate, diff, regen)
 1. Resolve base ref and obtain base snapshot.
@@ -243,15 +242,11 @@ Command Extensions (v1)
 Subflag mapping
 - `schema validate` supports:
   - `--clean`
-  - `--worktree`
   - `--down`
 - `schema regen` supports:
   - `--clean`
-  - `--worktree`
 - `schema diff` supports:
-  - `--worktree`
 - `db diff` supports:
-  - `--worktree`
   - live URL selection via target config / global `--url` override
 - `schema diff` and `db diff` do not accept:
   - `--clean`
@@ -300,9 +295,9 @@ Help Output Contract (v1)
   - `lock`: lockfile health/maintenance.
 
 2. `schema --help` and subcommand help must match lockfile-era flags.
-- `schema validate`: show `--clean`, `--worktree`, `--down` only (plus shared globals).
-- `schema regen`: show `--clean`, `--worktree` only (plus shared globals).
-- `schema diff`: show `--worktree` only (plus shared globals).
+- `schema validate`: show `--clean`, `--down` only (plus shared globals).
+- `schema regen`: show `--clean` only (plus shared globals).
+- `schema diff`: no command-local flags (plus shared globals).
 - Do not show legacy flags: `--schema-only`, `--path-only`, `--no-upgrade-diff`, `--live`, `--expected`.
 
 3. `db --help` and subcommand help.
@@ -312,7 +307,7 @@ Help Output Contract (v1)
   - `up`: create-if-needed + apply pending migrations.
   - `migrate`: apply pending migrations only (no implicit create).
   - `down [N]`: roll back `N` steps (default 1).
-- `db diff` help shows `--worktree` and live URL selection behavior; no `--clean`/`--expected`.
+- `db diff` help shows live URL selection behavior; no `--clean`/`--expected`.
 
 4. `lock --help` and subcommand help.
 - Show `lock doctor` and `lock sync` only.
@@ -344,7 +339,7 @@ Phase 2: Verification
 
 Phase 3: Base/Head resolution
 - [ ] Resolve merge-base and materialize base snapshot.
-- [ ] Resolve head inputs for default vs `--worktree`.
+- [ ] Resolve head inputs from current workspace.
 - [ ] Implement divergence detection over step chains.
 
 Phase 4: Replay engine
@@ -362,7 +357,6 @@ Phase 5: Command wiring
 - [ ] Wire `schema regen` to write B + regenerate lock metadata.
 - [ ] Add `db diff` as live-vs-expected command and remove `schema diff --live`.
 - [ ] Add `--clean` only to `schema validate` and `schema regen`; reject it for `schema diff` and `db diff`.
-- [ ] Add `--worktree` to `db diff` and lockfile-era `schema` commands.
 - [ ] Remove `--expected` from live diff surface.
 - [ ] Move live DB verbs to `matey db ...` namespace and remove top-level DB aliases.
 - [ ] Keep `db up` / `db migrate` / `db down` mutators; remove `db rollback`.
@@ -388,12 +382,10 @@ Phase 6: Tests
 - [ ] Integration: append-only branch flow.
 - [ ] Integration: historical rewrite with usable pre-divergence anchor.
 - [ ] Integration: no-anchor path requires `--clean`.
-- [ ] Integration: `--worktree` behavior.
 - [ ] Integration: `schema validate --down` success/failure cases.
 - [ ] Integration: checkpoint-load + tail-only replay succeeds (no duplicate object application).
 - [ ] CLI tests: `schema diff`/`db diff` reject `--clean`.
 - [ ] CLI tests: `schema diff`/`db diff` reject `--live` and `--expected`.
-- [ ] CLI tests: `db diff --worktree` behavior.
 - [ ] CLI tests: `db rollback` is an unknown command.
 - [ ] CLI tests: `db up` performs create-if-needed behavior; `db migrate` does not.
 - [ ] CLI tests: lockfile-era `schema` commands reject `--schema-only`, `--path-only`, `--no-upgrade-diff`.

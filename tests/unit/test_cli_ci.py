@@ -48,11 +48,11 @@ def test_ci_init_targets_only_writes_workflow(tmp_path: Path, monkeypatch) -> No
     assert not (tmp_path / "matey.toml").exists()
 
 
-def test_ci_init_print_mode_does_not_write_files(tmp_path: Path, monkeypatch) -> None:
+def test_ci_init_rejects_print_flag(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     result = runner.invoke(app, ["ci", "init", "github", "--targets", "core", "--print"])
-    assert result.exit_code == 0
-    assert "matey-schema-validate" in result.output
+    assert result.exit_code != 0
+    assert "No such option: --print" in result.output
     assert not (tmp_path / ".github" / "workflows" / "matey-schema-validate.yml").exists()
 
 

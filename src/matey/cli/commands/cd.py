@@ -4,7 +4,7 @@ from typing import Annotated
 
 import typer
 
-from matey.cli.common import get_options, print_rendered_files
+from matey.cli.common import get_options
 from matey.templates import CIProvider, parse_target_list, render_cd_template
 from matey.templates.types import TemplateFile
 
@@ -30,10 +30,6 @@ def register(cd_app: typer.Typer) -> None:
     def cd_init(
         ctx: typer.Context,
         provider: Annotated[CIProvider, typer.Argument(help="CD provider: github, gitlab, buildkite.")],
-        print_mode: Annotated[
-            bool,
-            typer.Option("--print", help="Print files to stdout instead of writing."),
-        ] = False,
         force: Annotated[
             bool,
             typer.Option("--force", help="Overwrite existing files."),
@@ -49,10 +45,6 @@ def register(cd_app: typer.Typer) -> None:
             rendered_files: list[TemplateFile] = [render_cd_template(provider, targets=parsed_targets)]
         except ValueError as error:
             raise typer.BadParameter(str(error)) from error
-
-        if print_mode:
-            print_rendered_files(rendered_files)
-            return
 
         for rendered_file in rendered_files:
             if rendered_file.path.exists() and not force:
