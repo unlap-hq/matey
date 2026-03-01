@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from matey.app.config_engine import load_effective_config, select_target_names
-from matey.domain.errors import ConfigError, TargetSelectionError
+from matey.config import load_effective_config, select_target_names
+from matey.errors import ConfigError, TargetSelectionError
 
 
 def test_load_effective_config_from_top_level_target_tables(tmp_path: Path) -> None:

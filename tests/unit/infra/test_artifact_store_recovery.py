@@ -3,9 +3,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from matey.app.protocols import ArtifactDelete, ArtifactWrite
-from matey.domain.model import TargetKey
-from matey.infra.artifact_store import SqliteArtifactStore
+from matey.artifacts import SqliteArtifactStore
+from matey.models import ArtifactDelete, ArtifactWrite, TargetKey
 
 
 def _set_state(store: SqliteArtifactStore, txid: str, state: str) -> None:

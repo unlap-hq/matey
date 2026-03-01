@@ -1,8 +1,7 @@
 from pathlib import Path
 
-from matey.app.protocols import ArtifactDelete, ArtifactWrite
-from matey.domain.model import TargetKey
-from matey.infra.artifact_store import SqliteArtifactStore
+from matey.artifacts import SqliteArtifactStore
+from matey.models import ArtifactDelete, ArtifactWrite, TargetKey
 
 
 def test_artifact_store_begin_apply_finalize_and_recover(tmp_path: Path) -> None:

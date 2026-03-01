@@ -4,29 +4,27 @@ from collections import defaultdict
 from contextlib import contextmanager
 from pathlib import Path
 
-from matey.app.config_engine import TargetRuntime
-from matey.app.protocols import (
-    CmdResult,
-    ScratchHandle,
-    WorktreeChange,
-)
-from matey.app.runtime import AppContext
-from matey.domain.lockfile import (
+from matey.config import TargetRuntime
+from matey.engine import EnginePolicyRegistry
+from matey.lock import (
     LockStep,
     SchemaLock,
     digest_bytes_blake2b256,
     lock_chain_seed,
     lock_chain_step,
 )
-from matey.domain.model import (
+from matey.models import (
+    CmdResult,
     ConfigDefaults,
     Engine,
     ResolvedTargetConfig,
+    ScratchHandle,
     SqlSource,
+    WorktreeChange,
     derive_target_key,
 )
-from matey.infra.engine_policy import EnginePolicyRegistry
-from matey.infra.sql_pipeline import SqlPipeline
+from matey.runtime import AppContext
+from matey.sql import SqlPipeline
 
 
 def cmd_result(*, exit_code: int = 0, stdout: str = "", stderr: str = "") -> CmdResult:
@@ -222,13 +220,13 @@ class ScriptedDbmate:
 
     @staticmethod
     def to_output(result: CmdResult):
-        from matey.domain.dbmate_output import DbmateOutput
+        from matey.parsing import DbmateOutput
 
         return DbmateOutput(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
 
 
 def build_runtime(*, repo_root: Path, target_name: str = "core") -> TargetRuntime:
-    from matey.app.config_engine import build_target_runtime
+    from matey.config import build_target_runtime
 
     db_dir = repo_root / "db" / target_name
     db_dir.mkdir(parents=True, exist_ok=True)
@@ -320,8 +318,9 @@ def build_context(
     env: FakeEnv | None = None,
     dbmate: ScriptedDbmate | None = None,
     scratch: FakeScratch | None = None,
+    scope: FakeScope | None = None,
 ) -> AppContext:
-    from matey.infra.runtime_io import LocalFileSystem
+    from matey.platform import LocalFileSystem
 
     return AppContext(
         fs=LocalFileSystem(),
@@ -333,7 +332,7 @@ def build_context(
         engine_policies=EnginePolicyRegistry(),
         scratch=scratch or FakeScratch(),
         artifact_store=FakeArtifactStore(),
-        scope=FakeScope(),
+        scope=scope or FakeScope(),
     )
 
 

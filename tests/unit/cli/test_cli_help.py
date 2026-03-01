@@ -1,6 +1,6 @@
 from typer.testing import CliRunner
 
-from matey.cli.app import app
+from matey.cli import app
 
 
 def test_root_help_lists_groups() -> None:

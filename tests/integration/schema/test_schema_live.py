@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from matey.app.schema_engine import SchemaEngine
+from matey.schema import SchemaEngine
 from tests.integration.conftest import live_container, write_migration
 
 

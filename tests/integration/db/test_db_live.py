@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from matey.app.db_engine import DbEngine
-from matey.app.schema_engine import SchemaEngine
+from matey.db import DbEngine
+from matey.schema import SchemaEngine
 from tests.integration.conftest import write_migration
 
 
@@ -100,10 +100,11 @@ def test_db_guarded_workflow_sqlite(app_context, runtime, defaults) -> None:
         test_url_override=None,
         keep_scratch=False,
     )
-    db_engine.db_plan(
+    plan_after_down = db_engine.db_plan(
         runtime=runtime,
         defaults=defaults,
         url_override=live_url,
         test_url_override=None,
         keep_scratch=False,
     )
+    assert plan_after_down.result.comparison.equal is False

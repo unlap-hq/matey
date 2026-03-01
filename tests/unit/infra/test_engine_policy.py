@@ -1,10 +1,10 @@
-from matey.domain.model import Engine
-from matey.infra.engine_policy import (
+from matey.engine import (
     EnginePolicyRegistry,
     classify_create_outcome,
     classify_missing_db,
     detect_engine_from_url,
 )
+from matey.models import Engine
 
 
 def test_detect_engine_from_url() -> None:

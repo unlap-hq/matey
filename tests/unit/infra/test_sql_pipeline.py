@@ -1,5 +1,5 @@
-from matey.domain.model import Engine, SqlSource
-from matey.infra.sql_pipeline import SqlPipeline
+from matey.models import Engine, SqlSource
+from matey.sql import SqlPipeline
 
 
 def test_sql_pipeline_compare_equal_after_bigquery_dataset_normalization() -> None:

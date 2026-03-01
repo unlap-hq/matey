@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import typer
 
-from matey.cli.app import app
-from matey.domain.errors import CliUsageError, MateyError
+from matey.cli import app
+from matey.errors import CliUsageError, MateyError
 
 
 def main() -> int:

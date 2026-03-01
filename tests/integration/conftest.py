@@ -10,21 +10,19 @@ from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 import pytest
 
-from matey.app.config_engine import ConfigDefaults, TargetRuntime, build_target_runtime
-from matey.app.protocols import WorktreeChange
-from matey.app.runtime import AppContext, CommandScope
-from matey.domain.model import ResolvedTargetConfig
-from matey.infra.artifact_store import SqliteArtifactStore
-from matey.infra.dbmate import DbmateGateway
-from matey.infra.engine_policy import EnginePolicyRegistry
-from matey.infra.runtime_io import (
+from matey.artifacts import SqliteArtifactStore
+from matey.config import ConfigDefaults, TargetRuntime, build_target_runtime
+from matey.dbmate import DbmateGateway
+from matey.engine import EnginePolicyRegistry, ScratchManager
+from matey.models import ResolvedTargetConfig, WorktreeChange
+from matey.platform import (
     LocalFileSystem,
     ReentrantLockManager,
     SubprocessRunner,
     TypedSettingsEnvProvider,
 )
-from matey.infra.scratch import ScratchManager
-from matey.infra.sql_pipeline import SqlPipeline
+from matey.runtime import AppContext, CommandScope
+from matey.sql import SqlPipeline
 
 
 class _GitStub:

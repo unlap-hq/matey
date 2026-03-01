@@ -2,11 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from matey.app.runtime import CommandScope
-from matey.domain.errors import TargetIdentityError
-from matey.domain.model import TargetKey, derive_target_key
-from matey.infra.artifact_store import SqliteArtifactStore
-from matey.infra.runtime_io import ReentrantLockManager
+from matey.artifacts import SqliteArtifactStore
+from matey.errors import TargetIdentityError
+from matey.models import TargetKey, derive_target_key
+from matey.platform import ReentrantLockManager
+from matey.runtime import CommandScope
 
 
 def test_command_scope_checks_target_identity(tmp_path: Path) -> None:

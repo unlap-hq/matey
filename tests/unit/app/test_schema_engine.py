@@ -4,17 +4,18 @@ from pathlib import Path
 
 import pytest
 
-from matey.app.schema_engine import SchemaEngine, _ReplayPlan
-from matey.domain.errors import ReplayError
-from matey.domain.lockfile import (
+from matey.errors import ReplayError
+from matey.lock import (
     LockStep,
     SchemaLock,
     digest_bytes_blake2b256,
     lock_chain_seed,
     lock_chain_step,
 )
-from matey.domain.model import Engine, SqlSource, derive_target_key
-from matey.infra.sql_pipeline import SqlPipeline
+from matey.models import Engine, SqlSource, derive_target_key
+from matey.schema import ReplayPlan as _ReplayPlan
+from matey.schema import SchemaEngine, build_replay_plan, workspace_migrations
+from matey.sql import SqlPipeline
 from tests.unit.app.helpers import (
     FakeEnv,
     FakeGit,
@@ -113,7 +114,7 @@ def test_build_replay_plan_selects_base_checkpoint_anchor_after_divergence(tmp_p
         url_override="sqlite3:/tmp/live.db",
         test_url_override="sqlite3:/tmp/test.db",
     )
-    replay = engine._build_replay_plan(op=op)
+    replay = build_replay_plan(ctx=engine._ctx, op=op)
 
     assert replay.divergence == 2
     assert replay.anchor_sql == "CREATE TABLE a(id INTEGER);\n"
@@ -139,7 +140,7 @@ def test_build_replay_plan_clean_uses_full_tail_without_git(tmp_path: Path) -> N
         url_override="sqlite3:/tmp/live.db",
         test_url_override=None,
     )
-    replay = engine._build_replay_plan(op=op)
+    replay = build_replay_plan(ctx=engine._ctx, op=op)
 
     assert replay.divergence == 1
     assert replay.anchor_sql is None
@@ -167,7 +168,7 @@ def test_build_replay_plan_local_mode_skips_git_base_resolution(tmp_path: Path) 
         url_override="sqlite3:/tmp/live.db",
         test_url_override=None,
     )
-    replay = engine._build_replay_plan(op=op)
+    replay = build_replay_plan(ctx=engine._ctx, op=op)
     assert replay.divergence == 1
     assert [row.migration.rel_path for row in replay.tail_states] == ["migrations/001_init.sql"]
 
@@ -190,7 +191,7 @@ def test_build_replay_plan_uses_ci_base_env_when_base_not_passed(tmp_path: Path)
         url_override="sqlite3:/tmp/live.db",
         test_url_override=None,
     )
-    replay = engine._build_replay_plan(op=op)
+    replay = build_replay_plan(ctx=engine._ctx, op=op)
     assert replay.divergence == 1
 
 
@@ -215,7 +216,7 @@ def test_build_replay_plan_rejects_base_schema_without_migrations(tmp_path: Path
         test_url_override=None,
     )
     with pytest.raises(ReplayError, match="schema file exists without migrations"):
-        engine._build_replay_plan(op=op)
+        build_replay_plan(ctx=engine._ctx, op=op)
 
 
 def test_build_replay_plan_rejects_base_checkpoints_without_migrations(tmp_path: Path) -> None:
@@ -240,7 +241,7 @@ def test_build_replay_plan_rejects_base_checkpoints_without_migrations(tmp_path:
         test_url_override=None,
     )
     with pytest.raises(ReplayError, match="checkpoints exist without migrations"):
-        engine._build_replay_plan(op=op)
+        build_replay_plan(ctx=engine._ctx, op=op)
 
 
 def test_schema_status_reports_missing_and_orphan_checkpoints(tmp_path: Path) -> None:
@@ -268,6 +269,49 @@ def test_schema_status_reports_missing_and_orphan_checkpoints(tmp_path: Path) ->
     statuses = {row.status for row in result.rows}
     assert "checkpoint-missing" in statuses
     assert "orphan-checkpoint" in statuses
+
+
+def test_schema_status_reports_missing_schema_sql(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    runtime = build_runtime(repo_root=repo)
+    _write_migration(runtime.paths.migrations_dir / "001_init.sql", up_sql="CREATE TABLE a(id INTEGER);")
+    (runtime.paths.checkpoints_dir / "001_init.sql").write_text("CREATE TABLE a(id INTEGER);\n", encoding="utf-8")
+    write_lock_for_runtime(
+        runtime=runtime,
+        repo_root=repo,
+        engine=Engine.SQLITE,
+        schema_sql="CREATE TABLE a(id INTEGER);\n",
+    )
+    runtime.paths.schema_file.unlink()
+
+    engine = SchemaEngine(context=build_context(repo_root=repo))
+    result = engine.schema_status(runtime=runtime, defaults=default_defaults(), base_ref=None)
+
+    assert result.stale is True
+    assert any(row.status == "schema-missing" for row in result.rows)
+
+
+def test_schema_status_reports_lock_target_mismatch(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    runtime = build_runtime(repo_root=repo)
+    _write_migration(runtime.paths.migrations_dir / "001_init.sql", up_sql="CREATE TABLE a(id INTEGER);")
+    (runtime.paths.checkpoints_dir / "001_init.sql").write_text("CREATE TABLE a(id INTEGER);\n", encoding="utf-8")
+    write_lock_for_runtime(
+        runtime=runtime,
+        repo_root=repo,
+        engine=Engine.SQLITE,
+        schema_sql="CREATE TABLE a(id INTEGER);\n",
+    )
+    runtime.paths.lock_file.write_text(
+        runtime.paths.lock_file.read_text(encoding="utf-8").replace('target = "core"', 'target = "other"', 1),
+        encoding="utf-8",
+    )
+
+    engine = SchemaEngine(context=build_context(repo_root=repo))
+    result = engine.schema_status(runtime=runtime, defaults=default_defaults(), base_ref=None)
+
+    assert result.stale is True
+    assert any(row.status == "target-mismatch" for row in result.rows)
 
 
 def test_execute_down_roundtrip_only_rolls_back_reversible_steps(tmp_path: Path) -> None:
@@ -304,7 +348,7 @@ def test_execute_down_roundtrip_only_rolls_back_reversible_steps(tmp_path: Path)
     replay_plan = _ReplayPlan(
         divergence=1,
         anchor_sql=None,
-        tail_states=engine._workspace_migrations(runtime.paths),
+        tail_states=workspace_migrations(runtime.paths),
         base_states=(),
         orphan_checkpoints=(),
     )

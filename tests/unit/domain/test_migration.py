@@ -1,4 +1,4 @@
-from matey.domain.migration import parse_down_section_state, parse_migration_files
+from matey.parsing import parse_down_section_state, parse_migration_files
 
 
 def test_parse_migration_files_orders_sql_and_ignores_non_sql() -> None:

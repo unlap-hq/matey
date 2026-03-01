@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from matey.app.protocols import CmdResult
-from matey.infra.dbmate import DbmateGateway
+from matey.dbmate import DbmateGateway
+from matey.models import CmdResult
 
 
 class _Runner:

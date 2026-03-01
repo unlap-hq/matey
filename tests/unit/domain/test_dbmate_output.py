@@ -1,7 +1,7 @@
 import pytest
 
-from matey.domain.dbmate_output import DbmateOutput, extract_dump_sql, parse_status_output
-from matey.domain.errors import ExternalCommandError
+from matey.errors import ExternalCommandError
+from matey.parsing import DbmateOutput, extract_dump_sql, parse_status_output
 
 
 def test_parse_status_output_extracts_applied_rows() -> None:

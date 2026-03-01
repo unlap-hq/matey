@@ -1,7 +1,7 @@
 import pytest
 
-from matey.domain.errors import LockfileError
-from matey.domain.lockfile import LockStep, SchemaLock, validate_lock_shape
+from matey.errors import LockfileError
+from matey.lock import LockStep, SchemaLock, validate_lock_shape
 
 
 def _make_lock() -> SchemaLock:
@@ -47,4 +47,11 @@ def test_validate_lock_shape_rejects_head_index_mismatch() -> None:
     lock = _make_lock()
     bad = SchemaLock(**{**lock.__dict__, "head_index": 2})
     with pytest.raises(LockfileError):
+        validate_lock_shape(bad)
+
+
+def test_validate_lock_shape_rejects_unknown_engine() -> None:
+    lock = _make_lock()
+    bad = SchemaLock(**{**lock.__dict__, "engine": "bogus"})
+    with pytest.raises(LockfileError, match="Unsupported engine"):
         validate_lock_shape(bad)
