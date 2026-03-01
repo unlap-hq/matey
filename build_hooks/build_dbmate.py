@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -14,14 +13,84 @@ except Exception:  # pragma: no cover - hatchling import is only required for wh
     BuildHookInterface = object  # type: ignore[assignment]
 
 
-def _load_build_env(environ: Mapping[str, str]) -> Any:
-    src_root = Path(__file__).resolve().parents[1] / "src"
-    src_root_str = str(src_root)
-    if src_root_str not in sys.path:
-        sys.path.insert(0, src_root_str)
-    from matey.env import load_build_env
+DEFAULT_DBMATE_MODULE = "github.com/amacneil/dbmate/v2"
+DEFAULT_DBMATE_VERSION = "v2.31.0"
+DEFAULT_DBMATE_SOURCE = "go-install"
+DEFAULT_DBMATE_CGO_ENABLED = "1"
+DEFAULT_GO_LICENSES_MODULE = "github.com/google/go-licenses/v2"
+DEFAULT_GO_LICENSES_VERSION = "v2.0.1"
+DEFAULT_GO_LICENSES_DISALLOWED_TYPES = "forbidden,restricted,unknown"
+DEFAULT_GO_LICENSES_ENFORCE = False
 
-    return load_build_env(environ=environ)
+
+class _BuildEnv:
+    def __init__(
+        self,
+        *,
+        dbmate_source: str,
+        dbmate_module: str,
+        dbmate_version: str,
+        dbmate_cgo_enabled: str,
+        go_licenses_module: str,
+        go_licenses_version: str,
+        go_licenses_disallowed_types: str,
+        go_licenses_enforce: bool,
+    ) -> None:
+        self.dbmate_source = dbmate_source
+        self.dbmate_module = dbmate_module
+        self.dbmate_version = dbmate_version
+        self.dbmate_cgo_enabled = dbmate_cgo_enabled
+        self.go_licenses_module = go_licenses_module
+        self.go_licenses_version = go_licenses_version
+        self.go_licenses_disallowed_types = go_licenses_disallowed_types
+        self.go_licenses_enforce = go_licenses_enforce
+
+
+def _optional(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _parse_bool(raw: str | None, *, name: str, default: bool) -> bool:
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    raise ValueError(f"Invalid boolean value for {name}: {raw!r}")
+
+
+def _load_build_env(environ: Mapping[str, str]) -> _BuildEnv:
+    source = _optional(environ.get("MATEY_DBMATE_SOURCE")) or DEFAULT_DBMATE_SOURCE
+    module = _optional(environ.get("MATEY_DBMATE_MODULE")) or DEFAULT_DBMATE_MODULE
+    version = _optional(environ.get("MATEY_DBMATE_VERSION")) or DEFAULT_DBMATE_VERSION
+    cgo_enabled = _optional(environ.get("MATEY_DBMATE_CGO_ENABLED")) or DEFAULT_DBMATE_CGO_ENABLED
+    go_licenses_module = _optional(environ.get("MATEY_GO_LICENSES_MODULE")) or DEFAULT_GO_LICENSES_MODULE
+    go_licenses_version = _optional(environ.get("MATEY_GO_LICENSES_VERSION")) or DEFAULT_GO_LICENSES_VERSION
+    go_licenses_disallowed_types = (
+        _optional(environ.get("MATEY_GO_LICENSES_DISALLOWED_TYPES"))
+        or DEFAULT_GO_LICENSES_DISALLOWED_TYPES
+    )
+    go_licenses_enforce = _parse_bool(
+        _optional(environ.get("MATEY_GO_LICENSES_ENFORCE")),
+        name="MATEY_GO_LICENSES_ENFORCE",
+        default=DEFAULT_GO_LICENSES_ENFORCE,
+    )
+
+    return _BuildEnv(
+        dbmate_source=source,
+        dbmate_module=module,
+        dbmate_version=version,
+        dbmate_cgo_enabled=cgo_enabled,
+        go_licenses_module=go_licenses_module,
+        go_licenses_version=go_licenses_version,
+        go_licenses_disallowed_types=go_licenses_disallowed_types,
+        go_licenses_enforce=go_licenses_enforce,
+    )
 
 
 def _run(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> str:

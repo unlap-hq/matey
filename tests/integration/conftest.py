@@ -2,95 +2,243 @@ from __future__ import annotations
 
 import os
 import subprocess
-import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 import pytest
 
-from matey.drivers.dbmate import bundled_dbmate_path
+from matey.app.config_engine import ConfigDefaults, TargetRuntime, build_target_runtime
+from matey.app.context import AppContext
+from matey.app.protocols import WorktreeChange
+from matey.app.scope import CommandScope
+from matey.domain.config import ResolvedTargetConfig
+from matey.infra.artifact_store import SqliteArtifactStore
+from matey.infra.dbmate import DbmateGateway
+from matey.infra.engine_policy import EnginePolicyRegistry
+from matey.infra.env import TypedSettingsEnvProvider
+from matey.infra.fs import LocalFileSystem
+from matey.infra.locking import ReentrantLockManager
+from matey.infra.proc import SubprocessRunner
+from matey.infra.scratch.factory import ScratchManager
+from matey.infra.sql_pipeline import SqlPipeline
 
 
-def _resolve_dbmate_binary() -> Path | None:
-    env_path = os.getenv("MATEY_DBMATE_BIN")
-    if env_path:
-        candidate = Path(env_path)
-        if candidate.exists():
-            return candidate
+class _GitStub:
+    def __init__(self, repo_root: Path) -> None:
+        self._repo_root = repo_root.resolve()
+
+    def repo_root(self) -> Path:
+        return self._repo_root
+
+    def head_commit(self) -> str:
+        return "head"
+
+    def resolve_ref(self, ref: str) -> str:
+        return ref
+
+    def merge_base(self, left_ref: str, right_ref: str) -> str:
+        del left_ref, right_ref
+        return "base"
+
+    def read_blob_bytes(self, commit: str, rel_path: Path) -> bytes | None:
+        del commit, rel_path
         return None
 
-    bundled = bundled_dbmate_path()
-    if bundled.exists():
-        return bundled
-    return None
+    def list_tree_paths(self, commit: str, rel_dir: Path) -> tuple[Path, ...]:
+        del commit, rel_dir
+        return ()
+
+    def has_local_changes(self, *, rel_paths: tuple[Path, ...]) -> bool:
+        del rel_paths
+        return False
+
+    def list_local_changes(self, *, rel_paths: tuple[Path, ...]) -> tuple[WorktreeChange, ...]:
+        del rel_paths
+        return ()
+
+
+@dataclass(frozen=True)
+class LiveUrl:
+    engine: str
+    url: str
+    test_url: str | None
 
 
 @pytest.fixture(scope="session")
-def dbmate_binary() -> Path:
-    resolved = _resolve_dbmate_binary()
-    if resolved is None:
-        pytest.skip(
-            "No dbmate binary found for integration tests. "
-            "Set MATEY_DBMATE_BIN or build bundled dbmate first."
+def defaults() -> ConfigDefaults:
+    return ConfigDefaults()
+
+
+@pytest.fixture
+def integration_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True)
+    return repo
+
+
+@pytest.fixture
+def runtime(integration_repo: Path) -> TargetRuntime:
+    db_dir = integration_repo / "db" / "core"
+    db_dir.mkdir(parents=True, exist_ok=True)
+    (db_dir / "migrations").mkdir(parents=True, exist_ok=True)
+    (db_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
+    return build_target_runtime(
+        resolved=ResolvedTargetConfig(
+            name="core",
+            db_dir=db_dir,
+            url_env="MATEY_URL",
+            test_url_env="MATEY_TEST_URL",
         )
-    return resolved
-
-
-@pytest.fixture(scope="session")
-def docker_available() -> bool:
-    result = subprocess.run(
-        ["docker", "info"],
-        check=False,
-        capture_output=True,
-        text=True,
     )
-    return result.returncode == 0
+
+
+@pytest.fixture
+def app_context(integration_repo: Path) -> AppContext:
+    env = TypedSettingsEnvProvider()
+    git = _GitStub(integration_repo)
+    dbmate = DbmateGateway(runner=SubprocessRunner(), env=env)
+    artifact_store = SqliteArtifactStore(repo_root=integration_repo)
+    lock_manager = ReentrantLockManager(lock_root=integration_repo / ".matey" / "locks")
+    scope = CommandScope(
+        repo_root=integration_repo,
+        lock_manager=lock_manager,
+        artifact_store=artifact_store,
+    )
+    policies = EnginePolicyRegistry()
+    return AppContext(
+        fs=LocalFileSystem(),
+        proc=SubprocessRunner(),
+        env=env,
+        git=git,
+        dbmate=dbmate,
+        sql_pipeline=SqlPipeline(),
+        engine_policies=policies,
+        scratch=ScratchManager(engine_policies=policies),
+        artifact_store=artifact_store,
+        scope=scope,
+    )
+
+
+def write_migration(
+    *,
+    runtime: TargetRuntime,
+    version: str,
+    name: str,
+    up_sql: str,
+    down_sql: str | None = None,
+) -> Path:
+    filename = f"{version}_{name}.sql"
+    path = runtime.paths.migrations_dir / filename
+    lines = ["-- migrate:up", up_sql]
+    if down_sql is not None:
+        lines.extend(["-- migrate:down", down_sql])
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def docker_available() -> bool:
+    try:
+        completed = subprocess.run(
+            ("docker", "info"),
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        return False
+    return completed.returncode == 0
 
 
 @pytest.fixture(scope="session")
-def engine_supported(dbmate_binary: Path) -> callable:
-    cache: dict[str, bool] = {}
+def has_docker() -> bool:
+    return docker_available()
 
-    def _check(engine: str) -> bool:
-        cached = cache.get(engine)
-        if cached is not None:
-            return cached
 
-        with tempfile.TemporaryDirectory(prefix="matey-engine-probe-") as probe_dir:
-            root = Path(probe_dir)
-            migrations = root / "migrations"
-            migrations.mkdir(parents=True, exist_ok=True)
-            schema = root / "schema.sql"
-            schema.write_text("-- probe\n", encoding="utf-8")
+@contextmanager
+def live_container(engine: str, db_name: str) -> Iterator[LiveUrl]:
+    if engine == "postgres":
+        from testcontainers.postgres import PostgresContainer
 
-            url_by_engine = {
-                "sqlite": f"sqlite3:{(root / 'probe.sqlite3').as_posix()}",
-                "postgres": "postgres://127.0.0.1:1/postgres?sslmode=disable",
-                "mysql": "mysql://127.0.0.1:1/mysql",
-                "clickhouse": "clickhouse://127.0.0.1:1/default",
-            }
-            probe_url = url_by_engine.get(engine)
-            if probe_url is None:
-                cache[engine] = False
-                return False
+        container = PostgresContainer(
+            image="postgres:16-alpine",
+            username="postgres",
+            password="postgres",
+            dbname=db_name,
+        )
+        container.start()
+        try:
+            host = container.get_container_host_ip()
+            if host in {"localhost", "0.0.0.0"}:
+                host = "127.0.0.1"
+            port = container.get_exposed_port(5432)
+            url = f"postgres://postgres:postgres@{host}:{port}/{db_name}?sslmode=disable"
+            yield LiveUrl(engine=engine, url=url, test_url=None)
+        finally:
+            container.stop()
+        return
 
-            result = subprocess.run(
-                [
-                    str(dbmate_binary),
-                    "--url",
-                    probe_url,
-                    "--migrations-dir",
-                    str(migrations),
-                    "--schema-file",
-                    str(schema),
-                    "status",
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
+    if engine == "mysql":
+        from testcontainers.mysql import MySqlContainer
+
+        container = MySqlContainer(
+            image="mysql:8.4",
+            username="root",
+            password="root",
+            dbname=db_name,
+        )
+        container.start()
+        try:
+            host = container.get_container_host_ip()
+            if host in {"localhost", "0.0.0.0"}:
+                host = "127.0.0.1"
+            port = container.get_exposed_port(3306)
+            url = f"mysql://root:root@{host}:{port}/{db_name}"
+            yield LiveUrl(engine=engine, url=url, test_url=None)
+        finally:
+            container.stop()
+        return
+
+    if engine == "clickhouse":
+        from testcontainers.clickhouse import ClickHouseContainer
+
+        container = ClickHouseContainer(image="clickhouse/clickhouse-server:24.8")
+        container.start()
+        try:
+            base = str(container.get_connection_url())
+            parsed = urlsplit(base)
+            host = parsed.hostname or container.get_container_host_ip()
+            if host in {"localhost", "0.0.0.0"}:
+                host = "127.0.0.1"
+            port = parsed.port or int(container.get_exposed_port(9000))
+            user = parsed.username or ""
+            password = parsed.password or ""
+            auth = user
+            if password or user:
+                auth = f"{user}:{password}"
+            netloc = f"{auth}@{host}:{port}" if auth else f"{host}:{port}"
+            rebuilt = SplitResult(
+                scheme=parsed.scheme,
+                netloc=netloc,
+                path=f"/{db_name}",
+                query=parsed.query,
+                fragment=parsed.fragment,
             )
-            stderr_text = (result.stderr or "").lower()
-            supported = "unsupported driver" not in stderr_text
-            cache[engine] = supported
-            return supported
+            url = urlunsplit(rebuilt)
+            yield LiveUrl(engine=engine, url=url, test_url=None)
+        finally:
+            container.stop()
+        return
 
-    return _check
+    raise ValueError(f"Unsupported engine for live container: {engine}")
+
+
+@pytest.fixture
+def bigquery_urls() -> LiveUrl:
+    live = os.environ.get("MATEY_BIGQUERY_URL", "").strip()
+    test = os.environ.get("MATEY_BIGQUERY_TEST_URL", "").strip()
+    if not live or not test:
+        pytest.skip("BigQuery integration requires MATEY_BIGQUERY_URL and MATEY_BIGQUERY_TEST_URL")
+    return LiveUrl(engine="bigquery", url=live, test_url=test)
