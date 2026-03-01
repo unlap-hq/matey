@@ -5,16 +5,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from matey.app.config_engine import TargetRuntime
-from matey.app.context import AppContext
+from matey.app.protocols import cmd_result_to_output, require_cmd_success
+from matey.app.runtime import AppContext
 from matey.app.schema_engine import SchemaEngine
-from matey.domain.config import ConfigDefaults
 from matey.domain.dbmate_output import (
     DbStatusSnapshot,
     extract_dump_sql,
     extract_status_text,
     parse_status_output,
 )
-from matey.domain.engine import Engine
 from matey.domain.errors import (
     BigQueryPreflightError,
     EngineInferenceError,
@@ -25,15 +24,20 @@ from matey.domain.errors import (
     SchemaMismatchError,
 )
 from matey.domain.lockfile import SchemaLock, load_lock_from_text
-from matey.domain.plan import DbOpContext
-from matey.domain.result import DbPlanResult
-from matey.domain.sql import SqlSource
-from matey.domain.target import derive_target_key
+from matey.domain.model import (
+    ConfigDefaults,
+    DbOpContext,
+    DbPlanResult,
+    Engine,
+    SqlSource,
+    derive_target_key,
+)
 from matey.infra.engine_policy import (
     classify_create_outcome,
     classify_missing_db,
     detect_engine_from_url,
 )
+from matey.infra.runtime_io import normalized_optional
 
 
 @dataclass(frozen=True)
@@ -49,13 +53,13 @@ class DbEngine:
 
     def db_new(self, *, runtime: TargetRuntime, name: str) -> str:
         result = self._ctx.dbmate.new(name=name, migrations_dir=runtime.paths.migrations_dir)
-        self._require_success(result, "dbmate new failed")
+        require_cmd_success(result, "dbmate new failed")
         return result.stdout
 
     def db_create(self, *, runtime: TargetRuntime, url_override: str | None) -> str:
         url = self._resolve_live_url(runtime=runtime, url_override=url_override)
         result = self._ctx.dbmate.create(url=url, migrations_dir=runtime.paths.migrations_dir)
-        self._require_success(result, "dbmate create failed")
+        require_cmd_success(result, "dbmate create failed")
         return result.stdout
 
     def db_wait(
@@ -67,13 +71,13 @@ class DbEngine:
     ) -> str:
         url = self._resolve_live_url(runtime=runtime, url_override=url_override)
         result = self._ctx.dbmate.wait(url=url, timeout_seconds=timeout_seconds)
-        self._require_success(result, "dbmate wait failed")
+        require_cmd_success(result, "dbmate wait failed")
         return result.stdout
 
     def db_status(self, *, runtime: TargetRuntime, url_override: str | None) -> str:
         url = self._resolve_live_url(runtime=runtime, url_override=url_override)
         result = self._ctx.dbmate.status(url=url, migrations_dir=runtime.paths.migrations_dir)
-        self._require_success(result, "dbmate status failed")
+        require_cmd_success(result, "dbmate status failed")
         payload = result.stdout
         if payload:
             return payload
@@ -92,19 +96,19 @@ class DbEngine:
             schema_path=schema_path,
             migrations_dir=runtime.paths.migrations_dir,
         )
-        self._require_success(result, "dbmate load failed")
+        require_cmd_success(result, "dbmate load failed")
         return result.stdout
 
     def db_dump(self, *, runtime: TargetRuntime, url_override: str | None) -> str:
         url = self._resolve_live_url(runtime=runtime, url_override=url_override)
         result = self._ctx.dbmate.dump(url=url, migrations_dir=runtime.paths.migrations_dir)
-        self._require_success(result, "dbmate dump failed")
-        return extract_dump_sql(self._ctx.dbmate.to_output(result))
+        require_cmd_success(result, "dbmate dump failed")
+        return extract_dump_sql(cmd_result_to_output(result))
 
     def db_drop(self, *, runtime: TargetRuntime, url_override: str | None) -> str:
         url = self._resolve_live_url(runtime=runtime, url_override=url_override)
         result = self._ctx.dbmate.drop(url=url, migrations_dir=runtime.paths.migrations_dir)
-        self._require_success(result, "dbmate drop failed")
+        require_cmd_success(result, "dbmate drop failed")
         return result.stdout
 
     def db_raw(
@@ -116,7 +120,7 @@ class DbEngine:
     ) -> str:
         url = self._resolve_live_url(runtime=runtime, url_override=url_override)
         result = self._ctx.dbmate.raw(argv_suffix=argv_suffix, url=url, migrations_dir=runtime.paths.migrations_dir)
-        self._require_success(result, "dbmate command failed")
+        require_cmd_success(result, "dbmate command failed")
         return result.stdout
 
     def db_up(
@@ -255,20 +259,20 @@ class DbEngine:
 
             if verb == "up":
                 mutate = self._ctx.dbmate.up(url=op.live_url, migrations_dir=op.target_paths.migrations_dir)
-                self._require_success(mutate, "dbmate up failed")
+                require_cmd_success(mutate, "dbmate up failed")
             elif verb == "migrate":
                 mutate = self._ctx.dbmate.migrate(
                     url=op.live_url,
                     migrations_dir=op.target_paths.migrations_dir,
                 )
-                self._require_success(mutate, "dbmate migrate failed")
+                require_cmd_success(mutate, "dbmate migrate failed")
             else:
                 mutate = self._ctx.dbmate.rollback(
                     url=op.live_url,
                     migrations_dir=op.target_paths.migrations_dir,
                     steps=steps,
                 )
-                self._require_success(mutate, "dbmate rollback failed")
+                require_cmd_success(mutate, "dbmate rollback failed")
 
             post_snapshot = self._require_status_snapshot(op=op)
             expected_delta = 1 if verb in {"up", "migrate"} else -steps
@@ -311,8 +315,8 @@ class DbEngine:
             self._require_lock_prefix(lock=lock, snapshot=snapshot)
 
             live_dump = self._ctx.dbmate.dump(url=op.live_url, migrations_dir=op.target_paths.migrations_dir)
-            self._require_success(live_dump, "dbmate dump failed")
-            live_sql = extract_dump_sql(self._ctx.dbmate.to_output(live_dump))
+            require_cmd_success(live_dump, "dbmate dump failed")
+            live_sql = extract_dump_sql(cmd_result_to_output(live_dump))
 
             if mode == "current":
                 expected_sql = self._expected_sql_for_index(op=op, lock=lock, index=snapshot.applied_count)
@@ -352,7 +356,7 @@ class DbEngine:
                 f"Live engine {live_engine.value} does not match lock engine {lock_engine.value}."
             )
 
-        test_url = _norm(test_url_override) or _norm(self._ctx.env.get(runtime.test_url_env))
+        test_url = normalized_optional(test_url_override) or normalized_optional(self._ctx.env.get(runtime.test_url_env))
 
         op = DbOpContext(
             target_id=runtime.target_id,
@@ -372,7 +376,7 @@ class DbEngine:
         runtime: TargetRuntime,
         url_override: str | None,
     ) -> str:
-        live_url = _norm(url_override) or _norm(self._ctx.env.get(runtime.url_env))
+        live_url = normalized_optional(url_override) or normalized_optional(self._ctx.env.get(runtime.url_env))
         if live_url is None:
             raise EngineInferenceError("Live database URL is required (--url or target url_env).")
         return live_url
@@ -396,7 +400,7 @@ class DbEngine:
 
         status_result = self._ctx.dbmate.status(url=op.live_url, migrations_dir=op.target_paths.migrations_dir)
         if status_result.exit_code == 0:
-            return parse_status_output(extract_status_text(self._ctx.dbmate.to_output(status_result)))
+            return parse_status_output(extract_status_text(cmd_result_to_output(status_result)))
 
         if verb == "up":
             detail = f"{status_result.stderr}\n{status_result.stdout}".strip().lower()
@@ -405,16 +409,16 @@ class DbEngine:
                     url=op.live_url,
                     migrations_dir=op.target_paths.migrations_dir,
                 )
-                self._require_success(create_result, "dbmate create failed for missing database")
+                require_cmd_success(create_result, "dbmate create failed for missing database")
                 return self._require_status_snapshot(op=op)
 
-        self._require_success(status_result, "dbmate status failed")
-        raise AssertionError("unreachable")
+        require_cmd_success(status_result, "dbmate status failed")
+        return self._require_status_snapshot(op=op)
 
     def _require_status_snapshot(self, *, op: DbOpContext) -> DbStatusSnapshot:
         status_result = self._ctx.dbmate.status(url=op.live_url, migrations_dir=op.target_paths.migrations_dir)
-        self._require_success(status_result, "dbmate status failed")
-        return parse_status_output(extract_status_text(self._ctx.dbmate.to_output(status_result)))
+        require_cmd_success(status_result, "dbmate status failed")
+        return parse_status_output(extract_status_text(cmd_result_to_output(status_result)))
 
     @staticmethod
     def _require_lock_prefix(*, lock: SchemaLock, snapshot: DbStatusSnapshot) -> None:
@@ -458,12 +462,12 @@ class DbEngine:
         try:
             if policy.wait_required:
                 wait = self._ctx.dbmate.wait(url=scratch.url, timeout_seconds=60)
-                self._require_success(wait, "dbmate wait failed for baseline scratch")
+                require_cmd_success(wait, "dbmate wait failed for baseline scratch")
             create = self._ctx.dbmate.create(url=scratch.url, migrations_dir=op.target_paths.migrations_dir)
-            self._require_success(create, "dbmate create failed for baseline scratch")
+            require_cmd_success(create, "dbmate create failed for baseline scratch")
             dump = self._ctx.dbmate.dump(url=scratch.url, migrations_dir=op.target_paths.migrations_dir)
-            self._require_success(dump, "dbmate dump failed for baseline scratch")
-            return extract_dump_sql(self._ctx.dbmate.to_output(dump))
+            require_cmd_success(dump, "dbmate dump failed for baseline scratch")
+            return extract_dump_sql(cmd_result_to_output(dump))
         finally:
             if scratch.cleanup_required and not op.keep_scratch:
                 drop = self._ctx.dbmate.drop(url=scratch.url, migrations_dir=op.target_paths.migrations_dir)
@@ -474,8 +478,8 @@ class DbEngine:
     def _run_pre_or_post_compare(self, *, op: DbOpContext, lock: SchemaLock, index: int) -> None:
         expected_sql = self._expected_sql_for_index(op=op, lock=lock, index=index)
         live_dump = self._ctx.dbmate.dump(url=op.live_url, migrations_dir=op.target_paths.migrations_dir)
-        self._require_success(live_dump, "dbmate dump failed for live comparison")
-        live_sql = extract_dump_sql(self._ctx.dbmate.to_output(live_dump))
+        require_cmd_success(live_dump, "dbmate dump failed for live comparison")
+        live_sql = extract_dump_sql(cmd_result_to_output(live_dump))
         comparison = self._ctx.sql_pipeline.compare(
             engine=op.live_engine,
             expected=SqlSource(text=expected_sql, origin="artifact"),
@@ -483,19 +487,3 @@ class DbEngine:
         )
         if not comparison.equal:
             raise LiveDriftError(comparison.diff or "Live schema drift detected.")
-
-    @staticmethod
-    def _require_success(result, message: str) -> None:
-        if result.exit_code == 0:
-            return
-        details = (result.stderr or result.stdout or "").strip()
-        if details:
-            raise ExternalCommandError(f"{message}. {details}")
-        raise ExternalCommandError(message)
-
-
-def _norm(value: str | None) -> str | None:
-    if value is None:
-        return None
-    stripped = value.strip()
-    return stripped or None

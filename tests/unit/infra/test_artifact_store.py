@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from matey.app.protocols import ArtifactDelete, ArtifactWrite
-from matey.domain.target import TargetKey
+from matey.domain.model import TargetKey
 from matey.infra.artifact_store import SqliteArtifactStore
 
 

@@ -75,7 +75,7 @@ class DbmateGateway(IDbmateGateway):
             argv.append("--no-dump-schema")
         argv.append(verb)
         argv.extend(extra_args)
-        return self._runner.run(tuple(argv))
+        return self._runner.run(tuple(argv), cwd=migrations_dir.parent)
 
     def new(self, name: str, migrations_dir: Path) -> CmdResult:
         argv = (
@@ -85,7 +85,7 @@ class DbmateGateway(IDbmateGateway):
             "new",
             name,
         )
-        return self._runner.run(argv)
+        return self._runner.run(argv, cwd=migrations_dir.parent)
 
     def wait(self, url: str, timeout_seconds: int) -> CmdResult:
         return self._runner.run(
@@ -164,10 +164,10 @@ class DbmateGateway(IDbmateGateway):
             url=url,
             migrations_dir=migrations_dir,
             verb="status",
-            no_dump_schema=False,
+            no_dump_schema=True,
         )
 
     def raw(self, argv_suffix: tuple[str, ...], url: str, migrations_dir: Path) -> CmdResult:
         argv = [str(self._dbmate_binary), "--url", url, "--migrations-dir", str(migrations_dir)]
         argv.extend(argv_suffix)
-        return self._runner.run(tuple(argv))
+        return self._runner.run(tuple(argv), cwd=migrations_dir.parent)

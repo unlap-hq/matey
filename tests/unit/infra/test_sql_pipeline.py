@@ -1,5 +1,4 @@
-from matey.domain.engine import Engine
-from matey.domain.sql import SqlSource
+from matey.domain.model import Engine, SqlSource
 from matey.infra.sql_pipeline import SqlPipeline
 
 

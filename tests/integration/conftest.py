@@ -11,18 +11,19 @@ from urllib.parse import SplitResult, urlsplit, urlunsplit
 import pytest
 
 from matey.app.config_engine import ConfigDefaults, TargetRuntime, build_target_runtime
-from matey.app.context import AppContext
 from matey.app.protocols import WorktreeChange
-from matey.app.scope import CommandScope
-from matey.domain.config import ResolvedTargetConfig
+from matey.app.runtime import AppContext, CommandScope
+from matey.domain.model import ResolvedTargetConfig
 from matey.infra.artifact_store import SqliteArtifactStore
 from matey.infra.dbmate import DbmateGateway
 from matey.infra.engine_policy import EnginePolicyRegistry
-from matey.infra.env import TypedSettingsEnvProvider
-from matey.infra.fs import LocalFileSystem
-from matey.infra.locking import ReentrantLockManager
-from matey.infra.proc import SubprocessRunner
-from matey.infra.scratch.factory import ScratchManager
+from matey.infra.runtime_io import (
+    LocalFileSystem,
+    ReentrantLockManager,
+    SubprocessRunner,
+    TypedSettingsEnvProvider,
+)
+from matey.infra.scratch import ScratchManager
 from matey.infra.sql_pipeline import SqlPipeline
 
 

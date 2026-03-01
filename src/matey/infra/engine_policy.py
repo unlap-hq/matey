@@ -4,8 +4,8 @@ import re
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 from matey.app.protocols import EngineClassifierPolicy, EnginePolicy, IEnginePolicyRegistry
-from matey.domain.engine import Engine
 from matey.domain.errors import EngineInferenceError
+from matey.domain.model import Engine
 
 _BIGQUERY_MULTI_REGION = {"us", "eu"}
 

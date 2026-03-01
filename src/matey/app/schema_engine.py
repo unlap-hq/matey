@@ -6,42 +6,49 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from matey.app.config_engine import TargetRuntime
-from matey.app.context import AppContext
-from matey.app.protocols import ArtifactDelete, ArtifactWrite, ScratchHandle
-from matey.domain.config import ConfigDefaults
-from matey.domain.dbmate_output import extract_dump_sql
-from matey.domain.digest import (
-    digest_bytes_blake2b256,
-    lock_chain_seed,
-    lock_chain_step,
+from matey.app.protocols import (
+    ArtifactDelete,
+    ArtifactWrite,
+    ScratchHandle,
+    cmd_result_to_output,
+    require_cmd_success,
 )
-from matey.domain.engine import Engine
+from matey.app.runtime import AppContext
+from matey.domain.dbmate_output import extract_dump_sql
 from matey.domain.errors import (
     CheckpointIntegrityError,
     EngineInferenceError,
-    ExternalCommandError,
     ReplayError,
 )
 from matey.domain.lockfile import (
-    LockComparableStep,
     LockStep,
     SchemaLock,
+    digest_bytes_blake2b256,
     first_divergence_against_lock,
     first_lock_mismatch,
     load_lock_from_text,
+    lock_chain_seed,
+    lock_chain_step,
     recompute_lock_chains,
 )
 from matey.domain.migration import (
-    DownSectionState,
     MigrationFile,
     parse_down_section_state,
     parse_migration_files,
 )
-from matey.domain.plan import SchemaOpContext
-from matey.domain.result import SchemaPlanResult, SchemaStatusResult, SchemaStatusRow
-from matey.domain.sql import SqlComparison, SqlSource
-from matey.domain.target import derive_target_key
+from matey.domain.model import (
+    ConfigDefaults,
+    Engine,
+    SchemaOpContext,
+    SchemaPlanResult,
+    SchemaStatusResult,
+    SchemaStatusRow,
+    SqlComparison,
+    SqlSource,
+    derive_target_key,
+)
 from matey.infra.engine_policy import detect_engine_from_url
+from matey.infra.runtime_io import normalized_optional
 
 _BASE_FALLBACK_ENV_KEYS = (
     "GITHUB_BASE_REF",
@@ -84,6 +91,42 @@ class _PlanComputation:
     comparison: SqlComparison
     normalized_b_sql: str
     scratch_url: str
+
+
+def _workspace_coherence_steps(states: tuple[_MigrationState, ...]) -> tuple[LockStep, ...]:
+    return tuple(
+        LockStep(
+            index=i,
+            version=state.migration.version,
+            migration_file=state.migration.rel_path,
+            migration_digest=state.migration_digest,
+            checkpoint_file=state.checkpoint_rel,
+            checkpoint_digest=state.checkpoint_digest or "",
+            schema_digest="",
+            chain_hash="",
+        )
+        for i, state in enumerate(states, start=1)
+    )
+
+
+def _base_coherence_steps(states: tuple[_GitMigrationState, ...]) -> tuple[LockStep, ...]:
+    return tuple(
+        LockStep(
+            index=i,
+            version=state.migration.version,
+            migration_file=state.migration.rel_path,
+            migration_digest=state.migration_digest,
+            checkpoint_file=state.checkpoint_rel,
+            checkpoint_digest=digest_bytes_blake2b256(state.checkpoint_bytes),
+            schema_digest="",
+            chain_hash="",
+        )
+        for i, state in enumerate(states, start=1)
+    )
+
+
+def _down_state(path: Path):
+    return parse_down_section_state(path.read_text(encoding="utf-8"))
 
 
 class SchemaEngine:
@@ -226,10 +269,10 @@ class SchemaEngine:
         url_override: str | None,
         test_url_override: str | None,
     ) -> tuple[Engine, str | None]:
-        chosen_test_url = _norm(test_url_override)
-        chosen_url = _norm(url_override)
-        env_test = _norm(self._ctx.env.get(runtime.test_url_env))
-        env_url = _norm(self._ctx.env.get(runtime.url_env))
+        chosen_test_url = normalized_optional(test_url_override)
+        chosen_url = normalized_optional(url_override)
+        env_test = normalized_optional(self._ctx.env.get(runtime.test_url_env))
+        env_url = normalized_optional(self._ctx.env.get(runtime.url_env))
 
         resolved: str | None = chosen_test_url or chosen_url or env_test or env_url
         lock_engine: Engine | None = None
@@ -266,7 +309,7 @@ class SchemaEngine:
         if runtime.paths.lock_file.exists():
             lock = load_lock_from_text(runtime.paths.lock_file.read_text(encoding="utf-8"))
             expected_chains = recompute_lock_chains(
-                steps=self._workspace_coherence_steps(migrations),
+                steps=_workspace_coherence_steps(migrations),
                 engine=Engine(lock.engine),
                 target_key=derive_target_key(
                     repo_root=self._ctx.git.repo_root(),
@@ -416,36 +459,6 @@ class SchemaEngine:
             )
         return tuple(states)
 
-    @staticmethod
-    def _workspace_coherence_steps(
-        states: tuple[_MigrationState, ...],
-    ) -> tuple[LockComparableStep, ...]:
-        return tuple(
-            LockComparableStep(
-                version=state.migration.version,
-                migration_file=state.migration.rel_path,
-                migration_digest=state.migration_digest,
-                checkpoint_file=state.checkpoint_rel,
-                checkpoint_digest=state.checkpoint_digest,
-            )
-            for state in states
-        )
-
-    @staticmethod
-    def _base_coherence_steps(
-        states: tuple[_GitMigrationState, ...],
-    ) -> tuple[LockComparableStep, ...]:
-        return tuple(
-            LockComparableStep(
-                version=state.migration.version,
-                migration_file=state.migration.rel_path,
-                migration_digest=state.migration_digest,
-                checkpoint_file=state.checkpoint_rel,
-                checkpoint_digest=digest_bytes_blake2b256(state.checkpoint_bytes),
-            )
-            for state in states
-        )
-
     def _find_orphan_checkpoints(
         self,
         paths,
@@ -524,7 +537,7 @@ class SchemaEngine:
             self._require_head_lock_coherence(op=op, head_migrations=head_migrations)
             divergence = first_divergence_against_lock(
                 lock=base_lock,
-                steps=self._workspace_coherence_steps(head_migrations),
+                steps=_workspace_coherence_steps(head_migrations),
                 engine=Engine(base_lock.engine),
                 target_key=op.target_key,
             )
@@ -547,7 +560,7 @@ class SchemaEngine:
             return op.base_ref.strip()
 
         for key in _BASE_FALLBACK_ENV_KEYS:
-            value = _norm(self._ctx.env.get(key))
+            value = normalized_optional(self._ctx.env.get(key))
             if value:
                 return value
 
@@ -565,7 +578,7 @@ class SchemaEngine:
         lock = load_lock_from_text(op.target_paths.lock_file.read_text(encoding="utf-8"))
         divergence = first_divergence_against_lock(
             lock=lock,
-            steps=self._workspace_coherence_steps(head_migrations),
+            steps=_workspace_coherence_steps(head_migrations),
             engine=Engine(lock.engine),
             target_key=op.target_key,
         )
@@ -665,7 +678,7 @@ class SchemaEngine:
             raise ReplayError(
                 "Base lock step count does not match base migration set."
             )
-        coherence_steps = self._base_coherence_steps(base_states)
+        coherence_steps = _base_coherence_steps(base_states)
         mismatch = first_lock_mismatch(
             lock=base_lock,
             steps=coherence_steps,
@@ -676,40 +689,32 @@ class SchemaEngine:
         if mismatch is None:
             return
 
-        idx = mismatch.step_index
+        idx, field = mismatch
         lock_step = base_lock.steps[idx - 1]
         expected = coherence_steps[idx - 1]
-        if mismatch.field == "migration_file":
+        if field == "migration_file":
             raise ReplayError(
                 f"Base lock migration mismatch at step {idx}: "
                 f"{lock_step.migration_file} != {expected.migration_file}"
             )
-        if mismatch.field == "migration_digest":
+        if field == "migration_digest":
             raise ReplayError(
                 f"Base lock migration digest mismatch at step {idx}: {lock_step.migration_file}"
             )
-        if mismatch.field == "checkpoint_file":
+        if field == "checkpoint_file":
             raise ReplayError(
                 f"Base lock checkpoint mapping mismatch at step {idx}: "
                 f"{lock_step.checkpoint_file} != {expected.checkpoint_file}"
             )
-        if mismatch.field == "checkpoint_digest":
+        if field == "checkpoint_digest":
             raise ReplayError(
                 f"Base lock checkpoint digest mismatch at step {idx}: {lock_step.checkpoint_file}"
             )
-        if mismatch.field == "chain_hash":
+        if field == "chain_hash":
             raise ReplayError(
                 f"Base lock chain mismatch at step {idx}: {lock_step.migration_file}"
             )
-        if mismatch.field == "checkpoint_file_missing":
-            raise ReplayError(
-                f"Base lock checkpoint mapping mismatch at step {idx}: missing checkpoint mapping."
-            )
-        if mismatch.field == "checkpoint_digest_missing":
-            raise ReplayError(
-                f"Base lock checkpoint digest mismatch at step {idx}: missing checkpoint digest."
-            )
-        raise ReplayError(f"Base lock mismatch at step {idx}: {mismatch.field}")
+        raise ReplayError(f"Base lock mismatch at step {idx}: {field}")
 
     def _require_head_lock_coherence(
         self,
@@ -728,7 +733,7 @@ class SchemaEngine:
             raise ReplayError("Head lock step count does not match worktree migration set.")
         divergence = first_divergence_against_lock(
             lock=lock,
-            steps=self._workspace_coherence_steps(head_migrations),
+            steps=_workspace_coherence_steps(head_migrations),
             engine=Engine(lock.engine),
             target_key=op.target_key,
         )
@@ -767,7 +772,7 @@ class SchemaEngine:
                     )
                 finally:
                     anchor_path.unlink(missing_ok=True)
-                self._require_success(result, "dbmate load failed while loading replay anchor checkpoint")
+                require_cmd_success(result, "dbmate load failed while loading replay anchor checkpoint")
 
             if replay_plan.tail_states:
                 with tempfile.TemporaryDirectory(prefix="matey-tail-") as tmp_name:
@@ -777,11 +782,11 @@ class SchemaEngine:
                         dst = temp_dir / state.migration.filename
                         dst.write_bytes(src.read_bytes())
                     up_result = self._ctx.dbmate.up(url=scratch.url, migrations_dir=temp_dir)
-                    self._require_success(up_result, "dbmate up failed while replaying tail migrations")
+                    require_cmd_success(up_result, "dbmate up failed while replaying tail migrations")
 
             dump_result = self._ctx.dbmate.dump(url=scratch.url, migrations_dir=op.target_paths.migrations_dir)
-            self._require_success(dump_result, "dbmate dump failed for replay scratch")
-            b_raw = extract_dump_sql(self._ctx.dbmate.to_output(dump_result))
+            require_cmd_success(dump_result, "dbmate dump failed for replay scratch")
+            b_raw = extract_dump_sql(cmd_result_to_output(dump_result))
 
             a_text = op.target_paths.schema_file.read_text(encoding="utf-8") if op.target_paths.schema_file.exists() else ""
             comparison = self._ctx.sql_pipeline.compare(
@@ -820,26 +825,26 @@ class SchemaEngine:
                     )
                 finally:
                     anchor_path.unlink(missing_ok=True)
-                self._require_success(load_result, "dbmate load failed for down-roundtrip anchor")
+                require_cmd_success(load_result, "dbmate load failed for down-roundtrip anchor")
 
             for state in replay_plan.tail_states:
                 src_path = op.target_paths.db_dir / state.migration.rel_path
-                down_state = self._down_state(src_path)
+                down_state = _down_state(src_path)
                 baseline_raw: str | None = None
                 if down_state.has_executable_sql:
                     dump_before = self._ctx.dbmate.dump(
                         url=scratch.url,
                         migrations_dir=op.target_paths.migrations_dir,
                     )
-                    self._require_success(dump_before, "dbmate dump failed before down-roundtrip step")
-                    baseline_raw = extract_dump_sql(self._ctx.dbmate.to_output(dump_before))
+                    require_cmd_success(dump_before, "dbmate dump failed before down-roundtrip step")
+                    baseline_raw = extract_dump_sql(cmd_result_to_output(dump_before))
 
                 with tempfile.TemporaryDirectory(prefix="matey-down-step-") as tmp_name:
                     temp_dir = Path(tmp_name)
                     (temp_dir / state.migration.filename).write_bytes(src_path.read_bytes())
 
                     up_result = self._ctx.dbmate.up(url=scratch.url, migrations_dir=temp_dir)
-                    self._require_success(
+                    require_cmd_success(
                         up_result,
                         f"dbmate up failed for down-roundtrip step {state.migration.rel_path}",
                     )
@@ -848,7 +853,7 @@ class SchemaEngine:
                         continue
 
                     rollback_result = self._ctx.dbmate.rollback(url=scratch.url, migrations_dir=temp_dir, steps=1)
-                    self._require_success(
+                    require_cmd_success(
                         rollback_result,
                         f"dbmate rollback failed for down-roundtrip step {state.migration.rel_path}",
                     )
@@ -857,11 +862,11 @@ class SchemaEngine:
                         url=scratch.url,
                         migrations_dir=op.target_paths.migrations_dir,
                     )
-                    self._require_success(
+                    require_cmd_success(
                         dump_after,
                         f"dbmate dump failed after rollback for step {state.migration.rel_path}",
                     )
-                    after_raw = extract_dump_sql(self._ctx.dbmate.to_output(dump_after))
+                    after_raw = extract_dump_sql(cmd_result_to_output(dump_after))
                     assert baseline_raw is not None
                     comparison = self._ctx.sql_pipeline.compare(
                         engine=op.replay_engine,
@@ -874,7 +879,7 @@ class SchemaEngine:
                         )
 
                     reapply_result = self._ctx.dbmate.up(url=scratch.url, migrations_dir=temp_dir)
-                    self._require_success(
+                    require_cmd_success(
                         reapply_result,
                         f"dbmate up failed while re-applying {state.migration.rel_path}",
                     )
@@ -950,7 +955,7 @@ class SchemaEngine:
                     )
                 finally:
                     anchor_path.unlink(missing_ok=True)
-                self._require_success(load_result, "dbmate load failed for checkpoint capture anchor")
+                require_cmd_success(load_result, "dbmate load failed for checkpoint capture anchor")
 
             for state in states:
                 src = op.target_paths.db_dir / state.migration.rel_path
@@ -958,10 +963,10 @@ class SchemaEngine:
                     temp_dir = Path(tmp_name)
                     (temp_dir / state.migration.filename).write_bytes(src.read_bytes())
                     up_result = self._ctx.dbmate.up(url=scratch.url, migrations_dir=temp_dir)
-                    self._require_success(up_result, "dbmate up failed during checkpoint capture")
+                    require_cmd_success(up_result, "dbmate up failed during checkpoint capture")
                 dump_result = self._ctx.dbmate.dump(url=scratch.url, migrations_dir=op.target_paths.migrations_dir)
-                self._require_success(dump_result, "dbmate dump failed during checkpoint capture")
-                checkpoints[state.checkpoint_rel] = extract_dump_sql(self._ctx.dbmate.to_output(dump_result))
+                require_cmd_success(dump_result, "dbmate dump failed during checkpoint capture")
+                checkpoints[state.checkpoint_rel] = extract_dump_sql(cmd_result_to_output(dump_result))
             return checkpoints
         finally:
             self._cleanup_scratch(op=op, handle=scratch)
@@ -1061,9 +1066,9 @@ class SchemaEngine:
         policy = self._ctx.engine_policies.get(op.replay_engine)
         if policy.wait_required:
             wait = self._ctx.dbmate.wait(url=handle.url, timeout_seconds=60)
-            self._require_success(wait, "dbmate wait failed for scratch")
+            require_cmd_success(wait, "dbmate wait failed for scratch")
         create = self._ctx.dbmate.create(url=handle.url, migrations_dir=op.target_paths.migrations_dir)
-        self._require_success(create, "dbmate create failed for scratch")
+        require_cmd_success(create, "dbmate create failed for scratch")
 
     def _cleanup_scratch(self, *, op: SchemaOpContext, handle: ScratchHandle) -> None:
         cleanup_errors: list[str] = []
@@ -1077,24 +1082,3 @@ class SchemaEngine:
             cleanup_errors.append(str(error))
         if cleanup_errors:
             raise ReplayError("Scratch cleanup failed: " + "; ".join(cleanup_errors))
-
-    @staticmethod
-    def _down_state(path: Path) -> DownSectionState:
-        text = path.read_text(encoding="utf-8")
-        return parse_down_section_state(text)
-
-    @staticmethod
-    def _require_success(result, message: str) -> None:
-        if result.exit_code == 0:
-            return
-        details = (result.stderr or result.stdout or "").strip()
-        if details:
-            raise ExternalCommandError(f"{message}. {details}")
-        raise ExternalCommandError(message)
-
-
-def _norm(value: str | None) -> str | None:
-    if value is None:
-        return None
-    stripped = value.strip()
-    return stripped or None

@@ -5,15 +5,13 @@ from pathlib import Path
 import pytest
 
 from matey.app.db_engine import DbEngine
-from matey.domain.config import ConfigDefaults
-from matey.domain.engine import Engine
 from matey.domain.errors import (
     BigQueryPreflightError,
     LiveDriftError,
     LiveHistoryMismatchError,
     SchemaMismatchError,
 )
-from matey.domain.result import SchemaStatusResult
+from matey.domain.model import ConfigDefaults, Engine, SchemaStatusResult
 from tests.unit.app.helpers import (
     ScriptedDbmate,
     build_context,

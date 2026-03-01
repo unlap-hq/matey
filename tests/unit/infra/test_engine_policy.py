@@ -1,4 +1,4 @@
-from matey.domain.engine import Engine
+from matey.domain.model import Engine
 from matey.infra.engine_policy import (
     EnginePolicyRegistry,
     classify_create_outcome,

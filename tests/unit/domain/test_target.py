@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from matey.domain.target import derive_target_key
+from matey.domain.model import derive_target_key
 
 
 def test_target_key_is_stable_for_same_repo_and_path(tmp_path: Path) -> None:

@@ -5,12 +5,15 @@ from pathlib import Path
 import pytest
 
 from matey.app.schema_engine import SchemaEngine, _ReplayPlan
-from matey.domain.digest import digest_bytes_blake2b256, lock_chain_seed, lock_chain_step
-from matey.domain.engine import Engine
 from matey.domain.errors import ReplayError
-from matey.domain.lockfile import LockStep, SchemaLock
-from matey.domain.sql import SqlSource
-from matey.domain.target import derive_target_key
+from matey.domain.lockfile import (
+    LockStep,
+    SchemaLock,
+    digest_bytes_blake2b256,
+    lock_chain_seed,
+    lock_chain_step,
+)
+from matey.domain.model import Engine, SqlSource, derive_target_key
 from matey.infra.sql_pipeline import SqlPipeline
 from tests.unit.app.helpers import (
     FakeEnv,

@@ -1,0 +1,3 @@
+dir = ".matey/devdb"
+url_env = "MATEY_URL"
+test_url_env = "MATEY_TEST_URL"

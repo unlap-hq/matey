@@ -5,18 +5,26 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from matey.app.config_engine import TargetRuntime
-from matey.app.context import AppContext
 from matey.app.protocols import (
     CmdResult,
     ScratchHandle,
     WorktreeChange,
 )
-from matey.domain.config import ConfigDefaults, ResolvedTargetConfig
-from matey.domain.digest import digest_bytes_blake2b256, lock_chain_seed, lock_chain_step
-from matey.domain.engine import Engine
-from matey.domain.lockfile import LockStep, SchemaLock
-from matey.domain.sql import SqlSource
-from matey.domain.target import derive_target_key
+from matey.app.runtime import AppContext
+from matey.domain.lockfile import (
+    LockStep,
+    SchemaLock,
+    digest_bytes_blake2b256,
+    lock_chain_seed,
+    lock_chain_step,
+)
+from matey.domain.model import (
+    ConfigDefaults,
+    Engine,
+    ResolvedTargetConfig,
+    SqlSource,
+    derive_target_key,
+)
 from matey.infra.engine_policy import EnginePolicyRegistry
 from matey.infra.sql_pipeline import SqlPipeline
 
@@ -313,7 +321,7 @@ def build_context(
     dbmate: ScriptedDbmate | None = None,
     scratch: FakeScratch | None = None,
 ) -> AppContext:
-    from matey.infra.fs import LocalFileSystem
+    from matey.infra.runtime_io import LocalFileSystem
 
     return AppContext(
         fs=LocalFileSystem(),

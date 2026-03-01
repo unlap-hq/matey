@@ -4,9 +4,8 @@ import difflib
 from urllib.parse import urlsplit
 
 from matey.app.protocols import ISqlPipeline
-from matey.domain.digest import digest_text_blake2b256
-from matey.domain.engine import Engine
-from matey.domain.sql import PreparedSql, SqlComparison, SqlSource
+from matey.domain.lockfile import digest_text_blake2b256
+from matey.domain.model import Engine, PreparedSql, SqlComparison, SqlSource
 
 
 class SqlPipeline(ISqlPipeline):

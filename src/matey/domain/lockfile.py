@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 from mashumaro.mixins.toml import DataClassTOMLMixin
 
-from matey.domain.constants import CANONICALIZER, HASH_ALGORITHM, LOCK_VERSION
-from matey.domain.digest import lock_chain_seed, lock_chain_step
-from matey.domain.engine import Engine
 from matey.domain.errors import LockfileError
-from matey.domain.target import TargetKey
+from matey.domain.model import (
+    CANONICALIZER,
+    CHAIN_PREFIX,
+    HASH_ALGORITHM,
+    LOCK_VERSION,
+    Engine,
+    TargetKey,
+)
 
 
 @dataclass(frozen=True)
@@ -41,19 +46,22 @@ class SchemaLock(DataClassTOMLMixin):
     steps: tuple[LockStep, ...]
 
 
-@dataclass(frozen=True)
-class LockComparableStep:
-    version: str
-    migration_file: str
-    migration_digest: str
-    checkpoint_file: str | None = None
-    checkpoint_digest: str | None = None
+def digest_bytes_blake2b256(payload: bytes) -> str:
+    return hashlib.blake2b(payload, digest_size=32).hexdigest()
 
 
-@dataclass(frozen=True)
-class LockMismatch:
-    step_index: int
-    field: str
+def digest_text_blake2b256(text: str) -> str:
+    return digest_bytes_blake2b256(text.encode("utf-8"))
+
+
+def lock_chain_seed(engine: Engine, target_key: TargetKey) -> str:
+    seed = f"{CHAIN_PREFIX}|{engine.value}|{target_key.value}".encode()
+    return digest_bytes_blake2b256(seed)
+
+
+def lock_chain_step(prev: str, version: str, migration_file: str, migration_digest: str) -> str:
+    payload = f"{prev}|{version}|{migration_file}|{migration_digest}".encode()
+    return digest_bytes_blake2b256(payload)
 
 
 def _validate_rel_path(*, value: str, field_name: str, must_be_under: str | None = None) -> None:
@@ -130,7 +138,7 @@ def load_lock_from_text(text: str) -> SchemaLock:
 
 def recompute_lock_chains(
     *,
-    steps: Sequence[LockComparableStep],
+    steps: Sequence[LockStep],
     engine: Engine,
     target_key: TargetKey,
 ) -> tuple[str, ...]:
@@ -150,11 +158,11 @@ def recompute_lock_chains(
 def first_lock_mismatch(
     *,
     lock: SchemaLock,
-    steps: Sequence[LockComparableStep],
+    steps: Sequence[LockStep],
     engine: Engine,
     target_key: TargetKey,
     compare_checkpoints: bool,
-) -> LockMismatch | None:
+) -> tuple[int, str] | None:
     chains = recompute_lock_chains(
         steps=steps,
         engine=engine,
@@ -165,27 +173,23 @@ def first_lock_mismatch(
         lock_step = lock.steps[idx]
         step = steps[idx]
         if lock_step.migration_file != step.migration_file:
-            return LockMismatch(step_index=idx + 1, field="migration_file")
+            return idx + 1, "migration_file"
         if lock_step.migration_digest != step.migration_digest:
-            return LockMismatch(step_index=idx + 1, field="migration_digest")
+            return idx + 1, "migration_digest"
         if compare_checkpoints:
-            if step.checkpoint_file is None:
-                return LockMismatch(step_index=idx + 1, field="checkpoint_file_missing")
             if lock_step.checkpoint_file != step.checkpoint_file:
-                return LockMismatch(step_index=idx + 1, field="checkpoint_file")
-            if step.checkpoint_digest is None:
-                return LockMismatch(step_index=idx + 1, field="checkpoint_digest_missing")
+                return idx + 1, "checkpoint_file"
             if lock_step.checkpoint_digest != step.checkpoint_digest:
-                return LockMismatch(step_index=idx + 1, field="checkpoint_digest")
+                return idx + 1, "checkpoint_digest"
         if lock_step.chain_hash != chains[idx]:
-            return LockMismatch(step_index=idx + 1, field="chain_hash")
+            return idx + 1, "chain_hash"
     return None
 
 
 def first_divergence_against_lock(
     *,
     lock: SchemaLock,
-    steps: Sequence[LockComparableStep],
+    steps: Sequence[LockStep],
     engine: Engine,
     target_key: TargetKey,
 ) -> int:
@@ -197,7 +201,7 @@ def first_divergence_against_lock(
         compare_checkpoints=False,
     )
     if mismatch is not None:
-        return mismatch.step_index
+        return mismatch[0]
     if len(lock.steps) == len(steps):
         return len(steps) + 1
     return min(len(lock.steps), len(steps)) + 1

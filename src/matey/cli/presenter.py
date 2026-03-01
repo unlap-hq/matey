@@ -7,7 +7,7 @@ from enum import Enum
 from rich.console import Console
 from rich.table import Table
 
-from matey.domain.result import DbPlanResult, SchemaPlanResult, SchemaStatusResult
+from matey.domain.model import DbPlanResult, SchemaPlanResult, SchemaStatusResult
 
 
 class OutputKind(Enum):

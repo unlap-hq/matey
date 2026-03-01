@@ -15,16 +15,29 @@ from matey.app.config_engine import (
     select_target_names,
 )
 from matey.app.db_engine import DbEngine
-from matey.app.kernel import build_context
+from matey.app.runtime import build_context
 from matey.app.schema_engine import SchemaEngine
 from matey.cli.groups.db import register_db_group
 from matey.cli.groups.schema import register_schema_group
 from matey.cli.groups.template import register_template_group
 from matey.cli.help import group_meta, root_help_text
-from matey.cli.options import RootOptions
 from matey.cli.presenter import CliPresenter
-from matey.domain.config import ConfigDefaults, ResolvedTargetConfig
 from matey.domain.errors import CliUsageError
+from matey.domain.model import ConfigDefaults, ResolvedTargetConfig
+
+
+@dataclass(frozen=True)
+class RootOptions:
+    target: str | None
+    all_targets: bool
+    config_path: Path | None
+    dir_override: Path | None
+    base_ref: str | None
+    url: str | None
+    test_url: str | None
+    keep_scratch: bool
+    verbose: bool
+    quiet: bool
 
 
 @dataclass

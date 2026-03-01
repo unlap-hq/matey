@@ -9,7 +9,7 @@ from pathlib import Path
 
 from matey.app.protocols import ArtifactDelete, ArtifactWrite, IArtifactStore
 from matey.domain.errors import ArtifactRecoveryError, ArtifactTransactionError
-from matey.domain.target import TargetKey
+from matey.domain.model import TargetKey
 
 
 @dataclass(frozen=True)

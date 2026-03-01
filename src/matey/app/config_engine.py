@@ -4,15 +4,19 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from matey.domain.config import ConfigDefaults, ConfigTarget, MateyConfig, ResolvedTargetConfig
-from matey.domain.constants import (
+from matey.domain.errors import ConfigError, TargetSelectionError
+from matey.domain.model import (
     CHECKPOINTS_DIRNAME,
     LOCK_FILENAME,
     MIGRATIONS_DIRNAME,
     SCHEMA_FILENAME,
+    ConfigDefaults,
+    ConfigTarget,
+    MateyConfig,
+    ResolvedTargetConfig,
+    TargetId,
+    TargetPaths,
 )
-from matey.domain.errors import ConfigError, TargetSelectionError
-from matey.domain.target import TargetId, TargetPaths
 
 _DEFAULT_CONFIG_TEMPLATE = """dir = "db"
 url_env = "DATABASE_URL"

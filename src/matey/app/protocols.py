@@ -7,9 +7,8 @@ from pathlib import Path
 from typing import Protocol
 
 from matey.domain.dbmate_output import DbmateOutput
-from matey.domain.engine import Engine
-from matey.domain.sql import PreparedSql, SqlComparison, SqlSource
-from matey.domain.target import TargetKey
+from matey.domain.errors import ExternalCommandError
+from matey.domain.model import Engine, PreparedSql, SqlComparison, SqlSource, TargetKey
 
 
 @dataclass(frozen=True)
@@ -47,6 +46,19 @@ class ScratchHandle:
     purpose: str
     auto_provisioned: bool
     cleanup_required: bool
+
+
+def cmd_result_to_output(result: CmdResult) -> DbmateOutput:
+    return DbmateOutput(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+
+
+def require_cmd_success(result: CmdResult, message: str) -> None:
+    if result.exit_code == 0:
+        return
+    details = (result.stderr or result.stdout or "").strip()
+    if details:
+        raise ExternalCommandError(f"{message}. {details}")
+    raise ExternalCommandError(message)
 
 
 class IProcessRunner(Protocol):
@@ -136,10 +148,6 @@ class IDbmateGateway(Protocol):
     def dump(self, url: str, migrations_dir: Path) -> CmdResult: ...
     def status(self, url: str, migrations_dir: Path) -> CmdResult: ...
     def raw(self, argv_suffix: tuple[str, ...], url: str, migrations_dir: Path) -> CmdResult: ...
-
-    @staticmethod
-    def to_output(result: CmdResult) -> DbmateOutput:
-        return DbmateOutput(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
 
 
 class IArtifactStore(Protocol):

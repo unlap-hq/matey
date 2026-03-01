@@ -12,11 +12,15 @@ from matey.cli.groups.db import register_db_group
 from matey.cli.groups.schema import register_schema_group
 from matey.cli.groups.template import register_template_group
 from matey.cli.help import group_meta, root_help_text
-from matey.domain.config import ConfigDefaults
 from matey.domain.errors import CliUsageError, MateyError
-from matey.domain.result import SchemaPlanResult
-from matey.domain.sql import PreparedSql, SqlComparison
-from matey.domain.target import TargetId, TargetPaths
+from matey.domain.model import (
+    ConfigDefaults,
+    PreparedSql,
+    SchemaPlanResult,
+    SqlComparison,
+    TargetId,
+    TargetPaths,
+)
 
 
 @dataclass
