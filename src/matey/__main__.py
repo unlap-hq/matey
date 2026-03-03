@@ -1,27 +1,9 @@
-from __future__ import annotations
-
-import typer
-
-from matey.cli import app
-from matey.errors import CliUsageError, MateyError
+import sys
 
 
 def main() -> int:
-    try:
-        app()
-    except typer.Exit as error:
-        return int(error.exit_code)
-    except CliUsageError as error:
-        typer.echo(str(error), err=True)
-        return 2
-    except MateyError as error:
-        typer.echo(str(error), err=True)
-        return 1
-    except Exception as error:
-        typer.echo(f"Unexpected error: {error}", err=True)
-        return 1
-    else:
-        return 0
+    sys.stderr.write("matey CLI not wired yet; lockfile module is available.\n")
+    return 1
 
 
 if __name__ == "__main__":

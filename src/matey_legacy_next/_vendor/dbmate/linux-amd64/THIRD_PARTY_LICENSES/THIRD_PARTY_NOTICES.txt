@@ -1,0 +1,17 @@
+Third-party notices for bundled dbmate binary.
+
+Component: dbmate
+Module: github.com/amacneil/dbmate/v2
+Version: v2.31.0
+License: MIT
+Source: https://github.com/amacneil/dbmate
+License file: DBMATE_LICENSE
+
+go-licenses tool: github.com/google/go-licenses/v2@v2.0.1
+go-licenses policy disallowed types: forbidden,restricted,unknown
+go-licenses policy enforce: False
+go-licenses package ref: .
+go-licenses report file: go-licenses-report.txt
+go-licenses check output: go-licenses-check.txt
+go-licenses save output: go-licenses-save.txt
+go-licenses saved licenses: go-licenses-save/

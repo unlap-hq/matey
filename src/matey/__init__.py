@@ -1,1 +1,47 @@
-__all__ = []
+from matey.config import Config, ConfigError, TargetConfig
+from matey.dbmate import (
+    CmdResult,
+    DbConnection,
+    Dbmate,
+    DbmateConfigError,
+    DbmateError,
+    default_dbmate_binary,
+)
+from matey.lockfile import (
+    Diagnostic,
+    DiagnosticCode,
+    Divergence,
+    LockFile,
+    LockInput,
+    LockPolicy,
+    LockState,
+    LockStep,
+    Step,
+    WorktreeStep,
+    build_lock_state,
+    first_lock_divergence,
+)
+
+__all__ = [
+    "CmdResult",
+    "Config",
+    "ConfigError",
+    "DbConnection",
+    "Dbmate",
+    "DbmateConfigError",
+    "DbmateError",
+    "Diagnostic",
+    "DiagnosticCode",
+    "Divergence",
+    "LockFile",
+    "LockInput",
+    "LockPolicy",
+    "LockState",
+    "LockStep",
+    "Step",
+    "TargetConfig",
+    "WorktreeStep",
+    "build_lock_state",
+    "default_dbmate_binary",
+    "first_lock_divergence",
+]

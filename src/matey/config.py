@@ -1,237 +1,291 @@
 from __future__ import annotations
 
+import re
 import tomllib
-from pathlib import Path
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from types import MappingProxyType
+from typing import Any
 
-from matey.errors import ConfigError, TargetSelectionError
-from matey.models import (
-    CHECKPOINTS_DIRNAME,
-    LOCK_FILENAME,
-    MIGRATIONS_DIRNAME,
-    SCHEMA_FILENAME,
-    ConfigDefaults,
-    ConfigTarget,
-    MateyConfig,
-    ResolvedConfig,
-    ResolvedTargetConfig,
-    TargetId,
-    TargetPaths,
-    TargetRuntime,
-)
+_DEFAULTS = {
+    "dir": "db",
+    "url_env": "DATABASE_URL",
+    "test_url_env": "TEST_DATABASE_URL",
+}
+_SCALAR_KEYS = frozenset(_DEFAULTS.keys())
+_TARGET_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+_ENV_NAME_PATTERN = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 
-_DEFAULT_CONFIG_TEMPLATE = """dir = "db"
-url_env = "DATABASE_URL"
-test_url_env = "TEST_DATABASE_URL"
-
-[core]
-dir = "db/core"
-url_env = "CORE_DATABASE_URL"
-test_url_env = "CORE_TEST_DATABASE_URL"
-"""
-
-_GITHUB_ACTIONS_TEMPLATE = """name: matey
-
-on:
-  pull_request:
-  push:
-    branches: [main]
-
-jobs:
-  schema:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: prefix-dev/setup-pixi@v0
-      - run: pixi install
-      - run: pixi run matey schema status
-      - run: pixi run matey schema plan
-"""
-
-_RESERVED_SCALAR_KEYS = {"dir", "url_env", "test_url_env"}
-_TARGET_ALLOWED_KEYS = {"dir", "url_env", "test_url_env"}
+DefaultsMap = dict[str, str]
+TargetsMap = dict[str, dict[str, str]]
 
 
-class ConfigTemplateEngine:
-    def render(self) -> str:
-        return _DEFAULT_CONFIG_TEMPLATE
-
-    def write(self, *, path: Path, overwrite: bool) -> None:
-        if path.exists() and not overwrite:
-            raise ConfigError(f"Config file already exists: {path}")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(self.render(), encoding="utf-8")
+class ConfigError(ValueError):
+    pass
 
 
-class CiTemplateEngine:
-    def render(self) -> str:
-        return _GITHUB_ACTIONS_TEMPLATE
+@dataclass(frozen=True, slots=True)
+class TargetConfig:
+    name: str
+    dir: Path
+    url_env: str
+    test_url_env: str
 
-    def write(self, *, path: Path, overwrite: bool) -> None:
-        if path.exists() and not overwrite:
-            raise ConfigError(f"CI template already exists: {path}")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(self.render(), encoding="utf-8")
+    @property
+    def schema(self) -> Path:
+        return self.dir / "schema.sql"
 
+    @property
+    def migrations(self) -> Path:
+        return self.dir / "migrations"
 
-def _load_toml_file(path: Path) -> dict:
-    try:
-        return tomllib.loads(path.read_text(encoding="utf-8"))
-    except Exception as error:
-        raise ConfigError(f"Failed to parse config file {path}: {error}") from error
+    @property
+    def checkpoints(self) -> Path:
+        return self.dir / "checkpoints"
 
-
-def _optional_string(*, payload: dict, key: str) -> str | None:
-    value = payload.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ConfigError(f"Expected {key!r} to be a string.")
-    stripped = value.strip()
-    return stripped or None
+    @property
+    def lockfile(self) -> Path:
+        return self.dir / "schema.lock.toml"
 
 
-def _parse_target_table(*, target_name: str, payload: dict) -> ConfigTarget:
-    unknown_keys = sorted(set(payload.keys()) - _TARGET_ALLOWED_KEYS)
-    if unknown_keys:
+class Config:
+    def __init__(self, targets: dict[str, TargetConfig]) -> None:
+        if not targets:
+            raise ConfigError("Config must contain at least one target.")
+        ordered = dict(sorted(targets.items(), key=lambda item: item[0]))
+        self._targets = MappingProxyType(ordered)
+
+    @property
+    def targets(self) -> MappingProxyType[str, TargetConfig]:
+        return self._targets
+
+    @classmethod
+    def load(
+        cls,
+        repo_root: Path,
+        config_path: Path | None = None,
+    ) -> Config:
+        py_defaults, py_targets = _load_pyproject_source(repo_root)
+        file_defaults, file_targets = _load_matey_source(repo_root, config_path)
+        defaults, targets = _merge_sources(
+            defaults_a=py_defaults,
+            targets_a=py_targets,
+            defaults_b=file_defaults,
+            targets_b=file_targets,
+        )
+        return cls(_resolve_targets(repo_root=repo_root, defaults=defaults, targets=targets))
+
+    def select(
+        self,
+        *,
+        target: str | None = None,
+        all_targets: bool = False,
+    ) -> tuple[TargetConfig, ...]:
+        if target is not None and all_targets:
+            raise ConfigError("Cannot combine --target with --all.")
+
+        if target is not None:
+            selected = self._targets.get(target)
+            if selected is None:
+                available = ", ".join(self._targets.keys())
+                raise ConfigError(f"Unknown target {target!r}. Available targets: {available}")
+            return (selected,)
+
+        if all_targets:
+            return tuple(self._targets.values())
+
+        if len(self._targets) == 1:
+            return tuple(self._targets.values())
+
+        available = ", ".join(self._targets.keys())
         raise ConfigError(
-            f"Unsupported keys under target [{target_name}]: {', '.join(unknown_keys)}."
+            "Multiple targets configured; choose one with --target or use --all. "
+            f"Available targets: {available}"
         )
-    return ConfigTarget(
-        dir=_optional_string(payload=payload, key="dir"),
-        url_env=_optional_string(payload=payload, key="url_env"),
-        test_url_env=_optional_string(payload=payload, key="test_url_env"),
-    )
 
 
-def _parse_matey_payload(payload: dict) -> MateyConfig:
-    defaults = ConfigDefaults(
-        dir=_optional_string(payload=payload, key="dir") or "db",
-        url_env=_optional_string(payload=payload, key="url_env") or "MATEY_URL",
-        test_url_env=_optional_string(payload=payload, key="test_url_env") or "MATEY_TEST_URL",
-    )
-
-    targets: dict[str, ConfigTarget] = {}
-    for key, value in payload.items():
-        if key in _RESERVED_SCALAR_KEYS:
-            continue
-        if not isinstance(value, dict):
-            raise ConfigError(
-                f"Unexpected top-level key {key!r}; expected a target table."
-            )
-        targets[key] = _parse_target_table(target_name=key, payload=value)
-
-    return MateyConfig(defaults=defaults, targets=targets or None)
-
-
-def _config_from_file(path: Path | None) -> MateyConfig:
-    if path is None:
-        return MateyConfig()
-    if not path.exists():
-        raise ConfigError(f"Config file not found: {path}")
-    payload = _load_toml_file(path)
+def _load_toml(path: Path, *, label: str) -> dict[str, Any]:
     try:
-        return _parse_matey_payload(payload)
-    except ConfigError:
-        raise
-    except Exception as error:
-        raise ConfigError(f"Invalid matey config at {path}: {error}") from error
+        parsed = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as error:
+        raise ConfigError(f"Unable to parse {label}: {error}") from error
+    if not isinstance(parsed, dict):
+        raise ConfigError(f"Invalid TOML in {label}: expected a top-level table.")
+    return parsed
 
 
-def _merge_target(base: ConfigTarget | None, override: ConfigTarget) -> ConfigTarget:
-    if base is None:
-        return override
-    return ConfigTarget(
-        dir=override.dir if override.dir is not None else base.dir,
-        url_env=override.url_env if override.url_env is not None else base.url_env,
-        test_url_env=override.test_url_env if override.test_url_env is not None else base.test_url_env,
-    )
+def _load_pyproject_source(repo_root: Path) -> tuple[DefaultsMap, TargetsMap]:
+    pyproject_path = repo_root / "pyproject.toml"
+    if not pyproject_path.exists():
+        return {}, {}
+
+    parsed = _load_toml(pyproject_path, label="pyproject.toml")
+    tool = parsed.get("tool")
+    if tool is None:
+        return {}, {}
+    if not isinstance(tool, dict):
+        raise ConfigError("Invalid pyproject.toml: [tool] must be a table.")
+
+    section = tool.get("matey")
+    if section is None:
+        return {}, {}
+    if not isinstance(section, dict):
+        raise ConfigError("Invalid pyproject.toml: [tool.matey] must be a table.")
+
+    return _extract_source(section, source="pyproject.toml [tool.matey]")
 
 
-def _merge_config(base: MateyConfig, override: MateyConfig) -> MateyConfig:
-    merged_defaults = ConfigDefaults(
-        dir=override.defaults.dir or base.defaults.dir,
-        url_env=override.defaults.url_env or base.defaults.url_env,
-        test_url_env=override.defaults.test_url_env or base.defaults.test_url_env,
-    )
-    merged_targets: dict[str, ConfigTarget] = {}
-
-    for source in (base.targets or {}, override.targets or {}):
-        for name, target in source.items():
-            existing = merged_targets.get(name)
-            merged_targets[name] = _merge_target(existing, target)
-
-    return MateyConfig(defaults=merged_defaults, targets=merged_targets or None)
-
-
-def load_effective_config(*, repo_root: Path, config_path: Path | None) -> ResolvedConfig:
-    if config_path is not None:
-        cfg = _config_from_file(config_path)
+def _load_matey_source(
+    repo_root: Path,
+    config_path: Path | None,
+) -> tuple[DefaultsMap, TargetsMap]:
+    if config_path is None:
+        path = repo_root / "matey.toml"
+        if not path.exists():
+            return {}, {}
     else:
-        matey_toml = repo_root / "matey.toml"
-        cfg = _config_from_file(matey_toml if matey_toml.exists() else None)
+        path = config_path if config_path.is_absolute() else (repo_root / config_path)
+        if not path.exists():
+            raise ConfigError(f"Config file not found: {path}")
 
-    merged = _merge_config(MateyConfig(), cfg)
-    defaults = merged.defaults
+    parsed = _load_toml(path, label=str(path))
+    return _extract_source(parsed, source=str(path))
 
-    targets: dict[str, ResolvedTargetConfig] = {}
-    raw_targets = merged.targets or {}
-    if not raw_targets:
-        db_dir = (repo_root / defaults.dir).resolve()
-        targets["default"] = ResolvedTargetConfig(
-            name="default",
-            db_dir=db_dir,
-            url_env=defaults.url_env,
-            test_url_env=defaults.test_url_env,
+
+def _extract_source(doc: dict[str, Any], *, source: str) -> tuple[DefaultsMap, TargetsMap]:
+    defaults: DefaultsMap = {}
+    targets: TargetsMap = {}
+
+    for key, value in doc.items():
+        if key in _SCALAR_KEYS:
+            if not isinstance(value, str):
+                raise ConfigError(f"{source}: {key!r} must be a string.")
+            defaults[key] = value
+            continue
+
+        if key in {"defaults", "targets", "base_ref"}:
+            raise ConfigError(
+                f"{source}: legacy key {key!r} is not supported. "
+                "Use top-level defaults plus direct target tables ([core], [analytics], ...)."
+            )
+
+        _require_target_name(key, source=source)
+        if not isinstance(value, dict):
+            raise ConfigError(f"{source}: {key!r} must be a target table.")
+
+        override: dict[str, str] = {}
+        for override_key, override_value in value.items():
+            if override_key not in _SCALAR_KEYS:
+                raise ConfigError(
+                    f"{source}: target {key!r} has unsupported key {override_key!r}."
+                )
+            if not isinstance(override_value, str):
+                raise ConfigError(
+                    f"{source}: target {key!r} field {override_key!r} must be a string."
+                )
+            override[override_key] = override_value
+        targets[key] = override
+
+    return defaults, targets
+
+
+def _merge_sources(
+    *,
+    defaults_a: DefaultsMap,
+    targets_a: TargetsMap,
+    defaults_b: DefaultsMap,
+    targets_b: TargetsMap,
+) -> tuple[DefaultsMap, TargetsMap]:
+    defaults = dict(_DEFAULTS)
+    defaults.update(defaults_a)
+    defaults.update(defaults_b)
+
+    targets: TargetsMap = {}
+    for source_targets in (targets_a, targets_b):
+        for name, override in source_targets.items():
+            targets.setdefault(name, {})
+            targets[name].update(override)
+    return defaults, targets
+
+
+def _resolve_targets(
+    *,
+    repo_root: Path,
+    defaults: DefaultsMap,
+    targets: TargetsMap,
+) -> dict[str, TargetConfig]:
+    _require_env_name(defaults["url_env"], source="defaults.url_env")
+    _require_env_name(defaults["test_url_env"], source="defaults.test_url_env")
+
+    if not targets:
+        targets = {
+            "default": {
+                "dir": defaults["dir"],
+                "url_env": defaults["url_env"],
+                "test_url_env": defaults["test_url_env"],
+            }
+        }
+
+    root = repo_root.resolve()
+    resolved: dict[str, TargetConfig] = {}
+    seen_dirs: dict[Path, str] = {}
+
+    for name in sorted(targets.keys()):
+        override = targets[name]
+        dir_value = override.get("dir", _target_default_dir(defaults["dir"], name))
+        url_env = override.get("url_env", defaults["url_env"])
+        test_url_env = override.get("test_url_env", defaults["test_url_env"])
+
+        _require_env_name(url_env, source=f"{name}.url_env")
+        _require_env_name(test_url_env, source=f"{name}.test_url_env")
+        dir_path = _normalize_rel_dir(root=root, raw=dir_value, source=f"{name}.dir")
+
+        previous = seen_dirs.get(dir_path)
+        if previous is not None:
+            raise ConfigError(
+                f"Targets {previous!r} and {name!r} resolve to the same directory: {dir_path}"
+            )
+        seen_dirs[dir_path] = name
+        resolved[name] = TargetConfig(
+            name=name,
+            dir=dir_path,
+            url_env=url_env,
+            test_url_env=test_url_env,
         )
-    else:
-        for name, target_cfg in sorted(raw_targets.items()):
-            dir_value = target_cfg.dir if target_cfg.dir is not None else defaults.dir
-            url_env = target_cfg.url_env if target_cfg.url_env is not None else defaults.url_env
-            test_url_env = (
-                target_cfg.test_url_env
-                if target_cfg.test_url_env is not None
-                else defaults.test_url_env
-            )
-            targets[name] = ResolvedTargetConfig(
-                name=name,
-                db_dir=(repo_root / dir_value).resolve(),
-                url_env=url_env,
-                test_url_env=test_url_env,
-            )
 
-    return ResolvedConfig(defaults=defaults, targets=targets)
+    return resolved
 
 
-def select_target_names(*, config: ResolvedConfig, target: str | None, select_all: bool) -> tuple[str, ...]:
-    if target and select_all:
-        raise TargetSelectionError("Use either --target or --all, not both.")
-
-    names = tuple(sorted(config.targets.keys()))
-    if target is not None:
-        if target not in config.targets:
-            raise TargetSelectionError(f"Unknown target: {target}")
-        return (target,)
-
-    if select_all:
-        return names
-
-    if len(names) == 1:
-        return names
-
-    raise TargetSelectionError("Multiple targets configured. Use --target <name> or --all.")
+def _target_default_dir(default_dir: str, target_name: str) -> str:
+    return (PurePosixPath(default_dir) / target_name).as_posix()
 
 
-def build_target_runtime(*, resolved: ResolvedTargetConfig) -> TargetRuntime:
-    db_dir = resolved.db_dir
-    return TargetRuntime(
-        target_id=TargetId(resolved.name),
-        paths=TargetPaths(
-            db_dir=db_dir,
-            migrations_dir=db_dir / MIGRATIONS_DIRNAME,
-            checkpoints_dir=db_dir / CHECKPOINTS_DIRNAME,
-            schema_file=db_dir / SCHEMA_FILENAME,
-            lock_file=db_dir / LOCK_FILENAME,
-        ),
-        url_env=resolved.url_env,
-        test_url_env=resolved.test_url_env,
-    )
+def _normalize_rel_dir(*, root: Path, raw: str, source: str) -> Path:
+    normalized = PurePosixPath(raw).as_posix()
+    candidate = PurePosixPath(normalized)
+    if not normalized or normalized == ".":
+        raise ConfigError(f"{source}: dir cannot be empty.")
+    if candidate.is_absolute():
+        raise ConfigError(f"{source}: dir must be relative, got absolute path {raw!r}.")
+    if any(part in {"..", "."} for part in candidate.parts):
+        raise ConfigError(f"{source}: dir contains unsupported traversal or dot segment.")
+
+    resolved = (root / Path(normalized)).resolve()
+    if not resolved.is_relative_to(root):
+        raise ConfigError(f"{source}: dir resolves outside repository root: {resolved}")
+    return resolved
+
+
+def _require_target_name(name: str, *, source: str) -> None:
+    if not _TARGET_NAME_PATTERN.fullmatch(name):
+        raise ConfigError(f"{source}: invalid target name {name!r}.")
+
+
+def _require_env_name(name: str, *, source: str) -> None:
+    if not _ENV_NAME_PATTERN.fullmatch(name):
+        raise ConfigError(
+            f"{source}: invalid environment variable name {name!r}; expected [A-Z_][A-Z0-9_]*."
+        )
+
+
+__all__ = ["Config", "ConfigError", "TargetConfig"]

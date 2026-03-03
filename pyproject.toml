@@ -10,14 +10,16 @@ readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11,<3.15"
 dependencies = [
+  "boltons>=25.0.0,<26",
+  "cyclopts>=4.6.0,<5",
   "mashumaro[toml]>=3.20,<4",
+  "plumbum>=1.10.0,<2",
   "portalocker>=3.2.0,<4",
   "pygit2>=1.19.1,<2",
+  "python-statemachine>=3.0.0,<4",
   "rich>=14.3.3,<15",
   "testcontainers[postgres,mysql,clickhouse]>=4.14.1,<5",
-  "tomli-w>=1.2.0,<2",
   "typed-settings[dotenv]>=25.3.0,<26",
-  "typer>=0.24.1,<0.25",
 ]
 
 [project.scripts]
@@ -28,8 +30,11 @@ dev = [
   "bandit>=1.9.4,<2",
   "build>=1.4.0,<2",
   "desloppify>=0.7.7,<0.8",
+  "hypothesis>=6.151.9,<7",
   "pytest>=9.0.2,<10",
+  "pytest-mock>=3.15.1,<4",
   "ruff>=0.15.2,<0.16",
+  "syrupy>=5.1.0,<6",
 ]
 
 [tool.hatch.build.targets.wheel]
