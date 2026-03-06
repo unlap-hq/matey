@@ -259,6 +259,40 @@ def test_plan_rejects_qualified_writes_in_executable_down_section(
         plan(target, test_base_url=_scratch_base_url(engine))
 
 
+def test_plan_wraps_invalid_utf8_migration_as_schema_error(tmp_path: Path) -> None:
+    target = _target(tmp_path)
+    target.dir.mkdir(parents=True, exist_ok=True)
+    bad_path = target.migrations / "001_init.sql"
+    bad_path.parent.mkdir(parents=True, exist_ok=True)
+    bad_path.write_bytes(b"\xff\xfe\x00")
+
+    with pytest.raises(
+        SchemaError,
+        match=r"Unable to decode migration migrations/001_init\.sql as UTF-8",
+    ):
+        plan(target, test_base_url="mysql://user:pass@127.0.0.1:3306/target_db")
+
+
+def test_plan_wraps_invalid_utf8_worktree_schema_as_schema_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target = _target(tmp_path)
+    _write(target.migrations / "001_init.sql", "-- migrate:up\nCREATE TABLE a(id INTEGER);\n")
+    target.schema.write_bytes(b"\xff\xfe\x00")
+    monkeypatch.setattr(
+        schema_replay_mod,
+        "run_replay_checks",
+        lambda *args, **kwargs: _check_outcome(
+            schema_sql="CREATE TABLE a(id INTEGER);\n",
+            checkpoint_map={},
+        ),
+    )
+
+    with pytest.raises(SchemaError, match=r"Unable to decode schema\.sql as UTF-8"):
+        plan(target, test_base_url="sqlite3:/tmp/schema-invalid-schema.sqlite3")
+
+
 def test_plan_base_uses_merge_base_vs_worktree(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -608,13 +642,13 @@ def test_resolve_replay_context_skips_invalid_url_candidate(
     assert base_url == "sqlite3:/tmp/schema-env.sqlite3"
 
 
-def test_resolve_replay_context_uses_url_env_as_base_url(
+def test_resolve_replay_context_uses_url_env_only_for_engine_inference(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     target = _target(tmp_path)
     monkeypatch.delenv(target.test_url_env, raising=False)
-    monkeypatch.setenv(target.url_env, "bigquery://example-project/us/test_base")
+    monkeypatch.setenv(target.url_env, "mysql://user:pass@127.0.0.1:3306/test_base")
 
     engine, base_url = schema_plan_mod.resolve_replay_context(
         target=target,
@@ -622,8 +656,24 @@ def test_resolve_replay_context_uses_url_env_as_base_url(
         explicit_test_base_url=None,
     )
 
-    assert engine is Engine.BIGQUERY
-    assert base_url == "bigquery://example-project/us/test_base"
+    assert engine is Engine.MYSQL
+    assert base_url is None
+
+
+def test_resolve_replay_context_rejects_bigquery_without_scratch_base(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target = _target(tmp_path)
+    monkeypatch.delenv(target.test_url_env, raising=False)
+    monkeypatch.setenv(target.url_env, "bigquery://example-project/us/live_ds")
+
+    with pytest.raises(SchemaError, match="BigQuery scratch requires test_base_url"):
+        schema_plan_mod.resolve_replay_context(
+            target=target,
+            lock=None,
+            explicit_test_base_url=None,
+        )
 
 
 def test_resolve_replay_context_falls_back_to_lock_engine_on_invalid_urls(

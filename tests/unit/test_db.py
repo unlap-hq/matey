@@ -169,6 +169,29 @@ def test_up_uses_create_if_pre_status_reports_missing_db(
     assert conn.up_calls == 1
 
 
+def test_up_rejects_zero_migration_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    conn = _FakeConn()
+    ctx = _ctx(tmp_path, conn=conn, steps=())
+
+    @contextmanager
+    def _fake_open_ctx(**kwargs):
+        del kwargs
+        yield ctx
+
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
+
+    with pytest.raises(
+        db_mod.DbError,
+        match="db up is unavailable before the first worktree migration checkpoint",
+    ):
+        db_mod.up(ctx.target)
+    assert conn.create_calls == 0
+    assert conn.up_calls == 0
+
+
 def test_migrate_does_not_fallback_to_create_on_missing_db(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -195,6 +218,190 @@ def test_migrate_does_not_fallback_to_create_on_missing_db(
     with pytest.raises(db_mod.DbError, match="db migrate pre-status failed"):
         db_mod.migrate(ctx.target)
     assert conn.create_calls == 0
+
+
+def test_migrate_rejects_zero_migration_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    conn = _FakeConn()
+    ctx = _ctx(tmp_path, conn=conn, steps=())
+
+    @contextmanager
+    def _fake_open_ctx(**kwargs):
+        del kwargs
+        yield ctx
+
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
+
+    with pytest.raises(
+        db_mod.DbError,
+        match="db migrate is unavailable before the first worktree migration checkpoint",
+    ):
+        db_mod.migrate(ctx.target)
+    assert conn.migrate_calls == 0
+
+
+def test_missing_db_status_classifier_is_engine_specific() -> None:
+    assert (
+        db_runtime_mod.is_missing_db_status_error(
+            "postgresql://u:p@host:5432/app_db",
+            'database "app_db" does not exist',
+        )
+        is True
+    )
+    assert (
+        db_runtime_mod.is_missing_db_status_error(
+            "mysql://u:p@host:3306/app_db",
+            "Unknown database 'app_db'",
+        )
+        is True
+    )
+    assert (
+        db_runtime_mod.is_missing_db_status_error(
+            "sqlite3:/tmp/app.sqlite3",
+            "unable to open database file",
+        )
+        is True
+    )
+    assert (
+        db_runtime_mod.is_missing_db_status_error(
+            "bigquery://example-project/us/app_ds",
+            "Not found: Dataset example-project:app_ds was not found in location US",
+        )
+        is True
+    )
+    assert (
+        db_runtime_mod.is_missing_db_status_error(
+            "mysql://u:p@host:3306/app_db",
+            "table app_db.events does not exist",
+        )
+        is False
+    )
+    assert (
+        db_runtime_mod.is_missing_db_status_error(
+            "postgresql://u:p@host:5432/app_db",
+            "connection refused",
+        )
+        is False
+    )
+
+
+def test_ensure_prefix_allows_duplicate_basenames_only_in_unapplied_tail(tmp_path: Path) -> None:
+    state = LockState(
+        target_name="core",
+        lock=None,
+        worktree_steps=(
+            _step(1, "001_init.sql"),
+            WorktreeStep(
+                index=2,
+                version="002",
+                migration_file="migrations/a/002_duplicate.sql",
+                migration_digest="m2",
+                checkpoint_file="checkpoints/a/002_duplicate.sql",
+                checkpoint_digest="c2",
+                chain_hash="h2",
+            ),
+            WorktreeStep(
+                index=3,
+                version="003",
+                migration_file="migrations/b/002_duplicate.sql",
+                migration_digest="m3",
+                checkpoint_file="checkpoints/b/002_duplicate.sql",
+                checkpoint_digest="c3",
+                chain_hash="h3",
+            ),
+        ),
+        schema_digest=None,
+        orphan_checkpoints=(),
+        diagnostics=(),
+    )
+    live = db_runtime_mod.LiveStatus(applied_files=("001_init.sql",), applied_count=1)
+
+    db_runtime_mod.ensure_prefix(state=state, live=live)
+
+
+def test_ensure_prefix_rejects_duplicate_basenames_in_applied_prefix(tmp_path: Path) -> None:
+    del tmp_path
+    state = LockState(
+        target_name="core",
+        lock=None,
+        worktree_steps=(
+            WorktreeStep(
+                index=1,
+                version="001",
+                migration_file="migrations/a/001_duplicate.sql",
+                migration_digest="m1",
+                checkpoint_file="checkpoints/a/001_duplicate.sql",
+                checkpoint_digest="c1",
+                chain_hash="h1",
+            ),
+            WorktreeStep(
+                index=2,
+                version="002",
+                migration_file="migrations/b/001_duplicate.sql",
+                migration_digest="m2",
+                checkpoint_file="checkpoints/b/001_duplicate.sql",
+                checkpoint_digest="c2",
+                chain_hash="h2",
+            ),
+        ),
+        schema_digest=None,
+        orphan_checkpoints=(),
+        diagnostics=(),
+    )
+    live = db_runtime_mod.LiveStatus(
+        applied_files=("001_duplicate.sql", "001_duplicate.sql"),
+        applied_count=2,
+    )
+
+    with pytest.raises(db_mod.DbError, match="applied worktree prefix has duplicate migration basenames"):
+        db_runtime_mod.ensure_prefix(state=state, live=live)
+
+
+def test_pending_up_allowed_wraps_invalid_utf8_as_db_error(tmp_path: Path) -> None:
+    conn = _FakeConn(url="mysql://root:root@127.0.0.1:3306/testdb")
+    step = _step(1, "001_init.sql")
+    ctx = _ctx(tmp_path, conn=conn, steps=(step,))
+    ctx.snapshot.migrations[step.migration_file] = b"\xff\xfe\x00"
+
+    with pytest.raises(
+        db_mod.DbError,
+        match=r"Unable to decode migration migrations/001_init\.sql as UTF-8",
+    ):
+        db_runtime_mod.ensure_pending_up_allowed(
+            runtime=ctx,
+            applied_count=0,
+            context="db up precheck",
+        )
+
+
+def test_expected_sql_for_index_wraps_invalid_utf8_schema_sql(tmp_path: Path) -> None:
+    conn = _FakeConn()
+    step = _step(1, "001_init.sql")
+    target = _target(tmp_path)
+    ctx = db_runtime_mod.RuntimeContext(
+        target=target,
+        snapshot=Snapshot(
+            target_name=target.name,
+            schema_sql=b"\xff\xfe\x00",
+            lock_toml=None,
+            migrations={step.migration_file: b"-- migrate:up\nSELECT 1;\n"},
+            checkpoints={step.checkpoint_file: b"CREATE TABLE c1(id INTEGER);\n"},
+        ),
+        state=LockState(
+            target_name=target.name,
+            lock=None,
+            worktree_steps=(step,),
+            schema_digest=None,
+            orphan_checkpoints=(),
+            diagnostics=(),
+        ),
+        conn=conn,
+    )
+
+    with pytest.raises(db_mod.DbError, match=r"Unable to decode worktree schema\.sql as UTF-8"):
+        db_runtime_mod.expected_sql_for_index(runtime=ctx, index=1)
 
 
 def test_down_expected_index_comes_from_post_status(
@@ -250,6 +457,37 @@ def test_down_expected_index_comes_from_post_status(
     assert result.after_index == 1
     assert captured["expected_index"] == 1
     assert conn.rollback_calls == [2]
+
+
+def test_down_rejects_zero_index_target(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    conn = _FakeConn()
+    steps = (_step(1, "001_init.sql"),)
+    ctx = _ctx(tmp_path, conn=conn, steps=steps)
+
+    @contextmanager
+    def _fake_open_ctx(**kwargs):
+        del kwargs
+        yield ctx
+
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
+    monkeypatch.setattr(
+        db_runtime_mod,
+        "read_status",
+        lambda _conn: (
+            _cmd("dbmate", "status", stdout="[X] 001_init.sql\nApplied: 1\n"),
+            db_runtime_mod.LiveStatus(applied_files=("001_init.sql",), applied_count=1),
+        ),
+    )
+
+    with pytest.raises(
+        db_mod.DbError,
+        match="db down to migration index 0 is not supported",
+    ):
+        db_mod.down(ctx.target, steps=1)
+    assert conn.rollback_calls == []
 
 
 def test_plan_uses_worktree_target_index_for_expected_schema(
@@ -428,7 +666,10 @@ def test_ensure_prefix_rejects_ambiguous_basename_only_status(tmp_path: Path) ->
         ),
     )
     ctx = _ctx(tmp_path, conn=conn, steps=duplicate_steps)
-    parsed = db_runtime_mod.LiveStatus(applied_files=("001_init.sql",), applied_count=1)
+    parsed = db_runtime_mod.LiveStatus(
+        applied_files=("001_init.sql", "001_init.sql"),
+        applied_count=2,
+    )
 
     with pytest.raises(db_mod.DbError, match="duplicate migration basenames"):
         db_runtime_mod.ensure_prefix(state=ctx.state, live=parsed)

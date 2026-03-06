@@ -211,8 +211,8 @@ def _bigquery_scratch_url(*, base_url: str, scratch_name: str) -> str:
     if len(segments) > 2:
         raise ScratchConfigError(
             "BigQuery scratch base URL must be one of: "
-            "bigquery://<project>, bigquery://<project>/<location>, "
-            "bigquery://<project>/<dataset>, bigquery://<project>/<location>/<dataset>."
+            "bigquery://<project>, bigquery://<project>/<dataset>, "
+            "bigquery://<project>/<location>/<dataset>."
         )
 
     if len(segments) == 0:

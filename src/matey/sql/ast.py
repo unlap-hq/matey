@@ -247,7 +247,9 @@ def _canonical_schema_creation(expr: exp.Expression, policy: EnginePolicy) -> st
     qualifier = " IF NOT EXISTS" if bool(expr.args.get("exists")) else ""
     if policy.name == "bigquery":
         return f"CREATE DATASET{qualifier} __dataset__"
-    return f"CREATE DATABASE{qualifier} __db__"
+    if policy.target_kind == "database":
+        return f"CREATE DATABASE{qualifier} __db__"
+    return _compact(_render(expr.copy(), policy))
 
 
 def _canonicalize_expression(

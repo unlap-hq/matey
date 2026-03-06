@@ -113,6 +113,21 @@ def test_snapshot_from_tree_rejects_non_tree_target_dir(tmp_path: Path) -> None:
         )
 
 
+def test_snapshot_from_tree_rejects_non_tree_intermediate_component(tmp_path: Path) -> None:
+    db_path = tmp_path / "db"
+    db_path.write_text("not a directory\n", encoding="utf-8")
+
+    repo = _init_repo(tmp_path)
+    head_tree = repo.revparse_single("HEAD").peel(pygit2.Commit).tree
+
+    with pytest.raises(SnapshotError, match="Expected tree but found non-tree object at 'db'"):
+        Snapshot.from_tree(
+            target_name="core",
+            target_rel_dir="db/core",
+            root_tree=head_tree,
+        )
+
+
 def test_snapshot_from_tree_rejects_non_tree_migrations_dir(tmp_path: Path) -> None:
     target_dir = tmp_path / "db" / "core"
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -124,6 +139,24 @@ def test_snapshot_from_tree_rejects_non_tree_migrations_dir(tmp_path: Path) -> N
     head_tree = repo.revparse_single("HEAD").peel(pygit2.Commit).tree
 
     with pytest.raises(SnapshotError, match="Expected tree but found non-tree object at 'migrations'"):
+        Snapshot.from_tree(
+            target_name="core",
+            target_rel_dir="db/core",
+            root_tree=head_tree,
+        )
+
+
+def test_snapshot_from_tree_rejects_non_blob_schema_file(tmp_path: Path) -> None:
+    target_dir = tmp_path / "db" / "core"
+    (target_dir / "schema.sql").mkdir(parents=True, exist_ok=True)
+    (target_dir / "schema.sql" / "nested.txt").write_text("not a blob schema\n", encoding="utf-8")
+    (target_dir / "migrations").mkdir(parents=True, exist_ok=True)
+    (target_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
+
+    repo = _init_repo(tmp_path)
+    head_tree = repo.revparse_single("HEAD").peel(pygit2.Commit).tree
+
+    with pytest.raises(SnapshotError, match=r"Expected blob but found non-blob object at 'schema\.sql'"):
         Snapshot.from_tree(
             target_name="core",
             target_rel_dir="db/core",

@@ -18,6 +18,10 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def _init_repo(path: Path) -> None:
+    (path / ".git").mkdir()
+
+
 def _help_command_names(output: str) -> list[str]:
     names: list[str] = []
     for line in output.splitlines():
@@ -41,6 +45,7 @@ url_env = "CORE_DATABASE_URL"
 test_url_env = "CORE_TEST_DATABASE_URL"
 """.strip(),
     )
+    _init_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
     captured: dict[str, object] = {}
 
@@ -70,6 +75,7 @@ url_env = "CORE_DATABASE_URL"
 test_url_env = "CORE_TEST_DATABASE_URL"
 """.strip(),
     )
+    _init_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
 
     monkeypatch.setattr(
@@ -83,6 +89,14 @@ test_url_env = "CORE_TEST_DATABASE_URL"
         ),
     )
     rc = cli.main(["db", "status", "--target", "core"])
+    assert rc == 2
+
+
+def test_schema_status_requires_git_or_explicit_config(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    rc = cli.main(["schema", "status"])
+
     assert rc == 2
 
 
@@ -103,6 +117,7 @@ url_env = "ANALYTICS_DATABASE_URL"
 test_url_env = "ANALYTICS_TEST_DATABASE_URL"
 """.strip(),
     )
+    _init_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
     calls: list[str] = []
 
@@ -138,6 +153,7 @@ url_env = "ANALYTICS_DATABASE_URL"
 test_url_env = "ANALYTICS_TEST_DATABASE_URL"
 """.strip(),
     )
+    _init_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
     rc = cli.main(["db", "up", "--all"])
     assert rc == 2
@@ -178,6 +194,29 @@ def test_db_help_descriptions_match_semantics(capsys) -> None:
     assert "Compare live schema to expected worktree target schema." in output
 
 
+def test_load_config_resolves_relative_paths_from_config_location(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo_root = tmp_path / "repo"
+    config_path = repo_root / "matey.toml"
+    _write(
+        config_path,
+        """
+[core]
+dir = "db/core"
+url_env = "CORE_DATABASE_URL"
+test_url_env = "CORE_TEST_DATABASE_URL"
+""".strip(),
+    )
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+
+    config = cli.commands.load_config(config_path)
+
+    assert config.targets["core"].dir == (repo_root / "db" / "core").resolve()
+
+
 def test_schema_help_command_order_semantic(capsys) -> None:
     rc = cli.main(["schema", "--help"])
     assert rc == 0
@@ -195,6 +234,7 @@ url_env = "CORE_DATABASE_URL"
 test_url_env = "CORE_TEST_DATABASE_URL"
 """.strip(),
     )
+    _init_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
     called: dict[str, object] = {}
 
@@ -249,6 +289,14 @@ def test_dbmate_passthrough_propagates_exit_code(monkeypatch) -> None:
     assert rc == 7
 
 
+def test_dbmate_passthrough_invalid_binary_maps_to_user_error(tmp_path: Path) -> None:
+    rc = cli.main(
+        ["dbmate", "--dbmate-bin", str(tmp_path / "missing-dbmate"), "--", "status"]
+    )
+
+    assert rc == 2
+
+
 def test_dbmate_passthrough_defaults_to_help_when_empty(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -297,6 +345,7 @@ url_env = "CORE_DATABASE_URL"
 test_url_env = "CORE_TEST_DATABASE_URL"
 """.strip(),
     )
+    _init_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
     called: dict[str, object] = {}
 
@@ -356,6 +405,7 @@ url_env = "CORE_DATABASE_URL"
 test_url_env = "CORE_TEST_DATABASE_URL"
 """.strip(),
     )
+    _init_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
     called: dict[str, object] = {}
 
@@ -399,6 +449,7 @@ url_env = "CORE_DATABASE_URL"
 test_url_env = "CORE_TEST_DATABASE_URL"
 """.strip(),
     )
+    _init_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
     called: dict[str, object] = {}
 
@@ -431,6 +482,7 @@ url_env = "CORE_DATABASE_URL"
 test_url_env = "CORE_TEST_DATABASE_URL"
 """.strip(),
     )
+    _init_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
     called: dict[str, object] = {}
 
@@ -456,6 +508,7 @@ url_env = "CORE_DATABASE_URL"
 test_url_env = "CORE_TEST_DATABASE_URL"
 """.strip(),
     )
+    _init_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
     called: dict[str, object] = {}
 
@@ -481,6 +534,7 @@ url_env = "CORE_DATABASE_URL"
 test_url_env = "CORE_TEST_DATABASE_URL"
 """.strip(),
     )
+    _init_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
 
     rc_schema = cli.main(["schema", "plan", "--sql", "--diff", "--target", "core"])

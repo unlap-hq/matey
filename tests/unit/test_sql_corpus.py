@@ -89,6 +89,42 @@ def test_anchor_statements_postgres_validate_function_body() -> None:
     assert statements[1] == "CREATE TABLE widgets (id bigint)"
 
 
+def test_anchor_statements_postgres_keep_semicolons_inside_comments_and_bodies() -> None:
+    sql = (
+        "CREATE FUNCTION f() RETURNS void AS $$\n"
+        "BEGIN\n"
+        "  PERFORM 1; -- keep ; inside body\n"
+        "  /* comment ; inside body */\n"
+        "END;\n"
+        "$$ LANGUAGE plpgsql;\n"
+        "CREATE TABLE widgets (id bigint);\n"
+    )
+
+    statements = SqlProgram(sql, engine="postgres").anchor_statements(
+        target_url="postgresql://u:p@host:5432/app_db?sslmode=disable"
+    )
+
+    assert len(statements) == 2
+    assert statements[0].startswith("CREATE FUNCTION f()")
+    assert statements[1] == "CREATE TABLE widgets (id bigint)"
+
+
+def test_anchor_statements_postgres_keep_semicolons_inside_block_comments() -> None:
+    sql = (
+        "CREATE TABLE widgets (id bigint) /* trailing ; comment */;\n"
+        "CREATE TABLE logs (id bigint);\n"
+    )
+
+    statements = SqlProgram(sql, engine="postgres").anchor_statements(
+        target_url="postgresql://u:p@host:5432/app_db?sslmode=disable"
+    )
+
+    assert statements == (
+        "CREATE TABLE widgets (id bigint) /* trailing ; comment */",
+        "CREATE TABLE logs (id bigint)",
+    )
+
+
 def test_anchor_statements_bigquery_retargets_target_writes_and_keeps_foreign_reads() -> None:
     sql = (
         "CREATE TABLE `example-project.old_ds.events` AS "

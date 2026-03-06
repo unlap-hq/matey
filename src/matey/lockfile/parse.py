@@ -3,7 +3,15 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import PurePosixPath
 
+from mashumaro.exceptions import (
+    ExtraKeysError,
+    InvalidFieldValue,
+    MissingDiscriminatorError,
+    MissingField,
+)
+
 from matey.repo import Snapshot
+from matey.sql import SqlTextDecodeError
 
 from .model import (
     Diagnostic,
@@ -15,6 +23,16 @@ from .model import (
     generated_sql_digest,
 )
 
+_LOCKFILE_PARSE_ERRORS = (
+    UnicodeDecodeError,
+    ValueError,
+    TypeError,
+    InvalidFieldValue,
+    MissingField,
+    ExtraKeysError,
+    MissingDiscriminatorError,
+)
+
 
 def parse_lockfile(lock_toml: bytes | None) -> tuple[LockFile | None, tuple[Diagnostic, ...]]:
     if lock_toml is None:
@@ -22,7 +40,7 @@ def parse_lockfile(lock_toml: bytes | None) -> tuple[LockFile | None, tuple[Diag
 
     try:
         parsed = LockFile.from_toml(lock_toml.decode("utf-8"))
-    except Exception as error:  # pragma: no cover
+    except _LOCKFILE_PARSE_ERRORS as error:
         return None, (
             diag(
                 DiagnosticCode.LOCKFILE_PARSE_ERROR,
@@ -107,6 +125,7 @@ def build_worktree_steps(
         kind="checkpoint",
     )
     checkpoint_by_path = dict(checkpoint_rows)
+    diagnostics: list[Diagnostic] = list(migration_diagnostics + checkpoint_diagnostics)
 
     seed_engine = lock.engine if lock is not None else ""
     seed_target = lock.target if lock is not None else input_files.target_name
@@ -117,10 +136,21 @@ def build_worktree_steps(
         version = migration_version(PurePosixPath(migration_file).name)
         checkpoint_file = checkpoint_for_migration(migration_file=migration_file, policy=policy)
         migration_digest = policy.digest(migration_payload)
-        checkpoint_digest = generated_sql_digest(
-            checkpoint_by_path.get(checkpoint_file),
-            policy=policy,
-        )
+        try:
+            checkpoint_digest = generated_sql_digest(
+                checkpoint_by_path.get(checkpoint_file),
+                policy=policy,
+                label=checkpoint_file,
+            )
+        except SqlTextDecodeError as error:
+            diagnostics.append(
+                diag(
+                    DiagnosticCode.INPUT_PATH_INVALID,
+                    checkpoint_file,
+                    str(error),
+                )
+            )
+            checkpoint_digest = None
         chain = policy.chain_step(
             previous=chain,
             version=version,
@@ -141,11 +171,11 @@ def build_worktree_steps(
 
     expected_checkpoints = {step.checkpoint_file for step in steps}
     orphans = tuple(path for path, _ in checkpoint_rows if path not in expected_checkpoints)
-    return tuple(steps), orphans, migration_diagnostics + checkpoint_diagnostics
+    return tuple(steps), orphans, tuple(diagnostics)
 
 
 def schema_digest(schema_sql: bytes | None, *, policy: LockPolicy) -> str | None:
-    return generated_sql_digest(schema_sql, policy=policy)
+    return generated_sql_digest(schema_sql, policy=policy, label=policy.schema_file)
 
 
 def checkpoint_for_migration(*, migration_file: str, policy: LockPolicy) -> str:

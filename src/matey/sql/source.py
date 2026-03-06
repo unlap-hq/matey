@@ -6,8 +6,19 @@ _UP_MARKER = "-- migrate:up"
 _DOWN_MARKER = "-- migrate:down"
 
 
+class SqlTextDecodeError(ValueError):
+    pass
+
+
 def ensure_newline(text: str) -> str:
     return text if text.endswith("\n") else f"{text}\n"
+
+
+def decode_sql_text(payload: bytes, *, label: str) -> str:
+    try:
+        return payload.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise SqlTextDecodeError(f"Unable to decode {label} as UTF-8.") from error
 
 
 def normalize_sql(text: str) -> str:
@@ -188,6 +199,8 @@ def _match_dollar_quote(text: str, start: int) -> str | None:
 
 
 __all__ = [
+    "SqlTextDecodeError",
+    "decode_sql_text",
     "ensure_newline",
     "normalize_sql",
     "split_migration_sections",

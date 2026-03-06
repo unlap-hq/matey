@@ -10,11 +10,11 @@ from matey.sql import (
 )
 
 
-def test_schema_fingerprint_postgres_strips_set_and_db_qualifier() -> None:
+def test_schema_fingerprint_postgres_strips_set_noise_only() -> None:
     dump = """
 SET statement_timeout = 0;
 SET transaction_timeout = 0;
-CREATE TABLE app_db.widgets (id bigint);
+CREATE TABLE widgets (id bigint);
 """
     expected = "CREATE TABLE widgets (id bigint);"
     normalized_dump = SqlProgram(dump, engine="postgres").schema_fingerprint(
@@ -24,6 +24,20 @@ CREATE TABLE app_db.widgets (id bigint);
         context_url="postgresql://u:p@host:5432/app_db?sslmode=disable",
     )
     assert normalized_dump == normalized_expected
+
+
+def test_schema_fingerprint_postgres_preserves_schema_qualifier() -> None:
+    public_sql = "CREATE TABLE public.widgets (id bigint);"
+    audit_sql = "CREATE TABLE audit.widgets (id bigint);"
+
+    public_fingerprint = SqlProgram(public_sql, engine="postgres").schema_fingerprint(
+        context_url="postgresql://u:p@host:5432/app_db?sslmode=disable",
+    )
+    audit_fingerprint = SqlProgram(audit_sql, engine="postgres").schema_fingerprint(
+        context_url="postgresql://u:p@host:5432/app_db?sslmode=disable",
+    )
+
+    assert public_fingerprint != audit_fingerprint
 
 
 def test_schema_fingerprint_mysql_strips_dump_noise() -> None:

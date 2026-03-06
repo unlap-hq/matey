@@ -87,10 +87,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     from sys import argv as sys_argv
 
     args = list(sys_argv[1:] if argv is None else argv)
-    dbmate_exit = maybe_run_dbmate_passthrough(args)
-    if dbmate_exit is not None:
-        return dbmate_exit
     try:
+        dbmate_exit = maybe_run_dbmate_passthrough(args)
+        if dbmate_exit is not None:
+            return dbmate_exit
         app(args)
     except SystemExit as error:
         code = error.code

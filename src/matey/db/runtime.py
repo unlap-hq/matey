@@ -15,19 +15,35 @@ from matey.repo import Snapshot
 from matey.sql import (
     SqlError,
     SqlProgram,
+    SqlTextDecodeError,
     WriteViolation,
+    decode_sql_text,
     engine_from_url,
 )
 from matey.tx import TxError, recover_artifacts, serialized_target
 
 _STATUS_LINE_PATTERN = re.compile(r"^\[(?P<mark>[ X])\]\s+(?P<file>.+?)\s*$")
-_MISSING_DB_PATTERNS = (
-    re.compile(r"\bdoes not exist\b", re.IGNORECASE),
-    re.compile(r"\bunknown database\b", re.IGNORECASE),
-    re.compile(r"\bnot found\b", re.IGNORECASE),
-    re.compile(r"\bcannot open database file\b", re.IGNORECASE),
-    re.compile(r"\bunable to open database file\b", re.IGNORECASE),
-)
+_MISSING_DB_PATTERNS = {
+    "postgres": (
+        re.compile(r'database "[^"]+" does not exist', re.IGNORECASE),
+        re.compile(r"\bdatabase [^\s]+ does not exist\b", re.IGNORECASE),
+    ),
+    "mysql": (
+        re.compile(r"\bunknown database\b", re.IGNORECASE),
+    ),
+    "sqlite": (
+        re.compile(r"\bcannot open database file\b", re.IGNORECASE),
+        re.compile(r"\bunable to open database file\b", re.IGNORECASE),
+    ),
+    "clickhouse": (
+        re.compile(r"\bdatabase [^\s]+ does not exist\b", re.IGNORECASE),
+        re.compile(r"\bunknown database\b", re.IGNORECASE),
+    ),
+    "bigquery": (
+        re.compile(r"\bnot found:\s*dataset\b", re.IGNORECASE),
+        re.compile(r"\bdataset .* not found\b", re.IGNORECASE),
+    ),
+}
 
 
 class DbError(RuntimeError):
@@ -95,7 +111,7 @@ def read_status(conn: DbConnection) -> tuple[CmdResult, LiveStatus]:
         details = (result.stderr or result.stdout).strip()
         raise StatusError(
             result=result,
-            missing_db=is_missing_db_status_error(details),
+            missing_db=is_missing_db_status_error(conn.url, details),
         )
     return result, parse_status(result.stdout)
 
@@ -138,28 +154,30 @@ def parse_status(text: str) -> LiveStatus:
     return LiveStatus(applied_files=tuple(applied), applied_count=len(applied))
 
 
-def is_missing_db_status_error(details: str) -> bool:
+def is_missing_db_status_error(url: str, details: str) -> bool:
     lowered = details.strip().lower()
     if not lowered:
         return False
     if "connection refused" in lowered:
         return False
-    return any(pattern.search(lowered) is not None for pattern in _MISSING_DB_PATTERNS)
+    engine = engine_from_url(url)
+    patterns = _MISSING_DB_PATTERNS.get(engine, ())
+    return any(pattern.search(lowered) is not None for pattern in patterns)
 
 
 def ensure_prefix(*, state: LockState, live: LiveStatus) -> None:
     worktree_paths = tuple(step.migration_file for step in state.worktree_steps)
-    worktree_basenames = tuple(Path(path).name for path in worktree_paths)
+    expected_prefix = worktree_paths[: len(live.applied_files)]
+    expected_basenames = tuple(Path(path).name for path in expected_prefix)
     status_is_basename_only = any(
         "/" not in entry and "\\" not in entry for entry in live.applied_files
     )
-    if status_is_basename_only and len(set(worktree_basenames)) != len(worktree_basenames):
+    if status_is_basename_only and len(set(expected_basenames)) != len(expected_basenames):
         raise DbError(
-            "Cannot validate live migration prefix: worktree has duplicate migration basenames, "
-            "but dbmate status output is basename-only."
+            "Cannot validate live migration prefix: applied worktree prefix has duplicate "
+            "migration basenames, but dbmate status output is basename-only."
         )
 
-    expected_prefix = worktree_paths[: len(live.applied_files)]
     for live_entry, expected_path in zip(live.applied_files, expected_prefix, strict=False):
         if live_entry == expected_path:
             continue
@@ -252,7 +270,10 @@ def migration_sql(*, runtime: RuntimeContext, migration_file: str) -> str:
     payload = runtime.snapshot.migrations.get(migration_file)
     if payload is None:
         raise DbError(f"Missing migration payload for {migration_file}.")
-    return payload.decode("utf-8")
+    try:
+        return payload.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise DbError(f"Unable to decode migration {migration_file} as UTF-8.") from error
 
 
 def raise_on_write_violations(
@@ -328,7 +349,10 @@ def expected_sql_for_index(*, runtime: RuntimeContext, index: int) -> str | None
     if index == target_index:
         if runtime.snapshot.schema_sql is None:
             raise DbError("Worktree schema.sql is missing.")
-        return runtime.snapshot.schema_sql.decode("utf-8")
+        try:
+            return decode_sql_text(runtime.snapshot.schema_sql, label="worktree schema.sql")
+        except SqlTextDecodeError as error:
+            raise DbError(str(error)) from error
 
     step = runtime.state.worktree_steps[index - 1]
     checkpoint_sql = runtime.snapshot.checkpoints.get(step.checkpoint_file)
@@ -336,7 +360,10 @@ def expected_sql_for_index(*, runtime: RuntimeContext, index: int) -> str | None
         raise DbError(
             f"Missing checkpoint for expected index {index}: {step.checkpoint_file}."
         )
-    return checkpoint_sql.decode("utf-8")
+    try:
+        return decode_sql_text(checkpoint_sql, label=f"checkpoint {step.checkpoint_file}")
+    except SqlTextDecodeError as error:
+        raise DbError(str(error)) from error
 
 
 def is_bigquery_url(url: str) -> bool:

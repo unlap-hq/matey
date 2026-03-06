@@ -97,7 +97,7 @@ def run_down_roundtrip(
 
                 try:
                     program = SqlProgram(
-                        migration_payload(structural, step).decode("utf-8"),
+                        migration_sql_text(structural, step),
                         engine=structural.engine.value,
                     )
                     has_down = program.has_executable_down()
@@ -246,6 +246,13 @@ def migration_payload(structural: StructuralPlan, step: object) -> bytes:
     return payload
 
 
+def migration_sql_text(structural: StructuralPlan, step: object) -> str:
+    try:
+        return migration_payload(structural, step).decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise SchemaError(f"Unable to decode migration {step.migration_file} as UTF-8.") from error
+
+
 def dump_schema(conn: DbConnection, *, context: str) -> str:
     result = conn.dump()
     require_ok(result, context=f"{context} dump")
@@ -268,7 +275,7 @@ def validate_tail_migration_targets(structural: StructuralPlan) -> None:
     for step in structural.tail_steps:
         try:
             program = SqlProgram(
-                migration_payload(structural, step).decode("utf-8"),
+                migration_sql_text(structural, step),
                 engine=engine,
             )
             violations = program.migration_write_violations()
@@ -309,6 +316,7 @@ __all__ = [
     "dump_schema",
     "lease_bootstrapped_connection",
     "migration_payload",
+    "migration_sql_text",
     "raise_on_write_violations",
     "require_ok",
     "run_down_roundtrip",

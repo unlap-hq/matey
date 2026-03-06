@@ -17,6 +17,7 @@ from matey.lockfile import (
 )
 from matey.repo import GitRepo, Snapshot
 from matey.scratch import Engine
+from matey.sql import SqlTextDecodeError, decode_sql_text
 from matey.sql import engine_from_url as sql_engine_from_url
 
 _HEAD_FATAL_DIAGNOSTICS = frozenset(
@@ -165,7 +166,13 @@ def select_anchor_sql(
         raise SchemaError(
             f"Missing anchor checkpoint {anchor_step.checkpoint_file!r} in {source_label} snapshot."
         )
-    return anchor_bytes.decode("utf-8")
+    try:
+        return decode_sql_text(
+            anchor_bytes,
+            label=f"anchor checkpoint {anchor_step.checkpoint_file}",
+        )
+    except SqlTextDecodeError as error:
+        raise SchemaError(str(error)) from error
 
 
 def resolve_replay_context(
@@ -185,7 +192,6 @@ def resolve_replay_context(
     for source, candidate in (
         ("test_base_url", test_base_from_arg),
         (target.test_url_env, test_base_from_env),
-        (target.url_env, url_from_env),
     ):
         if candidate is None:
             continue
@@ -197,6 +203,12 @@ def resolve_replay_context(
         resolved_test_base_url = candidate
         break
 
+    if inferred_engine is None and url_from_env is not None:
+        try:
+            inferred_engine = engine_from_url(url_from_env)
+        except SchemaError as error:
+            invalid_candidates.append(f"{target.url_env}: {error}")
+
     if inferred_engine is None:
         inferred_engine = lock_engine
 
@@ -205,7 +217,8 @@ def resolve_replay_context(
             f" Invalid URL values: {'; '.join(invalid_candidates)}." if invalid_candidates else ""
         )
         raise SchemaError(
-            "Unable to infer replay engine. Provide test_base_url, set test_url_env/url_env, or add schema.lock.toml."
+            "Unable to infer replay engine. Provide test_base_url, set test_url_env, or add schema.lock.toml. "
+            "url_env is used only for engine inference."
             + details
         )
 
@@ -213,6 +226,12 @@ def resolve_replay_context(
         raise SchemaError(
             f"Replay engine mismatch: inferred {inferred_engine.value!r} from URL, "
             f"but lockfile engine is {lock_engine.value!r}."
+        )
+
+    if inferred_engine is Engine.BIGQUERY and resolved_test_base_url is None:
+        raise SchemaError(
+            f"BigQuery scratch requires test_base_url or {target.test_url_env}; "
+            f"{target.url_env} is used only for engine inference."
         )
 
     return inferred_engine, resolved_test_base_url

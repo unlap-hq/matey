@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from matey.repo import Snapshot
+from matey.sql import SqlTextDecodeError
 
-from .model import Divergence, LockPolicy, LockState, Step
-from .parse import build_worktree_steps, parse_lockfile, schema_digest
+from .model import DiagnosticCode, Divergence, LockPolicy, LockState, Step
+from .parse import build_worktree_steps, diag, parse_lockfile, schema_digest
 from .validate import validate_state
 
 
@@ -19,10 +20,18 @@ def build_lock_state(
         policy=effective_policy,
         lock=lock,
     )
-    current_schema_digest = schema_digest(input_files.schema_sql, policy=effective_policy)
+    schema_diagnostics = ()
+    try:
+        current_schema_digest = schema_digest(input_files.schema_sql, policy=effective_policy)
+    except SqlTextDecodeError as error:
+        current_schema_digest = None
+        schema_diagnostics = (
+            diag(DiagnosticCode.INPUT_PATH_INVALID, effective_policy.schema_file, str(error)),
+        )
     diagnostics = (
         lock_diagnostics
         + snapshot_diagnostics
+        + schema_diagnostics
         + validate_state(
             input_files=input_files,
             lock=lock,

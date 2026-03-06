@@ -37,7 +37,7 @@ _POLICIES: dict[str, EnginePolicy] = {
         dialect="postgres",
         guarded_writes=False,
         checkpoint_retarget=False,
-        target_kind="database",
+        target_kind="none",
         nonsemantic_sql_prefixes=("SET ",),
     ),
     "mysql": EnginePolicy(

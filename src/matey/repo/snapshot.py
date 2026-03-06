@@ -96,6 +96,8 @@ def _tree_at_path(root: pygit2.Tree, rel_path: str) -> pygit2.Tree | None:
 
 def _blob_at_path(root: pygit2.Tree, rel_path: str) -> bytes | None:
     obj = _resolve_tree_object(root, rel_path)
+    if obj is not None and not isinstance(obj, pygit2.Blob):
+        raise SnapshotError(f"Expected blob but found non-blob object at {rel_path!r}.")
     if isinstance(obj, pygit2.Blob):
         return bytes(obj.data)
     return None
@@ -109,13 +111,15 @@ def _resolve_tree_object(root: pygit2.Tree, rel_path: str) -> pygit2.Object | No
     current: pygit2.Object = root
     for idx, part in enumerate(parts):
         if not isinstance(current, pygit2.Tree):
-            return None
+            traversed = PurePosixPath(*parts[:idx]).as_posix()
+            raise SnapshotError(f"Expected tree while traversing {traversed!r}.")
         next_obj = _tree_object(current, part)
         if next_obj is None:
             return None
         current = next_obj
         if idx < len(parts) - 1 and not isinstance(current, pygit2.Tree):
-            return None
+            traversed = PurePosixPath(*parts[: idx + 1]).as_posix()
+            raise SnapshotError(f"Expected tree but found non-tree object at {traversed!r}.")
     return current
 
 

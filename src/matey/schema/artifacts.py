@@ -5,7 +5,7 @@ from pathlib import Path
 
 from matey.config import TargetConfig
 from matey.lockfile import LockFile, LockPolicy, LockStep, WorktreeStep, generated_sql_digest
-from matey.sql import ensure_newline
+from matey.sql import SqlTextDecodeError, decode_sql_text, ensure_newline
 from matey.tx import TxError, commit_artifacts
 
 from .plan import SchemaError, StructuralPlan
@@ -105,7 +105,13 @@ def collect_checkpoint_texts(
         payload = structural.head_snapshot.checkpoints.get(step.checkpoint_file)
         if payload is None:
             raise SchemaError(f"Missing unchanged checkpoint {step.checkpoint_file}.")
-        checkpoints[step.checkpoint_file] = payload.decode("utf-8")
+        try:
+            checkpoints[step.checkpoint_file] = decode_sql_text(
+                payload,
+                label=f"checkpoint {step.checkpoint_file}",
+            )
+        except SqlTextDecodeError as error:
+            raise SchemaError(str(error)) from error
 
     for step in structural.tail_steps:
         checkpoint_sql = replay.checkpoint_sql_by_file.get(step.checkpoint_file)
@@ -176,8 +182,8 @@ def build_lock_toml(
 def relative_target_path(path: Path, target: TargetConfig) -> str:
     try:
         return path.resolve().relative_to(target.dir.resolve()).as_posix()
-    except ValueError:
-        return path.resolve().as_posix()
+    except ValueError as error:
+        raise SchemaError(f"Changed artifact is outside target root: {path.resolve()}") from error
 
 
 __all__ = [

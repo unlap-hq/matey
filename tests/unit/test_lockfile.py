@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import importlib
+
+import pytest
+
 from matey.lockfile import (
     DiagnosticCode,
     LockPolicy,
@@ -9,6 +13,8 @@ from matey.lockfile import (
     generated_sql_digest,
 )
 from matey.repo import Snapshot
+
+lockfile_parse_mod = importlib.import_module("matey.lockfile.parse")
 
 
 def _lock_toml(
@@ -165,6 +171,31 @@ def test_build_lock_state_reports_lock_parse_error() -> None:
 
     assert state.is_clean is False
     assert state.diagnostics[0].code is DiagnosticCode.LOCKFILE_PARSE_ERROR
+
+
+def test_build_lock_state_reports_invalid_utf8_schema_sql() -> None:
+    state = build_lock_state(
+        Snapshot(
+            target_name="core",
+            schema_sql=b"\xff\xfe\x00",
+            lock_toml=None,
+            migrations={},
+            checkpoints={},
+        )
+    )
+
+    assert state.is_clean is False
+    assert any(
+        diag.code is DiagnosticCode.INPUT_PATH_INVALID and diag.path == "schema.sql"
+        for diag in state.diagnostics
+    )
+
+
+def test_parse_lockfile_unexpected_exception_propagates(monkeypatch) -> None:
+    monkeypatch.setattr(lockfile_parse_mod.LockFile, "from_toml", lambda text: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        lockfile_parse_mod.parse_lockfile(b"lock_version = 0\n")
 
 
 def test_build_lock_state_handles_invalid_snapshot_paths_as_diagnostics() -> None:

@@ -6,7 +6,7 @@ from pathlib import Path
 from matey.config import TargetConfig
 from matey.lockfile import LockPolicy, LockState, build_lock_state
 from matey.repo import Snapshot
-from matey.sql import SqlError, SqlProgram, unified_sql_diff
+from matey.sql import SqlError, SqlProgram, SqlTextDecodeError, decode_sql_text, unified_sql_diff
 from matey.tx import TxError, recover_artifacts, serialized_target
 
 from . import artifacts, replay
@@ -64,10 +64,9 @@ def plan(
             dbmate_bin=dbmate_bin,
             policy=policy,
         )
-        worktree_sql = (
-            structural.head_snapshot.schema_sql.decode("utf-8")
-            if structural.head_snapshot.schema_sql is not None
-            else ""
+        worktree_sql = _decode_optional_schema(
+            structural.head_snapshot.schema_sql,
+            label="worktree schema.sql",
         )
         try:
             matches = SqlProgram(worktree_sql, engine=structural.engine.value).schema_equals(
@@ -135,10 +134,9 @@ def plan_diff(
             dbmate_bin=dbmate_bin,
             policy=policy,
         )
-        worktree_sql = (
-            structural.head_snapshot.schema_sql.decode("utf-8")
-            if structural.head_snapshot.schema_sql is not None
-            else ""
+        worktree_sql = _decode_optional_schema(
+            structural.head_snapshot.schema_sql,
+            label="worktree schema.sql",
         )
         try:
             left = SqlProgram(worktree_sql, engine=structural.engine.value).schema_fingerprint(
@@ -242,6 +240,15 @@ def _recover_target_artifacts(target: TargetConfig, *, context: str) -> None:
         recover_artifacts(target.dir)
     except TxError as error:
         raise SchemaError(f"{context}: artifact recovery failed: {error}") from error
+
+
+def _decode_optional_schema(payload: bytes | None, *, label: str) -> str:
+    if payload is None:
+        return ""
+    try:
+        return decode_sql_text(payload, label=label)
+    except SqlTextDecodeError as error:
+        raise SchemaError(str(error)) from error
 
 
 __all__ = [

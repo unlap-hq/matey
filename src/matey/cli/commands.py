@@ -305,15 +305,24 @@ def single_target(
 
 
 def load_config(config_path: Path | None) -> Config:
+    if config_path is not None:
+        resolved_config = (
+            config_path.resolve()
+            if config_path.is_absolute()
+            else (Path.cwd() / config_path).resolve()
+        )
+        return Config.load(resolved_config.parent, config_path=resolved_config)
     repo_root = find_repo_root(Path.cwd().resolve())
-    return Config.load(repo_root, config_path=config_path)
+    return Config.load(repo_root, config_path=None)
 
 
 def find_repo_root(start: Path) -> Path:
     for candidate in (start, *start.parents):
         if (candidate / ".git").exists():
             return candidate
-    return start
+    raise CliUsageError(
+        "Path is not inside a git repository. Run from a repo root/subdirectory or pass --config."
+    )
 
 
 def require_cmd_success(result: CmdResult, *, context: str) -> None:

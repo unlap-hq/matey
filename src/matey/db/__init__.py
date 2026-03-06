@@ -64,6 +64,10 @@ def up(
     dbmate_bin: Path | None = None,
 ) -> MutationResult:
     with runtime.open_runtime(target=target, url=url, dbmate_bin=dbmate_bin) as rt:
+        if not rt.state.worktree_steps:
+            raise runtime.DbError(
+                "db up is unavailable before the first worktree migration checkpoint."
+            )
         validated_pending_up = False
         try:
             _, before = runtime.read_status(rt.conn)
@@ -123,6 +127,10 @@ def migrate(
     dbmate_bin: Path | None = None,
 ) -> MutationResult:
     with runtime.open_runtime(target=target, url=url, dbmate_bin=dbmate_bin) as rt:
+        if not rt.state.worktree_steps:
+            raise runtime.DbError(
+                "db migrate is unavailable before the first worktree migration checkpoint."
+            )
         if runtime.is_bigquery_url(rt.conn.url):
             runtime.ensure_bigquery_dataset_exists(
                 conn=rt.conn,
@@ -182,6 +190,11 @@ def down(
             steps=steps,
             context="db down precheck",
         )
+        target_index = max(before.applied_count - steps, 0)
+        if target_index == 0:
+            raise runtime.DbError(
+                "db down to migration index 0 is not supported because matey has no zero-migration schema baseline."
+            )
 
         runtime.require_success(rt.conn.rollback(steps), context=f"db down ({steps})")
         after = runtime.inspect_live(rt, context="db down post-status")

@@ -126,6 +126,19 @@ def test_bigquery_location_like_single_segment_is_ambiguous() -> None:
         pass
 
 
+def test_bigquery_invalid_path_message_lists_only_supported_forms() -> None:
+    scratch = Scratch()
+    with pytest.raises(
+        ScratchConfigError,
+        match=r"bigquery://<project>, bigquery://<project>/<dataset>, bigquery://<project>/<location>/<dataset>",
+    ), scratch.lease(
+        engine=Engine.BIGQUERY,
+        scratch_name="scratch_ds",
+        test_base_url="bigquery://project/us/region/dataset",
+    ):
+        pass
+
+
 def test_postgres_auto_provision_starts_and_stops_container(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
