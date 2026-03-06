@@ -216,6 +216,10 @@ def drift(
                 applied_index=live.applied_count,
                 drifted=True,
             )
+        if live.applied_count == 0:
+            raise runtime.DbError(
+                "db drift is unavailable before the first applied migration checkpoint."
+            )
         schema_match, _, _ = runtime.compare_expected_schema(
             runtime=rt,
             expected_index=live.applied_count,
@@ -236,6 +240,10 @@ def plan(
     with runtime.open_runtime(target=target, url=url, dbmate_bin=dbmate_bin) as rt:
         live = runtime.inspect_live(rt, context="db plan status")
         target_index = len(rt.state.worktree_steps)
+        if target_index == 0:
+            raise runtime.DbError(
+                "db plan is unavailable before the first worktree migration checkpoint."
+            )
         if runtime.live_relation(state=rt.state, live=live) == "ahead":
             return PlanResult(
                 target_name=target.name,
@@ -263,6 +271,10 @@ def plan_sql(
 ) -> str:
     with runtime.open_runtime(target=target, url=url, dbmate_bin=dbmate_bin) as rt:
         runtime.inspect_live(rt, context="db plan sql status")
+        if not rt.state.worktree_steps:
+            raise runtime.DbError(
+                "db plan sql is unavailable before the first worktree migration checkpoint."
+            )
         return (
             runtime.expected_sql_for_index(runtime=rt, index=len(rt.state.worktree_steps)) or ""
         )
@@ -276,6 +288,10 @@ def plan_diff(
 ) -> str:
     with runtime.open_runtime(target=target, url=url, dbmate_bin=dbmate_bin) as rt:
         runtime.inspect_live(rt, context="db plan diff status")
+        if not rt.state.worktree_steps:
+            raise runtime.DbError(
+                "db plan diff is unavailable before the first worktree migration checkpoint."
+            )
         _, expected_sql, live_sql = runtime.compare_expected_schema(
             runtime=rt,
             expected_index=len(rt.state.worktree_steps),

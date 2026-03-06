@@ -506,6 +506,58 @@ def test_plan_reports_live_ahead_as_mismatch(
     assert result.applied_index == 2
 
 
+def test_drift_rejects_missing_expected_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    conn = _FakeConn()
+    ctx = _ctx(tmp_path, conn=conn, steps=())
+
+    @contextmanager
+    def _fake_open_ctx(**kwargs):
+        del kwargs
+        yield ctx
+
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
+    monkeypatch.setattr(
+        db_runtime_mod,
+        "read_status",
+        lambda _conn: (
+            _cmd("dbmate", "status", stdout="Applied: 0\n"),
+            db_runtime_mod.LiveStatus(applied_files=(), applied_count=0),
+        ),
+    )
+
+    with pytest.raises(db_mod.DbError, match="db drift is unavailable before the first applied migration checkpoint"):
+        db_mod.drift(ctx.target)
+
+
+def test_plan_rejects_missing_worktree_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    conn = _FakeConn()
+    ctx = _ctx(tmp_path, conn=conn, steps=())
+
+    @contextmanager
+    def _fake_open_ctx(**kwargs):
+        del kwargs
+        yield ctx
+
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
+    monkeypatch.setattr(
+        db_runtime_mod,
+        "read_status",
+        lambda _conn: (
+            _cmd("dbmate", "status", stdout="Applied: 0\n"),
+            db_runtime_mod.LiveStatus(applied_files=(), applied_count=0),
+        ),
+    )
+
+    with pytest.raises(db_mod.DbError, match="db plan is unavailable before the first worktree migration checkpoint"):
+        db_mod.plan(ctx.target)
+
+
 def test_up_rejects_live_ahead(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

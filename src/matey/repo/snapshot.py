@@ -87,6 +87,8 @@ def _read_sql_dir(directory: Path, *, prefix: str) -> dict[str, bytes]:
 
 def _tree_at_path(root: pygit2.Tree, rel_path: str) -> pygit2.Tree | None:
     obj = _resolve_tree_object(root, rel_path)
+    if obj is not None and not isinstance(obj, pygit2.Tree):
+        raise SnapshotError(f"Expected tree but found non-tree object at {rel_path!r}.")
     if isinstance(obj, pygit2.Tree):
         return obj
     return None
@@ -122,7 +124,7 @@ def _read_sql_tree(tree: pygit2.Tree, *, root_dir: str) -> dict[str, bytes]:
     if base_obj is None:
         return {}
     if not isinstance(base_obj, pygit2.Tree):
-        return {}
+        raise SnapshotError(f"Expected tree but found non-tree object at {root_dir!r}.")
 
     rows: dict[str, bytes] = {}
     _collect_tree_sql_rows(base_obj, prefix=PurePosixPath(root_dir), rows=rows)

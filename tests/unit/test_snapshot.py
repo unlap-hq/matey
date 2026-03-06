@@ -3,9 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pygit2
+import pytest
 
 from matey.config import TargetConfig
-from matey.repo import Snapshot
+from matey.repo import Snapshot, SnapshotError
 
 
 def _init_repo(path: Path) -> pygit2.Repository:
@@ -94,3 +95,37 @@ def test_snapshot_from_tree_returns_empty_for_missing_target(tmp_path: Path) -> 
     assert snapshot.lock_toml is None
     assert snapshot.migrations == {}
     assert snapshot.checkpoints == {}
+
+
+def test_snapshot_from_tree_rejects_non_tree_target_dir(tmp_path: Path) -> None:
+    target_path = tmp_path / "db" / "core"
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text("not a directory\n", encoding="utf-8")
+
+    repo = _init_repo(tmp_path)
+    head_tree = repo.revparse_single("HEAD").peel(pygit2.Commit).tree
+
+    with pytest.raises(SnapshotError, match="Expected tree but found non-tree object"):
+        Snapshot.from_tree(
+            target_name="core",
+            target_rel_dir="db/core",
+            root_tree=head_tree,
+        )
+
+
+def test_snapshot_from_tree_rejects_non_tree_migrations_dir(tmp_path: Path) -> None:
+    target_dir = tmp_path / "db" / "core"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / "schema.sql").write_text("CREATE TABLE a(id INTEGER);\n", encoding="utf-8")
+    (target_dir / "schema.lock.toml").write_text("lock_version = 0\n", encoding="utf-8")
+    (target_dir / "migrations").write_text("not a directory\n", encoding="utf-8")
+
+    repo = _init_repo(tmp_path)
+    head_tree = repo.revparse_single("HEAD").peel(pygit2.Commit).tree
+
+    with pytest.raises(SnapshotError, match="Expected tree but found non-tree object at 'migrations'"):
+        Snapshot.from_tree(
+            target_name="core",
+            target_rel_dir="db/core",
+            root_tree=head_tree,
+        )

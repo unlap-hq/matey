@@ -158,26 +158,11 @@ def relative_target_path(target_root: Path, path: Path) -> str:
     if not path.is_relative_to(target_root):
         raise TxError(f"Path is outside target directory: {path}")
     rel = path.relative_to(target_root).as_posix()
-    normalized = PurePosixPath(rel).as_posix()
-    if not normalized or normalized == ".":
-        raise TxError(f"Invalid target-relative path: {path}")
-    if any(part in {"..", "."} for part in PurePosixPath(normalized).parts):
-        raise TxError(f"Invalid normalized target-relative path: {normalized}")
-    if is_reserved_tx_path(PurePosixPath(normalized).parts):
-        raise TxError(f"Path is reserved for tx journal internals: {normalized}")
-    return normalized
+    return _validated_relative_path(rel, source=f"path {path}")
 
 
 def absolute_target_path(target_root: Path, rel_path: str) -> Path:
-    normalized = PurePosixPath(rel_path).as_posix()
-    if not normalized or normalized == ".":
-        raise TxError("Manifest contains empty relative path.")
-    if PurePosixPath(normalized).is_absolute():
-        raise TxError(f"Manifest path must be relative: {rel_path}")
-    if any(part in {"..", "."} for part in PurePosixPath(normalized).parts):
-        raise TxError(f"Manifest path contains invalid segment: {rel_path}")
-    if is_reserved_tx_path(PurePosixPath(normalized).parts):
-        raise TxError(f"Manifest path is reserved for tx journal internals: {rel_path}")
+    normalized = _validated_relative_path(rel_path, source="manifest path")
     absolute = (target_root / Path(normalized)).resolve()
     if not absolute.is_relative_to(target_root):
         raise TxError(f"Resolved manifest path escapes target root: {rel_path}")
@@ -186,6 +171,20 @@ def absolute_target_path(target_root: Path, rel_path: str) -> Path:
 
 def is_reserved_tx_path(parts: tuple[str, ...]) -> bool:
     return len(parts) >= 2 and parts[0:2] == RESERVED_TX_PREFIX
+
+
+def _validated_relative_path(rel_path: str, *, source: str) -> str:
+    normalized = PurePosixPath(rel_path).as_posix()
+    pure = PurePosixPath(normalized)
+    if not normalized or normalized == ".":
+        raise TxError(f"{source} is empty.")
+    if pure.is_absolute():
+        raise TxError(f"{source} must be relative: {rel_path}")
+    if any(part in {"..", "."} for part in pure.parts):
+        raise TxError(f"{source} contains invalid segment: {rel_path}")
+    if is_reserved_tx_path(pure.parts):
+        raise TxError(f"{source} is reserved for tx journal internals: {rel_path}")
+    return normalized
 
 
 __all__ = [

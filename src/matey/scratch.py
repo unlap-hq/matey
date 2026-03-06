@@ -245,26 +245,43 @@ def _is_location_like(token: str) -> bool:
 
 
 def _postgres_image_for_local_pg_client() -> str:
-    major = _detect_local_pg_dump_major()
+    major = _detect_client_major(
+        binary_name="pg_dump",
+        version_flag="--version",
+        pattern=r"(\d+)(?:\.\d+)?",
+    )
     if major is None:
         return _DEFAULT_POSTGRES_IMAGE
     return f"postgres:{major}-alpine"
 
 
 def _mysql_image_for_local_dump_client() -> str:
-    major = _detect_local_mysqldump_major()
+    major = _detect_client_major(
+        binary_name="mysqldump",
+        version_flag="--version",
+        pattern=r"(?:Ver|Distrib)\s+(\d+)(?:\.\d+)?",
+        reject_substring="mariadb",
+        valid_range=range(5, 11),
+    )
     if major is None:
         return _DEFAULT_MYSQL_IMAGE
     return f"mysql:{major}"
 
 
-def _detect_local_pg_dump_major() -> int | None:
-    pg_dump_path = shutil.which("pg_dump")
-    if pg_dump_path is None:
+def _detect_client_major(
+    *,
+    binary_name: str,
+    version_flag: str,
+    pattern: str,
+    reject_substring: str | None = None,
+    valid_range: range | None = None,
+) -> int | None:
+    binary_path = shutil.which(binary_name)
+    if binary_path is None:
         return None
     try:
         completed = subprocess.run(
-            [pg_dump_path, "--version"],
+            [binary_path, version_flag],
             check=False,
             capture_output=True,
             text=True,
@@ -274,42 +291,16 @@ def _detect_local_pg_dump_major() -> int | None:
     if completed.returncode != 0:
         return None
     text = (completed.stdout or completed.stderr).strip()
-    match = re.search(r"(\d+)(?:\.\d+)?", text)
-    if match is None:
+    if reject_substring is not None and reject_substring.lower() in text.lower():
         return None
-    try:
-        return int(match.group(1))
-    except ValueError:
-        return None
-
-
-def _detect_local_mysqldump_major() -> int | None:
-    mysqldump_path = shutil.which("mysqldump")
-    if mysqldump_path is None:
-        return None
-    try:
-        completed = subprocess.run(
-            [mysqldump_path, "--version"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except OSError:
-        return None
-    if completed.returncode != 0:
-        return None
-    text = (completed.stdout or completed.stderr).strip()
-    # MariaDB client versions do not map cleanly to mysql image tags.
-    if "mariadb" in text.lower():
-        return None
-    match = re.search(r"(?:Ver|Distrib)\s+(\d+)(?:\.\d+)?", text, flags=re.IGNORECASE)
+    match = re.search(pattern, text, flags=re.IGNORECASE)
     if match is None:
         return None
     try:
         major = int(match.group(1))
     except ValueError:
         return None
-    if major < 5 or major > 10:
+    if valid_range is not None and major not in valid_range:
         return None
     return major
 

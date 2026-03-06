@@ -59,8 +59,8 @@ def register_commands(
         url: UrlOpt = None,
     ) -> None:
         """Create DB if missing, then apply pending migrations."""
-        selected = select_targets(config_path=config, target=target, all_targets=all_targets, require_single=True)
-        renderer.db_mutation("up", db_api.up(selected[0], url=url, dbmate_bin=dbmate_bin))
+        item = single_target(config_path=config, target=target, all_targets=all_targets)
+        renderer.db_mutation("up", db_api.up(item, url=url, dbmate_bin=dbmate_bin))
 
     @db_app.command(name="migrate", sort_key=30)
     def migrate_command(
@@ -71,8 +71,8 @@ def register_commands(
         url: UrlOpt = None,
     ) -> None:
         """Apply pending migrations (no create-if-needed)."""
-        selected = select_targets(config_path=config, target=target, all_targets=all_targets, require_single=True)
-        renderer.db_mutation("migrate", db_api.migrate(selected[0], url=url, dbmate_bin=dbmate_bin))
+        item = single_target(config_path=config, target=target, all_targets=all_targets)
+        renderer.db_mutation("migrate", db_api.migrate(item, url=url, dbmate_bin=dbmate_bin))
 
     @db_app.command(name="status", sort_key=10)
     def status_command(
@@ -99,9 +99,9 @@ def register_commands(
         dbmate_bin: DbmateBinOpt = None,
     ) -> None:
         """Create a new migration file."""
-        selected = select_targets(config_path=config, target=target, all_targets=all_targets, require_single=True)
-        result = db_api.new(selected[0], name=name, dbmate_bin=dbmate_bin)
-        require_cmd_success(result, context=f"db new ({selected[0].name})")
+        item = single_target(config_path=config, target=target, all_targets=all_targets)
+        result = db_api.new(item, name=name, dbmate_bin=dbmate_bin)
+        require_cmd_success(result, context=f"db new ({item.name})")
         renderer.stdout_blob(result.stdout)
         renderer.stderr_blob(result.stderr)
 
@@ -129,8 +129,8 @@ def register_commands(
         steps: StepsOpt = 1,
     ) -> None:
         """Rollback migration(s)."""
-        selected = select_targets(config_path=config, target=target, all_targets=all_targets, require_single=True)
-        renderer.db_mutation("down", db_api.down(selected[0], steps=steps, url=url, dbmate_bin=dbmate_bin))
+        item = single_target(config_path=config, target=target, all_targets=all_targets)
+        renderer.db_mutation("down", db_api.down(item, steps=steps, url=url, dbmate_bin=dbmate_bin))
 
     @db_app.command(name="plan", sort_key=60)
     def db_plan_command(
@@ -146,15 +146,14 @@ def register_commands(
         mode = plan_mode(sql=sql, diff=diff)
 
         def _run(item: TargetConfig) -> None:
-            match mode:
-                case "summary":
-                    renderer.db_plan(db_api.plan(item, url=url, dbmate_bin=dbmate_bin))
-                case "sql":
-                    renderer.sql_blob(db_api.plan_sql(item, url=url, dbmate_bin=dbmate_bin))
-                case "diff":
-                    renderer.diff_blob(db_api.plan_diff(item, url=url, dbmate_bin=dbmate_bin))
-                case _:
-                    raise AssertionError("invalid db plan mode")
+            dispatch_plan_mode(
+                mode=mode,
+                summary=lambda: renderer.db_plan(db_api.plan(item, url=url, dbmate_bin=dbmate_bin)),
+                sql=lambda: renderer.sql_blob(db_api.plan_sql(item, url=url, dbmate_bin=dbmate_bin)),
+                diff=lambda: renderer.diff_blob(
+                    db_api.plan_diff(item, url=url, dbmate_bin=dbmate_bin)
+                ),
+            )
 
         for_targets(config_path=config, target=target, all_targets=all_targets, require_single=False, handler=_run, renderer=renderer)
 
@@ -194,15 +193,12 @@ def register_commands(
                 "keep_scratch": keep_scratch,
                 "dbmate_bin": dbmate_bin,
             }
-            match mode:
-                case "summary":
-                    renderer.schema_plan(schema_api.plan(item, **kwargs))
-                case "sql":
-                    renderer.sql_blob(schema_api.plan_sql(item, **kwargs))
-                case "diff":
-                    renderer.diff_blob(schema_api.plan_diff(item, **kwargs))
-                case _:
-                    raise AssertionError("invalid schema plan mode")
+            dispatch_plan_mode(
+                mode=mode,
+                summary=lambda: renderer.schema_plan(schema_api.plan(item, **kwargs)),
+                sql=lambda: renderer.sql_blob(schema_api.plan_sql(item, **kwargs)),
+                diff=lambda: renderer.diff_blob(schema_api.plan_diff(item, **kwargs)),
+            )
 
         for_targets(config_path=config, target=target, all_targets=all_targets, require_single=False, handler=_run, renderer=renderer)
 
@@ -218,10 +214,10 @@ def register_commands(
         keep_scratch: KeepScratchOpt = False,
     ) -> None:
         """Apply schema replay outputs."""
-        selected = select_targets(config_path=config, target=target, all_targets=all_targets, require_single=True)
+        item = single_target(config_path=config, target=target, all_targets=all_targets)
         renderer.schema_apply(
             schema_api.apply(
-                selected[0],
+                item,
                 base_ref=base,
                 clean=clean,
                 test_base_url=test_url,
@@ -294,6 +290,20 @@ def select_targets(
     return selected
 
 
+def single_target(
+    *,
+    config_path: Path | None,
+    target: str | None,
+    all_targets: bool,
+) -> TargetConfig:
+    return select_targets(
+        config_path=config_path,
+        target=target,
+        all_targets=all_targets,
+        require_single=True,
+    )[0]
+
+
 def load_config(config_path: Path | None) -> Config:
     repo_root = find_repo_root(Path.cwd().resolve())
     return Config.load(repo_root, config_path=config_path)
@@ -336,11 +346,30 @@ def plan_mode(*, sql: bool, diff: bool) -> str:
     return "summary"
 
 
+def dispatch_plan_mode(
+    *,
+    mode: str,
+    summary: Callable[[], None],
+    sql: Callable[[], None],
+    diff: Callable[[], None],
+) -> None:
+    match mode:
+        case "summary":
+            summary()
+        case "sql":
+            sql()
+        case "diff":
+            diff()
+        case _:
+            raise AssertionError("invalid plan mode")
+
+
 __all__ = [
     "CliUsageError",
     "ConfigError",
     "db_api",
     "dbmate_api",
+    "dispatch_plan_mode",
     "emit_template",
     "find_repo_root",
     "for_targets",
@@ -352,5 +381,6 @@ __all__ = [
     "require_cmd_success",
     "schema_api",
     "select_targets",
+    "single_target",
     "write_text_file",
 ]

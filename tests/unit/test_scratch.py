@@ -235,7 +235,16 @@ def test_detect_local_mysqldump_major_parses_mysql_client(monkeypatch: pytest.Mo
 
     from matey import scratch as scratch_mod
 
-    assert scratch_mod._detect_local_mysqldump_major() == 8
+    assert (
+        scratch_mod._detect_client_major(
+            binary_name="mysqldump",
+            version_flag="--version",
+            pattern=r"(?:Ver|Distrib)\s+(\d+)(?:\.\d+)?",
+            reject_substring="mariadb",
+            valid_range=range(5, 11),
+        )
+        == 8
+    )
 
 
 def test_detect_local_mysqldump_major_ignores_mariadb_client(
@@ -251,4 +260,13 @@ def test_detect_local_mysqldump_major_ignores_mariadb_client(
 
     from matey import scratch as scratch_mod
 
-    assert scratch_mod._detect_local_mysqldump_major() is None
+    assert (
+        scratch_mod._detect_client_major(
+            binary_name="mysqldump",
+            version_flag="--version",
+            pattern=r"(?:Ver|Distrib)\s+(\d+)(?:\.\d+)?",
+            reject_substring="mariadb",
+            valid_range=range(5, 11),
+        )
+        is None
+    )

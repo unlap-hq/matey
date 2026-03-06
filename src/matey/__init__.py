@@ -1,111 +1,27 @@
-from matey.cli.template import (
-    TemplateProvider,
-    render_ci_template,
-    render_config_template,
-    write_text_file,
-)
-from matey.config import Config, ConfigError, TargetConfig
-from matey.db import (
-    DbError,
-    DriftResult,
-    MutationResult,
-    down,
-    drift,
-    migrate,
-    status_raw,
-    up,
-)
-from matey.dbmate import (
-    CmdResult,
-    DbConnection,
-    Dbmate,
-    DbmateConfigError,
-    DbmateError,
-    default_dbmate_binary,
-)
-from matey.lockfile import (
-    Diagnostic,
-    DiagnosticCode,
-    Divergence,
-    LockFile,
-    LockPolicy,
-    LockState,
-    LockStep,
-    Step,
-    WorktreeStep,
-    build_lock_state,
-    divergence_between_states,
-    first_lock_divergence,
-    lock_worktree_divergence,
-)
-from matey.repo import (
-    GitRepo,
-    GitRepoError,
-    MergeBase,
-    NotGitRepositoryError,
-    Snapshot,
-    SnapshotError,
-    UnknownBaseRefError,
-)
-from matey.schema import ApplyResult, PlanResult, SchemaError, apply, plan, status
-from matey.scratch import Engine, Scratch, ScratchConfigError, ScratchError, ScratchLease
-from matey.tx import TxError, commit_artifacts, recover_artifacts, serialized_target
+from __future__ import annotations
+
+from importlib.metadata import PackageNotFoundError, version
+
+from . import cli, db, dbmate, lockfile, repo, schema, scratch, sql, tx
+from .config import Config, ConfigError, TargetConfig
+
+try:
+    __version__ = version("matey")
+except PackageNotFoundError:
+    __version__ = "0.0.0"
 
 __all__ = [
-    "ApplyResult",
-    "CmdResult",
     "Config",
     "ConfigError",
-    "DbConnection",
-    "DbError",
-    "Dbmate",
-    "DbmateConfigError",
-    "DbmateError",
-    "Diagnostic",
-    "DiagnosticCode",
-    "Divergence",
-    "DriftResult",
-    "Engine",
-    "GitRepo",
-    "GitRepoError",
-    "LockFile",
-    "LockPolicy",
-    "LockState",
-    "LockStep",
-    "MergeBase",
-    "MutationResult",
-    "NotGitRepositoryError",
-    "PlanResult",
-    "SchemaError",
-    "Scratch",
-    "ScratchConfigError",
-    "ScratchError",
-    "ScratchLease",
-    "Snapshot",
-    "SnapshotError",
-    "Step",
     "TargetConfig",
-    "TemplateProvider",
-    "TxError",
-    "UnknownBaseRefError",
-    "WorktreeStep",
-    "apply",
-    "build_lock_state",
-    "commit_artifacts",
-    "default_dbmate_binary",
-    "divergence_between_states",
-    "down",
-    "drift",
-    "first_lock_divergence",
-    "lock_worktree_divergence",
-    "migrate",
-    "plan",
-    "recover_artifacts",
-    "render_ci_template",
-    "render_config_template",
-    "serialized_target",
-    "status",
-    "status_raw",
-    "up",
-    "write_text_file",
+    "__version__",
+    "cli",
+    "db",
+    "dbmate",
+    "lockfile",
+    "repo",
+    "schema",
+    "scratch",
+    "sql",
+    "tx",
 ]

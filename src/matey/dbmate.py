@@ -54,6 +54,7 @@ def passthrough(
     dbmate_bin: Path | None = None,
     env: Mapping[str, str] | None = None,
 ) -> CmdResult:
+    # Raw passthrough inherits the caller environment unless an explicit env mapping is supplied.
     binary = Dbmate._resolve_dbmate_binary(dbmate_bin=dbmate_bin)
     argv = (str(binary), *args)
     cmd = local[argv[0]][argv[1:]]
@@ -76,6 +77,7 @@ class Dbmate:
         env: dict[str, str] | None = None,
     ) -> None:
         self._migrations_dir = self._resolve_migrations_dir(migrations_dir)
+        # Internal matey dbmate execution is hermetic by default; only explicit overrides are applied.
         self._env = dict(env) if env is not None else {}
         self._dbmate_bin = self._resolve_dbmate_binary(
             dbmate_bin=dbmate_bin,
