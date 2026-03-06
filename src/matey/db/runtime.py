@@ -13,6 +13,7 @@ from matey.dbmate import CmdResult, DbConnection, Dbmate
 from matey.lockfile import LockState, build_lock_state
 from matey.repo import Snapshot
 from matey.sql import (
+    SqlError,
     SqlProgram,
     WriteViolation,
     engine_from_url,
@@ -192,14 +193,20 @@ def ensure_pending_up_allowed(
     if engine is None:
         return
     for step in runtime.state.worktree_steps[applied_count:]:
-        program = SqlProgram(
-            migration_sql(runtime=runtime, migration_file=step.migration_file),
-            engine=engine,
-        )
+        try:
+            program = SqlProgram(
+                migration_sql(runtime=runtime, migration_file=step.migration_file),
+                engine=engine,
+            )
+            violations = program.section_write_violations("up")
+        except SqlError as error:
+            raise DbError(
+                f"{context} failed: SQL analysis failed for {step.migration_file}: {error}"
+            ) from error
         raise_on_write_violations(
             migration_file=step.migration_file,
             engine=engine,
-            violations=program.section_write_violations("up"),
+            violations=violations,
             context=context,
         )
 
@@ -216,14 +223,20 @@ def ensure_rollback_allowed(
         return
     start = max(applied_count - steps, 0)
     for step in runtime.state.worktree_steps[start:applied_count]:
-        program = SqlProgram(
-            migration_sql(runtime=runtime, migration_file=step.migration_file),
-            engine=engine,
-        )
+        try:
+            program = SqlProgram(
+                migration_sql(runtime=runtime, migration_file=step.migration_file),
+                engine=engine,
+            )
+            violations = program.section_write_violations("down")
+        except SqlError as error:
+            raise DbError(
+                f"{context} failed: SQL analysis failed for {step.migration_file}: {error}"
+            ) from error
         raise_on_write_violations(
             migration_file=step.migration_file,
             engine=engine,
-            violations=program.section_write_violations("down"),
+            violations=violations,
             context=context,
         )
 
@@ -291,11 +304,14 @@ def compare_expected_schema(
     require_success(dump_result, context="db dump")
     live_sql = dump_result.stdout
     engine = engine_from_url(runtime.conn.url)
-    schema_match = SqlProgram(expected_sql, engine=engine).schema_equals(
-        SqlProgram(live_sql, engine=engine),
-        left_context_url=runtime.conn.url,
-        right_context_url=runtime.conn.url,
-    )
+    try:
+        schema_match = SqlProgram(expected_sql, engine=engine).schema_equals(
+            SqlProgram(live_sql, engine=engine),
+            left_context_url=runtime.conn.url,
+            right_context_url=runtime.conn.url,
+        )
+    except SqlError as error:
+        raise DbError(f"SQL analysis failed while comparing expected schema: {error}") from error
     if schema_match:
         return True, expected_sql, live_sql
     return False, expected_sql, live_sql

@@ -3,8 +3,15 @@ from __future__ import annotations
 from functools import cached_property
 from typing import Literal
 
-from .ast import WriteViolation, anchor_statements, schema_fingerprint, section_write_violations
-from .lex import has_executable_sql, split_migration_sections, unified_sql_diff
+from .ast import (
+    SqlError,
+    WriteViolation,
+    anchor_statements,
+    has_executable_sql,
+    schema_fingerprint,
+    section_write_violations,
+)
+from .source import split_migration_sections, unified_sql_diff
 
 
 class SqlProgram:
@@ -29,14 +36,14 @@ class SqlProgram:
         return split_migration_sections(self._text)
 
     def has_executable_down(self) -> bool:
-        return has_executable_sql(self.down_sql)
+        return has_executable_sql(self.down_sql, engine=self._engine)
 
     def section_write_violations(
         self,
         section: Literal["up", "down"],
     ) -> tuple[WriteViolation, ...]:
         sql = self.up_sql if section == "up" else self.down_sql
-        if section == "down" and not has_executable_sql(sql):
+        if section == "down" and not has_executable_sql(sql, engine=self._engine):
             return ()
         return section_write_violations(sql, engine=self._engine, section=section)
 
@@ -77,4 +84,4 @@ class SqlProgram:
         return anchor_statements(self._text, engine=self._engine, target_url=target_url)
 
 
-__all__ = ["SqlProgram"]
+__all__ = ["SqlError", "SqlProgram"]

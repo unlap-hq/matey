@@ -719,5 +719,5 @@ def test_retarget_bigquery_statement_rejects_inconsistent_foreign_write_targets(
         engine="bigquery",
     )
 
-    with pytest.raises(ValueError, match="multiple targets"):
+    with pytest.raises(sql_mod.SqlError, match="multiple targets"):
         program.anchor_statements(target_url="bigquery://example-project/us/new_ds")

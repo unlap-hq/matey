@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from matey.dbmate import CmdResult, DbConnection, Dbmate
-from matey.sql import SqlProgram, WriteViolation, ensure_newline
+from matey.sql import SqlError, SqlProgram, WriteViolation, ensure_newline
 
 from .plan import SchemaError, StructuralPlan
 
@@ -95,11 +95,16 @@ def run_down_roundtrip(
                 step_dbmate = Dbmate(migrations_dir=step_dir, dbmate_bin=dbmate_bin)
                 step_conn = step_dbmate.database(down_scratch_url)
 
-                program = SqlProgram(
-                    migration_payload(structural, step).decode("utf-8"),
-                    engine=structural.engine.value,
-                )
-                has_down = program.has_executable_down()
+                try:
+                    program = SqlProgram(
+                        migration_payload(structural, step).decode("utf-8"),
+                        engine=structural.engine.value,
+                    )
+                    has_down = program.has_executable_down()
+                except SqlError as error:
+                    raise SchemaError(
+                        f"Down roundtrip SQL analysis failed for {step.migration_file}: {error}"
+                    ) from error
                 baseline: str | None = None
                 if has_down:
                     baseline = dump_schema(
@@ -131,11 +136,20 @@ def run_down_roundtrip(
                     raise SchemaError(
                         f"Down roundtrip mismatch for {step.migration_file}: baseline was not captured."
                     )
-                if not SqlProgram(baseline, engine=structural.engine.value).schema_equals(
-                    SqlProgram(after_rollback, engine=structural.engine.value),
-                    left_context_url=down_scratch_url,
-                    right_context_url=down_scratch_url,
-                ):
+                try:
+                    matches = SqlProgram(
+                        baseline,
+                        engine=structural.engine.value,
+                    ).schema_equals(
+                        SqlProgram(after_rollback, engine=structural.engine.value),
+                        left_context_url=down_scratch_url,
+                        right_context_url=down_scratch_url,
+                    )
+                except SqlError as error:
+                    raise SchemaError(
+                        f"Down roundtrip SQL analysis failed for {step.migration_file}: {error}"
+                    ) from error
+                if not matches:
                     raise SchemaError(
                         f"Down roundtrip mismatch for {step.migration_file}: rollback state differs from baseline."
                     )
@@ -196,7 +210,7 @@ def bootstrap_scratch(
         program = SqlProgram(anchor_sql, engine=engine.value)
         try:
             statements = program.anchor_statements(target_url=conn.url)
-        except ValueError as error:
+        except SqlError as error:
             raise SchemaError(f"{context} load anchor failed: {error}") from error
         for index, statement in enumerate(statements, start=1):
             require_ok(
@@ -252,14 +266,20 @@ def validate_tail_migration_targets(structural: StructuralPlan) -> None:
     if engine not in {"bigquery", "mysql", "clickhouse"}:
         return
     for step in structural.tail_steps:
-        program = SqlProgram(
-            migration_payload(structural, step).decode("utf-8"),
-            engine=engine,
-        )
+        try:
+            program = SqlProgram(
+                migration_payload(structural, step).decode("utf-8"),
+                engine=engine,
+            )
+            violations = program.migration_write_violations()
+        except SqlError as error:
+            raise SchemaError(
+                f"{step.migration_file} SQL analysis failed during target validation: {error}"
+            ) from error
         raise_on_write_violations(
             step.migration_file,
             engine=engine,
-            violations=program.migration_write_violations(),
+            violations=violations,
         )
 
 

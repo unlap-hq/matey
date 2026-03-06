@@ -5,7 +5,7 @@ from pathlib import Path
 
 from matey.config import TargetConfig
 from matey.dbmate import CmdResult, Dbmate
-from matey.sql import SqlProgram, unified_sql_diff
+from matey.sql import SqlError, SqlProgram, unified_sql_diff
 
 from . import runtime
 from .runtime import DbError
@@ -281,12 +281,15 @@ def plan_diff(
             expected_index=len(rt.state.worktree_steps),
         )
         engine = runtime.engine_from_url(rt.conn.url)
-        left = SqlProgram(live_sql or "", engine=engine).schema_fingerprint(
-            context_url=rt.conn.url
-        )
-        right = SqlProgram(expected_sql or "", engine=engine).schema_fingerprint(
-            context_url=rt.conn.url
-        )
+        try:
+            left = SqlProgram(live_sql or "", engine=engine).schema_fingerprint(
+                context_url=rt.conn.url
+            )
+            right = SqlProgram(expected_sql or "", engine=engine).schema_fingerprint(
+                context_url=rt.conn.url
+            )
+        except SqlError as error:
+            raise runtime.DbError(f"db plan diff failed: SQL analysis failed: {error}") from error
         return unified_sql_diff(
             left_sql=left,
             right_sql=right,

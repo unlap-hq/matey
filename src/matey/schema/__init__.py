@@ -6,7 +6,7 @@ from pathlib import Path
 from matey.config import TargetConfig
 from matey.lockfile import LockPolicy, LockState, build_lock_state
 from matey.repo import Snapshot
-from matey.sql import SqlProgram, unified_sql_diff
+from matey.sql import SqlError, SqlProgram, unified_sql_diff
 from matey.tx import TxError, recover_artifacts, serialized_target
 
 from . import artifacts, replay
@@ -69,11 +69,14 @@ def plan(
             if structural.head_snapshot.schema_sql is not None
             else ""
         )
-        matches = SqlProgram(worktree_sql, engine=structural.engine.value).schema_equals(
-            SqlProgram(replay_outcome.replay_schema_sql, engine=structural.engine.value),
-            left_context_url=replay_outcome.replay_scratch_url,
-            right_context_url=replay_outcome.replay_scratch_url,
-        )
+        try:
+            matches = SqlProgram(worktree_sql, engine=structural.engine.value).schema_equals(
+                SqlProgram(replay_outcome.replay_schema_sql, engine=structural.engine.value),
+                left_context_url=replay_outcome.replay_scratch_url,
+                right_context_url=replay_outcome.replay_scratch_url,
+            )
+        except SqlError as error:
+            raise SchemaError(f"plan: SQL analysis failed: {error}") from error
         return PlanResult(
             target_name=target.name,
             divergence_index=structural.divergence_index,
@@ -137,13 +140,16 @@ def plan_diff(
             if structural.head_snapshot.schema_sql is not None
             else ""
         )
-        left = SqlProgram(worktree_sql, engine=structural.engine.value).schema_fingerprint(
-            context_url=replay_outcome.replay_scratch_url
-        )
-        right = SqlProgram(
-            replay_outcome.replay_schema_sql,
-            engine=structural.engine.value,
-        ).schema_fingerprint(context_url=replay_outcome.replay_scratch_url)
+        try:
+            left = SqlProgram(worktree_sql, engine=structural.engine.value).schema_fingerprint(
+                context_url=replay_outcome.replay_scratch_url
+            )
+            right = SqlProgram(
+                replay_outcome.replay_schema_sql,
+                engine=structural.engine.value,
+            ).schema_fingerprint(context_url=replay_outcome.replay_scratch_url)
+        except SqlError as error:
+            raise SchemaError(f"plan diff: SQL analysis failed: {error}") from error
         return unified_sql_diff(
             left_sql=left,
             right_sql=right,

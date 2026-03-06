@@ -3,20 +3,11 @@ from __future__ import annotations
 import pytest
 
 from matey.sql import (
+    SqlError,
     SqlProgram,
     has_executable_sql,
     split_migration_sections,
-    split_sql_statements,
 )
-
-
-def test_split_sql_statements_respects_quoted_semicolons() -> None:
-    sql = "CREATE TABLE t (v TEXT DEFAULT 'a;b');\nINSERT INTO t VALUES ('x;y');\n"
-    statements = split_sql_statements(sql)
-    assert statements == (
-        "CREATE TABLE t (v TEXT DEFAULT 'a;b')",
-        "INSERT INTO t VALUES ('x;y')",
-    )
 
 
 def test_schema_fingerprint_postgres_strips_set_and_db_qualifier() -> None:
@@ -125,8 +116,15 @@ def test_migration_sections_split_up_and_down() -> None:
 
 
 def test_has_executable_sql_ignores_comments_only() -> None:
-    assert has_executable_sql("\n-- comment\n/* block */\n;\n") is False
-    assert has_executable_sql("\n-- comment\nDROP TABLE events;\n") is True
+    assert has_executable_sql("\n-- comment\n/* block */\n;\n", engine="postgres") is False
+    assert has_executable_sql("\n-- comment\nDROP TABLE events;\n", engine="postgres") is True
+
+
+def test_schema_fingerprint_raises_on_unparseable_sql() -> None:
+    with pytest.raises(SqlError):
+        SqlProgram("CREATE TABLE broken (", engine="postgres").schema_fingerprint(
+            context_url="postgresql://u:p@host:5432/app_db?sslmode=disable",
+        )
 
 
 def test_qualified_write_targets_allow_unqualified_bigquery_write() -> None:

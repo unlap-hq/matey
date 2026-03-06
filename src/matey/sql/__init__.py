@@ -1,15 +1,15 @@
-from .ast import WriteViolation, bigquery_target_from_url, engine_from_url
-from .lex import (
-    ensure_newline,
+from .ast import (
+    SqlError,
+    WriteViolation,
+    bigquery_target_from_url,
+    engine_from_url,
     has_executable_sql,
-    normalize_sql,
-    split_migration_sections,
-    split_sql_statements,
-    unified_sql_diff,
 )
 from .program import SqlProgram
+from .source import ensure_newline, normalize_sql, split_migration_sections, unified_sql_diff
 
 __all__ = [
+    "SqlError",
     "SqlProgram",
     "WriteViolation",
     "bigquery_target_from_url",
@@ -18,6 +18,5 @@ __all__ = [
     "has_executable_sql",
     "normalize_sql",
     "split_migration_sections",
-    "split_sql_statements",
     "unified_sql_diff",
 ]
