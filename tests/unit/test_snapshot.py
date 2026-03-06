@@ -5,7 +5,7 @@ from pathlib import Path
 import pygit2
 
 from matey.config import TargetConfig
-from matey.snapshot import Snapshot
+from matey.repo import Snapshot
 
 
 def _init_repo(path: Path) -> pygit2.Repository:

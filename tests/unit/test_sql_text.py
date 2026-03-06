@@ -3,10 +3,9 @@ from __future__ import annotations
 import pytest
 
 from matey.sql import (
+    SqlProgram,
     has_executable_sql,
-    migration_sections,
-    normalize_sql_for_compare,
-    qualified_write_targets,
+    split_migration_sections,
     split_sql_statements,
 )
 
@@ -20,25 +19,23 @@ def test_split_sql_statements_respects_quoted_semicolons() -> None:
     )
 
 
-def test_normalize_sql_for_compare_postgres_strips_set_and_db_qualifier() -> None:
+def test_schema_fingerprint_postgres_strips_set_and_db_qualifier() -> None:
     dump = """
 SET statement_timeout = 0;
 SET transaction_timeout = 0;
 CREATE TABLE app_db.widgets (id bigint);
 """
     expected = "CREATE TABLE widgets (id bigint);"
-    normalized_dump = normalize_sql_for_compare(
-        dump,
+    normalized_dump = SqlProgram(dump, engine="postgres").schema_fingerprint(
         context_url="postgresql://u:p@host:5432/app_db?sslmode=disable",
     )
-    normalized_expected = normalize_sql_for_compare(
-        expected,
+    normalized_expected = SqlProgram(expected, engine="postgres").schema_fingerprint(
         context_url="postgresql://u:p@host:5432/app_db?sslmode=disable",
     )
     assert normalized_dump == normalized_expected
 
 
-def test_normalize_sql_for_compare_mysql_strips_dump_noise() -> None:
+def test_schema_fingerprint_mysql_strips_dump_noise() -> None:
     dump = """
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 CREATE TABLE `db_name`.`items` (
@@ -48,35 +45,31 @@ LOCK TABLES `items` WRITE;
 UNLOCK TABLES;
 """
     expected = "CREATE TABLE items (id bigint NOT NULL);"
-    normalized_dump = normalize_sql_for_compare(
-        dump,
+    normalized_dump = SqlProgram(dump, engine="mysql").schema_fingerprint(
         context_url="mysql://u:p@127.0.0.1:3306/db_name",
     )
-    normalized_expected = normalize_sql_for_compare(
-        expected,
+    normalized_expected = SqlProgram(expected, engine="mysql").schema_fingerprint(
         context_url="mysql://u:p@127.0.0.1:3306/db_name",
     )
     assert normalized_dump == normalized_expected
 
 
-def test_normalize_sql_for_compare_clickhouse_strips_settings_and_qualifier() -> None:
+def test_schema_fingerprint_clickhouse_strips_settings_and_qualifier() -> None:
     dump = """
 SET allow_experimental_analyzer=1;
 CREATE TABLE `analytics`.`events` (`id` Int64) ENGINE = MergeTree ORDER BY tuple() SETTINGS index_granularity = 8192;
 """
     expected = "CREATE TABLE events (id Int64) ENGINE = MergeTree ORDER BY tuple();"
-    normalized_dump = normalize_sql_for_compare(
-        dump,
+    normalized_dump = SqlProgram(dump, engine="clickhouse").schema_fingerprint(
         context_url="clickhouse://u:p@127.0.0.1:9000/analytics",
     )
-    normalized_expected = normalize_sql_for_compare(
-        expected,
+    normalized_expected = SqlProgram(expected, engine="clickhouse").schema_fingerprint(
         context_url="clickhouse://u:p@127.0.0.1:9000/analytics",
     )
     assert normalized_dump == normalized_expected
 
 
-def test_normalize_sql_for_compare_bigquery_normalizes_only_current_target_dataset() -> None:
+def test_schema_fingerprint_bigquery_normalizes_only_current_target_dataset() -> None:
     dump = """
 CREATE DATABASE IF NOT EXISTS `example-project.matey_ds` OPTIONS(location="US");
 CREATE TABLE `example-project.matey_ds.events` (id INT64);
@@ -87,18 +80,16 @@ CREATE SCHEMA IF NOT EXISTS `example-project.other_ds`;
 CREATE TABLE `example-project.other_ds.events` (id INT64);
 INSERT INTO `example-project.other_ds.schema_migrations` (version) VALUES ('001');
 """
-    normalized_dump = normalize_sql_for_compare(
-        dump,
+    normalized_dump = SqlProgram(dump, engine="bigquery").schema_fingerprint(
         context_url="bigquery://example-project/us/matey_ds",
     )
-    normalized_expected = normalize_sql_for_compare(
-        expected,
+    normalized_expected = SqlProgram(expected, engine="bigquery").schema_fingerprint(
         context_url="bigquery://example-project/us/other_ds",
     )
     assert normalized_dump == normalized_expected
 
 
-def test_normalize_sql_for_compare_bigquery_preserves_foreign_dataset_references() -> None:
+def test_schema_fingerprint_bigquery_preserves_foreign_dataset_references() -> None:
     left = """
 CREATE VIEW `example-project.matey_ds.events_view` AS
 SELECT * FROM `example-project.analytics.users`;
@@ -108,12 +99,10 @@ CREATE VIEW `example-project.matey_ds.events_view` AS
 SELECT * FROM `example-project.staging.users`;
 """
 
-    normalized_left = normalize_sql_for_compare(
-        left,
+    normalized_left = SqlProgram(left, engine="bigquery").schema_fingerprint(
         context_url="bigquery://example-project/us/matey_ds",
     )
-    normalized_right = normalize_sql_for_compare(
-        right,
+    normalized_right = SqlProgram(right, engine="bigquery").schema_fingerprint(
         context_url="bigquery://example-project/us/matey_ds",
     )
 
@@ -129,7 +118,7 @@ def test_migration_sections_split_up_and_down() -> None:
         "DROP TABLE events;\n"
     )
 
-    up_sql, down_sql = migration_sections(migration_sql)
+    up_sql, down_sql = split_migration_sections(migration_sql)
 
     assert "CREATE TABLE events" in up_sql
     assert "DROP TABLE events" in down_sql
@@ -141,19 +130,19 @@ def test_has_executable_sql_ignores_comments_only() -> None:
 
 
 def test_qualified_write_targets_allow_unqualified_bigquery_write() -> None:
-    violations = qualified_write_targets(
+    violations = SqlProgram(
         "CREATE TABLE events (id INT64);",
         engine="bigquery",
-    )
+    ).section_write_violations("up")
 
     assert violations == ()
 
 
 def test_qualified_write_targets_allow_foreign_bigquery_read() -> None:
-    violations = qualified_write_targets(
+    violations = SqlProgram(
         "CREATE VIEW events AS SELECT * FROM other_ds.users;",
         engine="bigquery",
-    )
+    ).section_write_violations("up")
 
     assert violations == ()
 
@@ -173,7 +162,7 @@ def test_qualified_write_targets_reject_qualified_writes(
     sql: str,
     expected_target: str,
 ) -> None:
-    violations = qualified_write_targets(sql, engine=engine)
+    violations = SqlProgram(sql, engine=engine).section_write_violations("up")
 
     assert len(violations) == 1
     assert violations[0].target == expected_target

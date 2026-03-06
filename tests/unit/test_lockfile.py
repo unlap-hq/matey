@@ -8,7 +8,7 @@ from matey.lockfile import (
     first_lock_divergence,
     generated_sql_digest,
 )
-from matey.snapshot import Snapshot
+from matey.repo import Snapshot
 
 
 def _lock_toml(

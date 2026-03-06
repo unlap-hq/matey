@@ -1,3 +1,9 @@
+from matey.cli.template import (
+    TemplateProvider,
+    render_ci_template,
+    render_config_template,
+    write_text_file,
+)
 from matey.config import Config, ConfigError, TargetConfig
 from matey.db import (
     DbError,
@@ -17,13 +23,6 @@ from matey.dbmate import (
     DbmateError,
     default_dbmate_binary,
 )
-from matey.git_repo import (
-    GitRepo,
-    GitRepoError,
-    MergeBase,
-    NotGitRepositoryError,
-    UnknownBaseRefError,
-)
 from matey.lockfile import (
     Diagnostic,
     DiagnosticCode,
@@ -39,15 +38,17 @@ from matey.lockfile import (
     first_lock_divergence,
     lock_worktree_divergence,
 )
+from matey.repo import (
+    GitRepo,
+    GitRepoError,
+    MergeBase,
+    NotGitRepositoryError,
+    Snapshot,
+    SnapshotError,
+    UnknownBaseRefError,
+)
 from matey.schema import ApplyResult, PlanResult, SchemaError, apply, plan, status
 from matey.scratch import Engine, Scratch, ScratchConfigError, ScratchError, ScratchLease
-from matey.snapshot import Snapshot, SnapshotError
-from matey.template import (
-    TemplateProvider,
-    render_ci_template,
-    render_config_template,
-    write_text_file,
-)
 from matey.tx import TxError, commit_artifacts, recover_artifacts, serialized_target
 
 __all__ = [

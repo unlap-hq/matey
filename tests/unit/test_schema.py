@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -10,8 +11,12 @@ import matey.schema as schema_mod
 import matey.sql as sql_mod
 from matey.config import TargetConfig
 from matey.lockfile import LockFile, LockPolicy
+from matey.repo import Snapshot
 from matey.schema import SchemaError, apply, plan, plan_diff, plan_sql, status
-from matey.snapshot import Snapshot
+from matey.scratch import Engine
+
+schema_plan_mod = importlib.import_module("matey.schema.plan")
+schema_replay_mod = importlib.import_module("matey.schema.replay")
 
 
 def _target(tmp_path: Path, name: str = "core") -> TargetConfig:
@@ -86,11 +91,11 @@ chain_hash = "{chain}"
     )
 
 
-def _check_outcome(*, schema_sql: str, checkpoint_map: dict[str, str]) -> schema_mod._CheckOutcome:
-    return schema_mod._CheckOutcome(
+def _check_outcome(*, schema_sql: str, checkpoint_map: dict[str, str]) -> schema_replay_mod.ReplayOutcome:
+    return schema_replay_mod.ReplayOutcome(
         replay_scratch_url="sqlite3:/tmp/matey-schema-test-replay.sqlite3",
         down_scratch_url="sqlite3:/tmp/matey-schema-test-down.sqlite3",
-        b_schema_sql=schema_sql,
+        replay_schema_sql=schema_sql,
         checkpoint_sql_by_file=checkpoint_map,
         down_checked=(),
         down_skipped=(),
@@ -126,8 +131,8 @@ def test_plan_local_without_lock_uses_full_tail(
     _write(target.migrations / "001_init.sql", "-- migrate:up\nCREATE TABLE a(id INTEGER);\n")
     _write(target.migrations / "002_next.sql", "-- migrate:up\nCREATE TABLE b(id INTEGER);\n")
     monkeypatch.setattr(
-        schema_mod,
-        "_run_replay_checks",
+        schema_replay_mod,
+        "run_replay_checks",
         lambda *args, **kwargs: _check_outcome(
             schema_sql="CREATE TABLE a(id INTEGER);\nCREATE TABLE b(id INTEGER);\n",
             checkpoint_map={},
@@ -172,8 +177,8 @@ def test_plan_local_with_coherent_lock_is_noop(
         ),
     )
     monkeypatch.setattr(
-        schema_mod,
-        "_run_replay_checks",
+        schema_replay_mod,
+        "run_replay_checks",
         lambda *args, **kwargs: _check_outcome(
             schema_sql=checkpoint_sql,
             checkpoint_map={},
@@ -192,8 +197,8 @@ def test_plan_clean_forces_full_replay(monkeypatch: pytest.MonkeyPatch, tmp_path
     target = _target(tmp_path)
     _write(target.migrations / "001_init.sql", "-- migrate:up\nCREATE TABLE a(id INTEGER);\n")
     monkeypatch.setattr(
-        schema_mod,
-        "_run_replay_checks",
+        schema_replay_mod,
+        "run_replay_checks",
         lambda *args, **kwargs: _check_outcome(
             schema_sql="CREATE TABLE a(id INTEGER);\n",
             checkpoint_map={},
@@ -282,8 +287,8 @@ def test_plan_base_uses_merge_base_vs_worktree(
     _commit_all(repo, "base")
     _write(target.migrations / "002_next.sql", "-- migrate:up\nCREATE TABLE b(id INTEGER);\n")
     monkeypatch.setattr(
-        schema_mod,
-        "_run_replay_checks",
+        schema_replay_mod,
+        "run_replay_checks",
         lambda *args, **kwargs: _check_outcome(
             schema_sql="CREATE TABLE a(id INTEGER);\nCREATE TABLE b(id INTEGER);\n",
             checkpoint_map={},
@@ -310,8 +315,8 @@ def test_plan_sql_returns_replay_b(
     _write(target.migrations / "001_init.sql", "-- migrate:up\nCREATE TABLE a(id INTEGER);\n")
     expected = "CREATE TABLE a(id INTEGER);\n"
     monkeypatch.setattr(
-        schema_mod,
-        "_run_replay_checks",
+        schema_replay_mod,
+        "run_replay_checks",
         lambda *args, **kwargs: _check_outcome(
             schema_sql=expected,
             checkpoint_map={},
@@ -331,8 +336,8 @@ def test_plan_diff_compares_worktree_vs_replay(
     _write(target.migrations / "001_init.sql", "-- migrate:up\nCREATE TABLE a(id INTEGER);\n")
     _write(target.schema, "CREATE TABLE old_table(id INTEGER);\n")
     monkeypatch.setattr(
-        schema_mod,
-        "_run_replay_checks",
+        schema_replay_mod,
+        "run_replay_checks",
         lambda *args, **kwargs: _check_outcome(
             schema_sql="CREATE TABLE new_table(id INTEGER);\n",
             checkpoint_map={},
@@ -360,8 +365,8 @@ def test_apply_writes_schema_lock_and_tail_checkpoints(
     target = _target(tmp_path)
     _write(target.migrations / "001_init.sql", "-- migrate:up\nCREATE TABLE a(id INTEGER);\n")
     monkeypatch.setattr(
-        schema_mod,
-        "_run_replay_checks",
+        schema_replay_mod,
+        "run_replay_checks",
         lambda *args, **kwargs: _check_outcome(
             schema_sql="CREATE TABLE a(id INTEGER);\n",
             checkpoint_map={"checkpoints/001_init.sql": "CREATE TABLE a(id INTEGER);\n"},
@@ -395,15 +400,15 @@ def test_apply_is_noop_when_tail_is_empty(
     _write(target.schema, checkpoint_sql)
 
     def _fake_replay(
-        structural: schema_mod._StructuralPlan, *, keep_scratch: bool, dbmate_bin: Path | None
-    ) -> schema_mod._CheckOutcome:
+        structural: schema_plan_mod.StructuralPlan, *, keep_scratch: bool, dbmate_bin: Path | None
+    ) -> schema_replay_mod.ReplayOutcome:
         del keep_scratch, dbmate_bin
         checkpoint_map = (
             {"checkpoints/001_init.sql": checkpoint_sql} if structural.tail_steps else {}
         )
         return _check_outcome(schema_sql=checkpoint_sql, checkpoint_map=checkpoint_map)
 
-    monkeypatch.setattr(schema_mod, "_run_replay_checks", _fake_replay)
+    monkeypatch.setattr(schema_replay_mod, "run_replay_checks", _fake_replay)
 
     first = apply(target, test_base_url="sqlite3:/tmp/schema-idempotent-first.sqlite3")
     second = apply(target, test_base_url="sqlite3:/tmp/schema-idempotent-second.sqlite3")
@@ -426,8 +431,8 @@ def test_apply_tail_empty_divergence_rewrites_and_prunes(
     _write(target.migrations / "001_init.sql", migration1)
     _write(target.migrations / "002_next.sql", migration2)
     monkeypatch.setattr(
-        schema_mod,
-        "_run_replay_checks",
+        schema_replay_mod,
+        "run_replay_checks",
         lambda *args, **kwargs: _check_outcome(
             schema_sql="CREATE TABLE a(id INTEGER);\nCREATE TABLE b(id INTEGER);\n",
             checkpoint_map={
@@ -444,8 +449,8 @@ def test_apply_tail_empty_divergence_rewrites_and_prunes(
     # with an empty tail slice (lock has one trailing step not present in worktree).
     (target.migrations / "002_next.sql").unlink()
     monkeypatch.setattr(
-        schema_mod,
-        "_run_replay_checks",
+        schema_replay_mod,
+        "run_replay_checks",
         lambda *args, **kwargs: _check_outcome(
             schema_sql="CREATE TABLE a(id INTEGER);\n",
             checkpoint_map={},
@@ -503,8 +508,8 @@ def test_plan_recovers_pending_tx(
     monkeypatch.setattr(schema_mod, "recover_artifacts", _fake_recover)
     monkeypatch.setattr(schema_mod, "serialized_target", _fake_serialized)
     monkeypatch.setattr(
-        schema_mod,
-        "_run_replay_checks",
+        schema_replay_mod,
+        "run_replay_checks",
         lambda *args, **kwargs: _check_outcome(
             schema_sql="CREATE TABLE a(id INTEGER);\n",
             checkpoint_map={},
@@ -537,8 +542,8 @@ def test_apply_recovers_pending_tx(
     monkeypatch.setattr(schema_mod, "recover_artifacts", _fake_recover)
     monkeypatch.setattr(schema_mod, "serialized_target", _fake_serialized)
     monkeypatch.setattr(
-        schema_mod,
-        "_run_replay_checks",
+        schema_replay_mod,
+        "run_replay_checks",
         lambda *args, **kwargs: _check_outcome(
             schema_sql="CREATE TABLE a(id INTEGER);\n",
             checkpoint_map={"checkpoints/001_init.sql": "CREATE TABLE a(id INTEGER);\n"},
@@ -559,8 +564,8 @@ def test_apply_commits_inside_target_serialization(
     target = _target(tmp_path)
     _write(target.migrations / "001_init.sql", "-- migrate:up\nCREATE TABLE a(id INTEGER);\n")
     monkeypatch.setattr(
-        schema_mod,
-        "_run_replay_checks",
+        schema_replay_mod,
+        "run_replay_checks",
         lambda *args, **kwargs: _check_outcome(
             schema_sql="CREATE TABLE a(id INTEGER);\n",
             checkpoint_map={"checkpoints/001_init.sql": "CREATE TABLE a(id INTEGER);\n"},
@@ -577,7 +582,7 @@ def test_apply_commits_inside_target_serialization(
         commit_calls.append((target_dir, len(writes), len(deletes)))
         return (target_dir / "schema.sql",)
 
-    monkeypatch.setattr(schema_mod, "commit_artifacts", _fake_commit)
+    monkeypatch.setattr(schema_mod.artifacts, "commit_artifacts", _fake_commit)
 
     result = apply(target, test_base_url="sqlite3:/tmp/schema-commit-assume-locked.sqlite3")
 
@@ -593,13 +598,13 @@ def test_resolve_replay_context_skips_invalid_url_candidate(
     monkeypatch.setenv(target.test_url_env, "sqlite3:/tmp/schema-env.sqlite3")
     monkeypatch.delenv(target.url_env, raising=False)
 
-    engine, base_url = schema_mod._resolve_replay_context(
+    engine, base_url = schema_plan_mod.resolve_replay_context(
         target=target,
         lock=None,
         explicit_test_base_url="not-a-valid-url",
     )
 
-    assert engine is schema_mod.Engine.SQLITE
+    assert engine is Engine.SQLITE
     assert base_url == "sqlite3:/tmp/schema-env.sqlite3"
 
 
@@ -611,13 +616,13 @@ def test_resolve_replay_context_uses_url_env_as_base_url(
     monkeypatch.delenv(target.test_url_env, raising=False)
     monkeypatch.setenv(target.url_env, "bigquery://example-project/us/test_base")
 
-    engine, base_url = schema_mod._resolve_replay_context(
+    engine, base_url = schema_plan_mod.resolve_replay_context(
         target=target,
         lock=None,
         explicit_test_base_url=None,
     )
 
-    assert engine is schema_mod.Engine.BIGQUERY
+    assert engine is Engine.BIGQUERY
     assert base_url == "bigquery://example-project/us/test_base"
 
 
@@ -644,13 +649,13 @@ def test_resolve_replay_context_falls_back_to_lock_engine_on_invalid_urls(
         steps=(),
     )
 
-    engine, base_url = schema_mod._resolve_replay_context(
+    engine, base_url = schema_plan_mod.resolve_replay_context(
         target=target,
         lock=lock,
         explicit_test_base_url=None,
     )
 
-    assert engine is schema_mod.Engine.SQLITE
+    assert engine is Engine.SQLITE
     assert base_url is None
 
 

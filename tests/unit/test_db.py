@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -9,7 +10,9 @@ import matey.db as db_mod
 from matey.config import TargetConfig
 from matey.dbmate import CmdResult
 from matey.lockfile import LockState, WorktreeStep
-from matey.snapshot import Snapshot
+from matey.repo import Snapshot
+
+db_runtime_mod = importlib.import_module("matey.db.runtime")
 
 
 def _target(tmp_path: Path, name: str = "core") -> TargetConfig:
@@ -68,7 +71,9 @@ class _FakeConn:
         return _cmd("dbmate", "dump")
 
 
-def _ctx(tmp_path: Path, *, conn: _FakeConn, steps: tuple[WorktreeStep, ...]) -> db_mod._Ctx:
+def _ctx(
+    tmp_path: Path, *, conn: _FakeConn, steps: tuple[WorktreeStep, ...]
+) -> db_runtime_mod.RuntimeContext:
     target = _target(tmp_path)
     snapshot = Snapshot(
         target_name=target.name,
@@ -88,7 +93,7 @@ def _ctx(tmp_path: Path, *, conn: _FakeConn, steps: tuple[WorktreeStep, ...]) ->
         orphan_checkpoints=(),
         diagnostics=(),
     )
-    return db_mod._Ctx(target=target, snapshot=snapshot, state=state, conn=conn)
+    return db_runtime_mod.RuntimeContext(target=target, snapshot=snapshot, state=state, conn=conn)
 
 
 def _qualified_write(engine: str) -> str:
@@ -130,14 +135,14 @@ def test_up_uses_create_if_pre_status_reports_missing_db(
     missing = _cmd("dbmate", "status", exit_code=1, stderr="database does not exist")
     statuses = iter(
         [
-            db_mod._StatusError(result=missing, missing_db=True),
+            db_runtime_mod.StatusError(result=missing, missing_db=True),
             (
                 _cmd("dbmate", "status", stdout="[ ] 001_init.sql\nApplied: 0\n"),
-                db_mod._ParsedStatus(applied_files=(), applied_count=0),
+                db_runtime_mod.LiveStatus(applied_files=(), applied_count=0),
             ),
             (
                 _cmd("dbmate", "status", stdout="[X] 001_init.sql\nApplied: 1\n"),
-                db_mod._ParsedStatus(applied_files=("001_init.sql",), applied_count=1),
+                db_runtime_mod.LiveStatus(applied_files=("001_init.sql",), applied_count=1),
             ),
         ]
     )
@@ -148,11 +153,11 @@ def test_up_uses_create_if_pre_status_reports_missing_db(
             raise value
         return value
 
-    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
-    monkeypatch.setattr(db_mod, "_status", _fake_status)
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
+    monkeypatch.setattr(db_runtime_mod, "read_status", _fake_status)
     monkeypatch.setattr(
-        db_mod,
-        "_verify_expected_schema",
+        db_runtime_mod,
+        "verify_expected_schema",
         lambda **kwargs: True,
     )
 
@@ -178,12 +183,12 @@ def test_migrate_does_not_fallback_to_create_on_missing_db(
 
     missing = _cmd("dbmate", "status", exit_code=1, stderr="database does not exist")
 
-    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
     monkeypatch.setattr(
-        db_mod,
-        "_status",
+        db_runtime_mod,
+        "read_status",
         lambda _conn: (_ for _ in ()).throw(
-            db_mod._StatusError(result=missing, missing_db=True)
+            db_runtime_mod.StatusError(result=missing, missing_db=True)
         ),
     )
 
@@ -213,14 +218,14 @@ def test_down_expected_index_comes_from_post_status(
                     "status",
                     stdout="[X] 001_init.sql\n[X] 002_next.sql\n[X] 003_end.sql\nApplied: 3\n",
                 ),
-                db_mod._ParsedStatus(
+                db_runtime_mod.LiveStatus(
                     applied_files=("001_init.sql", "002_next.sql", "003_end.sql"),
                     applied_count=3,
                 ),
             ),
             (
                 _cmd("dbmate", "status", stdout="[X] 001_init.sql\nApplied: 1\n"),
-                db_mod._ParsedStatus(applied_files=("001_init.sql",), applied_count=1),
+                db_runtime_mod.LiveStatus(applied_files=("001_init.sql",), applied_count=1),
             ),
         ]
     )
@@ -229,15 +234,15 @@ def test_down_expected_index_comes_from_post_status(
     def _fake_status(_conn: _FakeConn):
         return next(statuses)
 
-    def _fake_verify(*, ctx: db_mod._Ctx, expected_index: int, context: str):
-        del ctx
+    def _fake_verify(*, runtime: db_runtime_mod.RuntimeContext, expected_index: int, context: str):
+        del runtime
         del context
         captured["expected_index"] = expected_index
         return True
 
-    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
-    monkeypatch.setattr(db_mod, "_status", _fake_status)
-    monkeypatch.setattr(db_mod, "_verify_expected_schema", _fake_verify)
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
+    monkeypatch.setattr(db_runtime_mod, "read_status", _fake_status)
+    monkeypatch.setattr(db_runtime_mod, "verify_expected_schema", _fake_verify)
 
     result = db_mod.down(ctx.target, steps=2)
 
@@ -262,21 +267,21 @@ def test_plan_uses_worktree_target_index_for_expected_schema(
 
     captured: dict[str, int] = {}
 
-    def _fake_compare(*, ctx: db_mod._Ctx, expected_index: int):
-        del ctx
+    def _fake_compare(*, runtime: db_runtime_mod.RuntimeContext, expected_index: int):
+        del runtime
         captured["expected_index"] = expected_index
         return True, "EXPECTED", "LIVE"
 
-    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
     monkeypatch.setattr(
-        db_mod,
-        "_status",
+        db_runtime_mod,
+        "read_status",
         lambda _conn: (
             _cmd("dbmate", "status", stdout="[X] 001_init.sql\nApplied: 1\n"),
-            db_mod._ParsedStatus(applied_files=("001_init.sql",), applied_count=1),
+            db_runtime_mod.LiveStatus(applied_files=("001_init.sql",), applied_count=1),
         ),
     )
-    monkeypatch.setattr(db_mod, "_compare_expected_schema", _fake_compare)
+    monkeypatch.setattr(db_runtime_mod, "compare_expected_schema", _fake_compare)
 
     result = db_mod.plan(ctx.target)
 
@@ -299,13 +304,13 @@ def test_plan_sql_returns_worktree_target_schema(
         del kwargs
         yield ctx
 
-    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
     monkeypatch.setattr(
-        db_mod,
-        "_status",
+        db_runtime_mod,
+        "read_status",
         lambda _conn: (
             _cmd("dbmate", "status", stdout="[X] 001_init.sql\nApplied: 1\n"),
-            db_mod._ParsedStatus(applied_files=("001_init.sql",), applied_count=1),
+            db_runtime_mod.LiveStatus(applied_files=("001_init.sql",), applied_count=1),
         ),
     )
 
@@ -327,18 +332,18 @@ def test_plan_diff_compares_live_vs_worktree_target(
         del kwargs
         yield ctx
 
-    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
     monkeypatch.setattr(
-        db_mod,
-        "_status",
+        db_runtime_mod,
+        "read_status",
         lambda _conn: (
             _cmd("dbmate", "status", stdout="[X] 001_init.sql\nApplied: 1\n"),
-            db_mod._ParsedStatus(applied_files=("001_init.sql",), applied_count=1),
+            db_runtime_mod.LiveStatus(applied_files=("001_init.sql",), applied_count=1),
         ),
     )
     monkeypatch.setattr(
-        db_mod,
-        "_compare_expected_schema",
+        db_runtime_mod,
+        "compare_expected_schema",
         lambda **kwargs: (False, "CREATE TABLE expected(id INTEGER);\n", "CREATE TABLE live(id INTEGER);\n"),
     )
 
@@ -383,10 +388,10 @@ def test_expected_sql_for_index_uses_checkpoint_and_head(tmp_path: Path) -> None
     steps = (_step(1, "001_init.sql"), _step(2, "002_next.sql"))
     ctx = _ctx(tmp_path, conn=conn, steps=steps)
 
-    assert db_mod._expected_sql_for_index(ctx=ctx, index=0) is None
-    assert db_mod._expected_sql_for_index(ctx=ctx, index=1) == "CREATE TABLE c1(id INTEGER);\n"
+    assert db_runtime_mod.expected_sql_for_index(runtime=ctx, index=0) is None
+    assert db_runtime_mod.expected_sql_for_index(runtime=ctx, index=1) == "CREATE TABLE c1(id INTEGER);\n"
     assert (
-        db_mod._expected_sql_for_index(ctx=ctx, index=2) == "CREATE TABLE head(id INTEGER);\n"
+        db_runtime_mod.expected_sql_for_index(runtime=ctx, index=2) == "CREATE TABLE head(id INTEGER);\n"
     )
 
 
@@ -394,10 +399,10 @@ def test_ensure_prefix_rejects_non_prefix(tmp_path: Path) -> None:
     conn = _FakeConn()
     steps = (_step(1, "001_init.sql"), _step(2, "002_next.sql"))
     ctx = _ctx(tmp_path, conn=conn, steps=steps)
-    parsed = db_mod._ParsedStatus(applied_files=("009_bad.sql",), applied_count=1)
+    parsed = db_runtime_mod.LiveStatus(applied_files=("009_bad.sql",), applied_count=1)
 
     with pytest.raises(db_mod.DbError, match="does not match worktree migration prefix"):
-        db_mod._ensure_prefix(state=ctx.state, parsed=parsed)
+        db_runtime_mod.ensure_prefix(state=ctx.state, live=parsed)
 
 
 def test_ensure_prefix_rejects_ambiguous_basename_only_status(tmp_path: Path) -> None:
@@ -423,10 +428,10 @@ def test_ensure_prefix_rejects_ambiguous_basename_only_status(tmp_path: Path) ->
         ),
     )
     ctx = _ctx(tmp_path, conn=conn, steps=duplicate_steps)
-    parsed = db_mod._ParsedStatus(applied_files=("001_init.sql",), applied_count=1)
+    parsed = db_runtime_mod.LiveStatus(applied_files=("001_init.sql",), applied_count=1)
 
     with pytest.raises(db_mod.DbError, match="duplicate migration basenames"):
-        db_mod._ensure_prefix(state=ctx.state, parsed=parsed)
+        db_runtime_mod.ensure_prefix(state=ctx.state, live=parsed)
 
 
 def test_drift_reports_live_ahead_as_drift(
@@ -442,17 +447,17 @@ def test_drift_reports_live_ahead_as_drift(
         del kwargs
         yield ctx
 
-    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
     monkeypatch.setattr(
-        db_mod,
-        "_status",
+        db_runtime_mod,
+        "read_status",
         lambda _conn: (
             _cmd(
                 "dbmate",
                 "status",
                 stdout="[X] 001_init.sql\n[X] 002_extra.sql\nApplied: 2\n",
             ),
-            db_mod._ParsedStatus(
+            db_runtime_mod.LiveStatus(
                 applied_files=("001_init.sql", "002_extra.sql"),
                 applied_count=2,
             ),
@@ -478,17 +483,17 @@ def test_plan_reports_live_ahead_as_mismatch(
         del kwargs
         yield ctx
 
-    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
     monkeypatch.setattr(
-        db_mod,
-        "_status",
+        db_runtime_mod,
+        "read_status",
         lambda _conn: (
             _cmd(
                 "dbmate",
                 "status",
                 stdout="[X] 001_init.sql\n[X] 002_extra.sql\nApplied: 2\n",
             ),
-            db_mod._ParsedStatus(
+            db_runtime_mod.LiveStatus(
                 applied_files=("001_init.sql", "002_extra.sql"),
                 applied_count=2,
             ),
@@ -514,17 +519,17 @@ def test_up_rejects_live_ahead(
         del kwargs
         yield ctx
 
-    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
     monkeypatch.setattr(
-        db_mod,
-        "_status",
+        db_runtime_mod,
+        "read_status",
         lambda _conn: (
             _cmd(
                 "dbmate",
                 "status",
                 stdout="[X] 001_init.sql\n[X] 002_extra.sql\nApplied: 2\n",
             ),
-            db_mod._ParsedStatus(
+            db_runtime_mod.LiveStatus(
                 applied_files=("001_init.sql", "002_extra.sql"),
                 applied_count=2,
             ),
@@ -561,13 +566,13 @@ def test_up_rejects_qualified_pending_writes(
         del kwargs
         yield ctx
 
-    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
     monkeypatch.setattr(
-        db_mod,
-        "_status",
+        db_runtime_mod,
+        "read_status",
         lambda _conn: (
             _cmd("dbmate", "status", stdout="[ ] 001_init.sql\nApplied: 0\n"),
-            db_mod._ParsedStatus(applied_files=(), applied_count=0),
+            db_runtime_mod.LiveStatus(applied_files=(), applied_count=0),
         ),
     )
 
@@ -602,13 +607,13 @@ def test_migrate_rejects_qualified_pending_writes(
         del kwargs
         yield ctx
 
-    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
     monkeypatch.setattr(
-        db_mod,
-        "_status",
+        db_runtime_mod,
+        "read_status",
         lambda _conn: (
             _cmd("dbmate", "status", stdout="[ ] 001_init.sql\nApplied: 0\n"),
-            db_mod._ParsedStatus(applied_files=(), applied_count=0),
+            db_runtime_mod.LiveStatus(applied_files=(), applied_count=0),
         ),
     )
 
@@ -643,13 +648,13 @@ def test_down_rejects_qualified_executable_down_writes(
         del kwargs
         yield ctx
 
-    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
     monkeypatch.setattr(
-        db_mod,
-        "_status",
+        db_runtime_mod,
+        "read_status",
         lambda _conn: (
             _cmd("dbmate", "status", stdout="[X] 001_init.sql\nApplied: 1\n"),
-            db_mod._ParsedStatus(applied_files=("001_init.sql",), applied_count=1),
+            db_runtime_mod.LiveStatus(applied_files=("001_init.sql",), applied_count=1),
         ),
     )
 

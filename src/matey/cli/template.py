@@ -29,16 +29,23 @@ def render_config_template(targets: tuple[str, ...]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_ci_template(provider: TemplateProvider) -> tuple[Path, str]:
+def default_ci_template_path(provider: TemplateProvider) -> Path:
     if provider == "github":
-        return (
-            Path(".github/workflows/matey-schema.yml"),
-            _github_template(),
-        )
+        return Path(".github/workflows/matey-schema.yml")
     if provider == "gitlab":
-        return (Path(".gitlab-ci.matey.yml"), _gitlab_template())
+        return Path(".gitlab-ci.matey.yml")
     if provider == "buildkite":
-        return (Path(".buildkite/matey-schema.yml"), _buildkite_template())
+        return Path(".buildkite/matey-schema.yml")
+    raise ValueError(f"Unsupported CI provider: {provider!r}")
+
+
+def render_ci_template(provider: TemplateProvider) -> str:
+    if provider == "github":
+        return _github_template()
+    if provider == "gitlab":
+        return _gitlab_template()
+    if provider == "buildkite":
+        return _buildkite_template()
     raise ValueError(f"Unsupported CI provider: {provider!r}")
 
 
@@ -114,8 +121,8 @@ def _buildkite_template() -> str:
 
 __all__ = [
     "TemplateProvider",
+    "default_ci_template_path",
     "render_ci_template",
     "render_config_template",
     "write_text_file",
 ]
-

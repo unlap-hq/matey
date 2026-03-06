@@ -4,8 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from matey.template import (
+from matey.cli.template import (
     TemplateProvider,
+    default_ci_template_path,
     render_ci_template,
     render_config_template,
     write_text_file,
@@ -47,7 +48,8 @@ def test_render_ci_template(
     expected_path: Path,
     expected_base_var: str,
 ) -> None:
-    path, content = render_ci_template(provider)
+    path = default_ci_template_path(provider)
+    content = render_ci_template(provider)
     assert path == expected_path
     assert "pixi run matey schema status --all" in content
     assert expected_base_var in content

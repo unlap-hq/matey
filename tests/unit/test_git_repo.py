@@ -5,7 +5,7 @@ from pathlib import Path
 import pygit2
 import pytest
 
-from matey.git_repo import GitRepo, NotGitRepositoryError, UnknownBaseRefError
+from matey.repo import GitRepo, NotGitRepositoryError, UnknownBaseRefError
 
 
 def _commit_all(repo: pygit2.Repository, message: str) -> pygit2.Oid:

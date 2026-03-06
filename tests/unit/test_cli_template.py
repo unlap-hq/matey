@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from importlib import import_module
 from pathlib import Path
 
-from matey import __main__ as cli
+cli = import_module("matey.cli.app")
 
 
 def test_template_config_prints_to_stdout(capsys) -> None:
@@ -45,4 +46,3 @@ def test_template_ci_writes_when_path_provided(tmp_path: Path) -> None:
     assert destination.exists()
     content = destination.read_text(encoding="utf-8")
     assert "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" in content
-

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import subprocess
@@ -9,8 +10,10 @@ from pathlib import Path
 
 import pytest
 
-import matey.tx as tx_mod
 from matey.tx import TxError, commit_artifacts, recover_artifacts, serialized_target
+
+tx_store_mod = importlib.import_module("matey.tx.store")
+tx_journal_mod = importlib.import_module("matey.tx.journal")
 
 
 def _write(path: Path, content: bytes) -> None:
@@ -167,13 +170,13 @@ def test_commit_failure_keeps_journal_and_is_recoverable(
     _write(stable_path, b"stable-before")
     _write(delete_path, b"delete-before")
 
-    def _failing_apply(*, target_root: Path, tx_dir: Path, manifest: tx_mod._TxManifest) -> None:
+    def _failing_apply(*, target_root: Path, tx_dir: Path, manifest: tx_journal_mod.TxManifest) -> None:
         # Simulate partial mutation before crash.
-        first = tx_mod._absolute_target_path(target_root, manifest.writes[0])
+        first = tx_journal_mod.absolute_target_path(target_root, manifest.writes[0])
         first.write_bytes(b"mutated-during-apply")
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(tx_mod, "_apply_tx", _failing_apply)
+    monkeypatch.setattr(tx_store_mod, "apply_tx", _failing_apply)
 
     with pytest.raises(RuntimeError, match="boom"):
         commit_artifacts(
