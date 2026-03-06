@@ -57,7 +57,9 @@ def _detect_base_ref(
         if value:
             return value
 
-    upstream = _run_git(repo_root, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])
+    upstream = _run_git(
+        repo_root, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]
+    )
     if upstream.returncode == 0:
         value = (upstream.stdout or "").strip()
         if value:
@@ -75,7 +77,9 @@ def _resolve_merge_base(repo_root: Path, base_ref: str) -> str:
         )
     value = (merge_base.stdout or "").strip()
     if not value:
-        raise SchemaValidationError(f"Git merge-base returned empty output for base ref '{base_ref}'.")
+        raise SchemaValidationError(
+            f"Git merge-base returned empty output for base ref '{base_ref}'."
+        )
     return value
 
 

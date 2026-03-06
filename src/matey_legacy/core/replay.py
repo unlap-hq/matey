@@ -95,7 +95,9 @@ def _dbmate_wait_timeout(runtime_env: RuntimeEnv) -> str:
     return runtime_env.dbmate_wait_timeout
 
 
-def _build_base_paths_in_worktree(*, head_paths: ResolvedPaths, repo_root: Path, worktree: Path) -> ResolvedPaths:
+def _build_base_paths_in_worktree(
+    *, head_paths: ResolvedPaths, repo_root: Path, worktree: Path
+) -> ResolvedPaths:
     base_migrations = _map_to_worktree(head_paths.migrations_dir, repo_root, worktree)
     base_schema = _map_to_worktree(head_paths.schema_file, repo_root, worktree)
     base_db_dir = base_migrations.parent
@@ -132,7 +134,9 @@ def _relative_to_db(path: Path, *, db_dir: Path) -> str:
 def _sorted_migrations(migrations_dir: Path) -> list[Path]:
     if not migrations_dir.exists():
         return []
-    migrations = [path for path in migrations_dir.iterdir() if path.is_file() and path.suffix == ".sql"]
+    migrations = [
+        path for path in migrations_dir.iterdir() if path.is_file() and path.suffix == ".sql"
+    ]
     return sorted(migrations, key=lambda item: item.name)
 
 
@@ -144,7 +148,9 @@ def _existing_checkpoint_map(lock: SchemaLock) -> dict[str, str]:
     return {step.migration_file: step.checkpoint_file for step in lock.steps}
 
 
-def _collect_head_migration_steps(*, paths: ResolvedPaths, lock: SchemaLock) -> tuple[_HeadMigrationStep, ...]:
+def _collect_head_migration_steps(
+    *, paths: ResolvedPaths, lock: SchemaLock
+) -> tuple[_HeadMigrationStep, ...]:
     checkpoint_map = _existing_checkpoint_map(lock)
     steps: list[_HeadMigrationStep] = []
     for migration_path in _sorted_migrations(paths.migrations_dir):
@@ -164,7 +170,9 @@ def _collect_head_migration_steps(*, paths: ResolvedPaths, lock: SchemaLock) -> 
     return tuple(steps)
 
 
-def _first_divergence_index(*, base_lock: SchemaLock | None, head_steps: tuple[_HeadMigrationStep, ...]) -> int:
+def _first_divergence_index(
+    *, base_lock: SchemaLock | None, head_steps: tuple[_HeadMigrationStep, ...]
+) -> int:
     if base_lock is None:
         return 1
 
@@ -193,7 +201,9 @@ def _read_anchor_schema_sql(
     if divergence <= 1:
         return None
     if base_lock is None:
-        raise LockfileError(f"Unable to resolve {context} anchor checkpoint without a base lockfile.")
+        raise LockfileError(
+            f"Unable to resolve {context} anchor checkpoint without a base lockfile."
+        )
 
     anchor_step = base_lock.steps[divergence - 2]
     anchor_checkpoint = base_paths.db_dir / anchor_step.checkpoint_file
@@ -205,7 +215,9 @@ def _read_anchor_schema_sql(
 
 
 @contextmanager
-def _temporary_tail_migrations_dir(*, source_migrations_dir: Path, file_names: list[str]) -> Iterator[Path]:
+def _temporary_tail_migrations_dir(
+    *, source_migrations_dir: Path, file_names: list[str]
+) -> Iterator[Path]:
     with tempfile.TemporaryDirectory(prefix="matey-tail-migrations-") as tmp_name:
         tmp_dir = Path(tmp_name)
         for name in file_names:
@@ -359,7 +371,9 @@ def _scratch_schema_from_replay(
                         schema_file=runtime_schema_file,
                         verb="up",
                         global_args=["--no-dump-schema"],
-                        log_context=DbmateLogContext(target=target_name, phase="replay", step="up-tail"),
+                        log_context=DbmateLogContext(
+                            target=target_name, phase="replay", step="up-tail"
+                        ),
                         on_result=on_dbmate_result,
                     ),
                 )
@@ -384,7 +398,9 @@ def _scratch_schema_from_replay(
             details = (dump_result.stderr or dump_result.stdout or "").strip()
             error = f"dbmate dump failed on replay scratch target. {details}".strip()
             return "", scratch_url
-        schema_sql = normalize_sql_text(_extract_dump_schema(dump_result=dump_result, schema_file=runtime_schema_file))
+        schema_sql = normalize_sql_text(
+            _extract_dump_schema(dump_result=dump_result, schema_file=runtime_schema_file)
+        )
         return schema_sql, scratch_url
     finally:
         cleanup_error = cleanup_scratch(
@@ -405,7 +421,6 @@ def _scratch_schema_from_replay(
         final_error = _finalize_error(error=error, cleanup_error=cleanup_error)
         if final_error is not None:
             raise SchemaValidationError(final_error)
-
 
 
 def expected_schema_from_head_lock(*, paths: ResolvedPaths) -> str:
@@ -443,7 +458,9 @@ def _dump_schema(
         details = (dump_result.stderr or dump_result.stdout or "").strip()
         return None, f"{error_prefix}. {details}".strip()
     return (
-        normalize_sql_text(_extract_dump_schema(dump_result=dump_result, schema_file=runtime_schema_file)),
+        normalize_sql_text(
+            _extract_dump_schema(dump_result=dump_result, schema_file=runtime_schema_file)
+        ),
         None,
     )
 
@@ -514,7 +531,9 @@ def _run_down_roundtrip(
                     schema_file=load_schema_file,
                     verb="load",
                     global_args=["--no-dump-schema"],
-                    log_context=DbmateLogContext(target=target_name, phase="down", step="load-anchor"),
+                    log_context=DbmateLogContext(
+                        target=target_name, phase="down", step="load-anchor"
+                    ),
                     on_result=on_dbmate_result,
                 ),
             )
@@ -567,7 +586,9 @@ def _run_down_roundtrip(
                         schema_file=runtime_schema_file,
                         verb="up",
                         global_args=["--no-dump-schema"],
-                        log_context=DbmateLogContext(target=target_name, phase="down", step=up_step),
+                        log_context=DbmateLogContext(
+                            target=target_name, phase="down", step=up_step
+                        ),
                         on_result=on_dbmate_result,
                     ),
                 )
@@ -598,7 +619,9 @@ def _run_down_roundtrip(
                         verb="rollback",
                         global_args=["--no-dump-schema"],
                         extra_args=["1"],
-                        log_context=DbmateLogContext(target=target_name, phase="down", step=rollback_step),
+                        log_context=DbmateLogContext(
+                            target=target_name, phase="down", step=rollback_step
+                        ),
                         on_result=on_dbmate_result,
                     ),
                 )
@@ -665,7 +688,9 @@ def _run_down_roundtrip(
                         schema_file=runtime_schema_file,
                         verb="up",
                         global_args=["--no-dump-schema"],
-                        log_context=DbmateLogContext(target=target_name, phase="down", step=reapply_step),
+                        log_context=DbmateLogContext(
+                            target=target_name, phase="down", step=reapply_step
+                        ),
                         on_result=on_dbmate_result,
                     ),
                 )
@@ -705,7 +730,6 @@ def _run_down_roundtrip(
                 error=_finalize_error(error=result.error, cleanup_error=cleanup_error),
             )
     return result
-
 
 
 def _prepare_replay_plan(
@@ -829,7 +853,11 @@ def _evaluate_schema_lock_target_impl(
     )
 
     if not validate_down:
-        return replay_result, SchemaDownResult(target_name=target_name, success=True, scratch_url=""), replay_plan
+        return (
+            replay_result,
+            SchemaDownResult(target_name=target_name, success=True, scratch_url=""),
+            replay_plan,
+        )
 
     if not replay_result.success:
         return (
@@ -1028,7 +1056,9 @@ def _collect_tail_checkpoint_updates(
                     schema_file=load_schema_file,
                     verb="load",
                     global_args=["--no-dump-schema"],
-                    log_context=DbmateLogContext(target=target_name, phase="checkpoint", step="load-anchor"),
+                    log_context=DbmateLogContext(
+                        target=target_name, phase="checkpoint", step="load-anchor"
+                    ),
                     on_result=on_dbmate_result,
                 ),
             )

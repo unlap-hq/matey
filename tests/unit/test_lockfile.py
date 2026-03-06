@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from matey.lockfile import (
     DiagnosticCode,
-    LockInput,
     LockPolicy,
     build_lock_state,
+    divergence_between_states,
     first_lock_divergence,
+    generated_sql_digest,
 )
+from matey.snapshot import Snapshot
 
 
 def _lock_toml(
@@ -98,7 +100,7 @@ def test_build_lock_state_clean_for_coherent_input() -> None:
     )
 
     state = build_lock_state(
-        LockInput(
+        Snapshot(
             target_name="core",
             schema_sql=schema_sql,
             lock_toml=lock_toml,
@@ -130,7 +132,7 @@ def test_build_lock_state_emits_structural_diagnostics() -> None:
     )
 
     state = build_lock_state(
-        LockInput(
+        Snapshot(
             target_name="core",
             schema_sql=None,
             lock_toml=lock_toml,
@@ -152,7 +154,7 @@ def test_build_lock_state_emits_structural_diagnostics() -> None:
 
 def test_build_lock_state_reports_lock_parse_error() -> None:
     state = build_lock_state(
-        LockInput(
+        Snapshot(
             target_name="core",
             schema_sql=b"",
             lock_toml=b"not = valid = toml",
@@ -167,7 +169,7 @@ def test_build_lock_state_reports_lock_parse_error() -> None:
 
 def test_build_lock_state_handles_invalid_snapshot_paths_as_diagnostics() -> None:
     state = build_lock_state(
-        LockInput(
+        Snapshot(
             target_name="core",
             schema_sql=b"",
             lock_toml=None,
@@ -215,7 +217,7 @@ chain_hash = "{chain}"
     )
 
     state = build_lock_state(
-        LockInput(
+        Snapshot(
             target_name="core",
             schema_sql=checkpoint_sql,
             lock_toml=lock_toml,
@@ -232,7 +234,7 @@ chain_hash = "{chain}"
 
 def test_first_lock_divergence_detects_digest_and_count() -> None:
     base = build_lock_state(
-        LockInput(
+        Snapshot(
             target_name="core",
             schema_sql=b"",
             lock_toml=None,
@@ -241,7 +243,7 @@ def test_first_lock_divergence_detects_digest_and_count() -> None:
         )
     )
     changed = build_lock_state(
-        LockInput(
+        Snapshot(
             target_name="core",
             schema_sql=b"",
             lock_toml=None,
@@ -250,7 +252,7 @@ def test_first_lock_divergence_detects_digest_and_count() -> None:
         )
     )
     extended = build_lock_state(
-        LockInput(
+        Snapshot(
             target_name="core",
             schema_sql=b"",
             lock_toml=None,
@@ -273,6 +275,76 @@ def test_first_lock_divergence_detects_digest_and_count() -> None:
     assert count_divergence.field == "step_count"
 
 
+def test_first_lock_divergence_ignores_lock_only_chain_seed_difference() -> None:
+    policy = LockPolicy()
+    migration_sql = b"-- migrate:up\nCREATE TABLE a(id INTEGER);\n"
+    checkpoint_sql = b"CREATE TABLE a(id INTEGER);\n"
+    migration_file = "migrations/001_init.sql"
+    checkpoint_file = "checkpoints/001_init.sql"
+
+    unlocked = build_lock_state(
+        Snapshot(
+            target_name="core",
+            schema_sql=checkpoint_sql,
+            lock_toml=None,
+            migrations={migration_file: migration_sql},
+            checkpoints={checkpoint_file: checkpoint_sql},
+        ),
+        policy=policy,
+    )
+    locked = build_lock_state(
+        Snapshot(
+            target_name="core",
+            schema_sql=checkpoint_sql,
+            lock_toml=_single_step_lock(
+                target="core",
+                engine="sqlite",
+                migration_file=migration_file,
+                migration_digest=policy.digest(migration_sql),
+                checkpoint_file=checkpoint_file,
+                checkpoint_digest=generated_sql_digest(checkpoint_sql, policy=policy) or "",
+                schema_digest=generated_sql_digest(checkpoint_sql, policy=policy) or "",
+                policy=policy,
+            ),
+            migrations={migration_file: migration_sql},
+            checkpoints={checkpoint_file: checkpoint_sql},
+        ),
+        policy=policy,
+    )
+
+    assert first_lock_divergence(unlocked, locked) is None
+
+
+def test_divergence_between_states_allows_non_clean_inputs() -> None:
+    base = build_lock_state(
+        Snapshot(
+            target_name="core",
+            schema_sql=None,
+            lock_toml=None,
+            migrations={"migrations/001_init.sql": b"-- migrate:up\nCREATE TABLE a(id INTEGER);\n"},
+            checkpoints={},
+        )
+    )
+    head = build_lock_state(
+        Snapshot(
+            target_name="core",
+            schema_sql=None,
+            lock_toml=None,
+            migrations={
+                "migrations/001_init.sql": b"-- migrate:up\nCREATE TABLE a(id INTEGER);\n",
+                "migrations/002_next.sql": b"-- migrate:up\nCREATE TABLE b(id INTEGER);\n",
+            },
+            checkpoints={},
+        )
+    )
+
+    divergence = divergence_between_states(base, head)
+
+    assert divergence is not None
+    assert divergence.index == 2
+    assert divergence.field == "step_count"
+
+
 def test_build_lock_state_is_deterministic_for_mapping_order() -> None:
     migrations_a = {
         "migrations/001_init.sql": b"-- migrate:up\nCREATE TABLE a(id INTEGER);\n",
@@ -292,7 +364,7 @@ def test_build_lock_state_is_deterministic_for_mapping_order() -> None:
     }
 
     state_a = build_lock_state(
-        LockInput(
+        Snapshot(
             target_name="core",
             schema_sql=b"CREATE TABLE a(id INTEGER);\nCREATE TABLE b(id INTEGER);\n",
             lock_toml=None,
@@ -301,7 +373,7 @@ def test_build_lock_state_is_deterministic_for_mapping_order() -> None:
         )
     )
     state_b = build_lock_state(
-        LockInput(
+        Snapshot(
             target_name="core",
             schema_sql=b"CREATE TABLE a(id INTEGER);\nCREATE TABLE b(id INTEGER);\n",
             lock_toml=None,
@@ -314,9 +386,31 @@ def test_build_lock_state_is_deterministic_for_mapping_order() -> None:
     assert state_a.diagnostics == state_b.diagnostics
 
 
+def test_build_lock_state_preserves_nested_checkpoint_mapping() -> None:
+    state = build_lock_state(
+        Snapshot(
+            target_name="core",
+            schema_sql=b"",
+            lock_toml=None,
+            migrations={
+                "migrations/a/001_init.sql": b"-- migrate:up\nCREATE TABLE a(id INTEGER);\n",
+                "migrations/b/001_init.sql": b"-- migrate:up\nCREATE TABLE b(id INTEGER);\n",
+            },
+            checkpoints={
+                "checkpoints/a/001_init.sql": b"CREATE TABLE a(id INTEGER);\n",
+                "checkpoints/b/001_init.sql": b"CREATE TABLE b(id INTEGER);\n",
+            },
+        )
+    )
+
+    checkpoint_files = {step.checkpoint_file for step in state.worktree_steps}
+    assert checkpoint_files == {"checkpoints/a/001_init.sql", "checkpoints/b/001_init.sql"}
+    assert DiagnosticCode.INPUT_ORPHAN_CHECKPOINT not in {diag.code for diag in state.diagnostics}
+
+
 def test_build_lock_state_orphan_is_blocking_and_not_clean() -> None:
     state = build_lock_state(
-        LockInput(
+        Snapshot(
             target_name="core",
             schema_sql=b"CREATE TABLE a(id INTEGER);\n",
             lock_toml=None,
@@ -333,7 +427,7 @@ def test_build_lock_state_orphan_is_blocking_and_not_clean() -> None:
     assert state.diagnostics[0].code is DiagnosticCode.INPUT_ORPHAN_CHECKPOINT
 
 
-def test_build_lock_state_invalid_lock_step_does_not_cascade_alignment_diagnostics() -> None:
+def test_build_lock_state_invalid_lock_step_still_runs_alignment_diagnostics() -> None:
     policy = LockPolicy()
     migration_sql = b"-- migrate:up\nCREATE TABLE a(id INTEGER);\n"
     checkpoint_sql = b"CREATE TABLE a(id INTEGER);\n"
@@ -369,7 +463,7 @@ chain_hash = "{chain_hash}"
 """.strip().encode("utf-8")
 
     state = build_lock_state(
-        LockInput(
+        Snapshot(
             target_name="core",
             schema_sql=checkpoint_sql,
             lock_toml=bad_lock,
@@ -382,8 +476,59 @@ chain_hash = "{chain_hash}"
 
     assert DiagnosticCode.LOCKFILE_STEP_PATH_INVALID in codes
     assert DiagnosticCode.LOCKFILE_STEP_PATH_MISMATCH not in codes
-    assert DiagnosticCode.COHERENCE_NEW_IN_INPUT not in codes
-    assert DiagnosticCode.COHERENCE_MISSING_FROM_INPUT not in codes
+    assert DiagnosticCode.COHERENCE_NEW_IN_INPUT in codes
+    assert DiagnosticCode.COHERENCE_HEAD_INDEX_MISMATCH in codes
+
+
+def test_build_lock_state_reports_alignment_even_with_orphan_checkpoint() -> None:
+    policy = LockPolicy()
+    migration_sql = b"-- migrate:up\nCREATE TABLE a(id INTEGER);\n"
+    checkpoint_sql = b"CREATE TABLE a(id INTEGER);\n"
+    checkpoint_digest = policy.digest(checkpoint_sql)
+    chain_seed = policy.chain_seed(engine="sqlite", target="core")
+    chain = policy.chain_step(
+        previous=chain_seed,
+        version="999",
+        migration_file="migrations/001_init.sql",
+        migration_digest=policy.digest(migration_sql),
+    )
+    lock_toml = _lock_toml(
+        policy=policy,
+        target="core",
+        engine="sqlite",
+        head_schema_digest=checkpoint_digest,
+        head_index=1,
+        head_chain_hash=chain,
+        steps=f"""
+[[steps]]
+index = 1
+version = "999"
+migration_file = "migrations/001_init.sql"
+migration_digest = "{policy.digest(migration_sql)}"
+checkpoint_file = "checkpoints/001_init.sql"
+checkpoint_digest = "{checkpoint_digest}"
+schema_digest = "{checkpoint_digest}"
+chain_hash = "{chain}"
+""".strip(),
+    )
+
+    state = build_lock_state(
+        Snapshot(
+            target_name="core",
+            schema_sql=checkpoint_sql,
+            lock_toml=lock_toml,
+            migrations={"migrations/001_init.sql": migration_sql},
+            checkpoints={
+                "checkpoints/001_init.sql": checkpoint_sql,
+                "checkpoints/999_orphan.sql": b"-- orphan\n",
+            },
+        ),
+        policy=policy,
+    )
+
+    codes = {diag.code for diag in state.diagnostics}
+    assert DiagnosticCode.INPUT_ORPHAN_CHECKPOINT in codes
+    assert DiagnosticCode.COHERENCE_STEP_VERSION_MISMATCH in codes
 
 
 def test_build_lock_state_emits_single_schema_mismatch_signal() -> None:
@@ -401,7 +546,7 @@ def test_build_lock_state_emits_single_schema_mismatch_signal() -> None:
         policy=policy,
     )
     state = build_lock_state(
-        LockInput(
+        Snapshot(
             target_name="core",
             schema_sql=b"CREATE TABLE a(id TEXT);\n",
             lock_toml=lock_toml,
@@ -415,9 +560,39 @@ def test_build_lock_state_emits_single_schema_mismatch_signal() -> None:
     assert codes.count(DiagnosticCode.COHERENCE_SCHEMA_DIGEST_MISMATCH) == 1
 
 
+def test_build_lock_state_ignores_trailing_newline_only_generated_sql_difference() -> None:
+    policy = LockPolicy()
+    migration_sql = b"-- migrate:up\nCREATE TABLE a(id INTEGER);\n"
+    checkpoint_with_newline = b"CREATE TABLE a(id INTEGER);\n"
+    checkpoint_without_newline = b"CREATE TABLE a(id INTEGER);"
+    lock_toml = _single_step_lock(
+        target="core",
+        engine="sqlite",
+        migration_file="migrations/001_init.sql",
+        migration_digest=policy.digest(migration_sql),
+        checkpoint_file="checkpoints/001_init.sql",
+        checkpoint_digest=generated_sql_digest(checkpoint_with_newline, policy=policy) or "",
+        schema_digest=generated_sql_digest(checkpoint_with_newline, policy=policy) or "",
+        policy=policy,
+    )
+
+    state = build_lock_state(
+        Snapshot(
+            target_name="core",
+            schema_sql=checkpoint_without_newline,
+            lock_toml=lock_toml,
+            migrations={"migrations/001_init.sql": migration_sql},
+            checkpoints={"checkpoints/001_init.sql": checkpoint_without_newline},
+        ),
+        policy=policy,
+    )
+
+    assert state.is_clean is True
+
+
 def test_first_lock_divergence_requires_clean_states() -> None:
     clean = build_lock_state(
-        LockInput(
+        Snapshot(
             target_name="core",
             schema_sql=b"",
             lock_toml=None,
@@ -426,7 +601,7 @@ def test_first_lock_divergence_requires_clean_states() -> None:
         )
     )
     invalid = build_lock_state(
-        LockInput(
+        Snapshot(
             target_name="core",
             schema_sql=None,
             lock_toml=b"not = valid = toml",

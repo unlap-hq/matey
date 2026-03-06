@@ -147,7 +147,9 @@ class SqliteArtifactStore(IArtifactStore):
                         self._rollback_tx(txid=tx.txid, target_root=target_root)
                         self.finalize(txid=tx.txid)
         except Exception as error:
-            raise ArtifactRecoveryError(f"Failed artifact recovery for {target_root}: {error}") from error
+            raise ArtifactRecoveryError(
+                f"Failed artifact recovery for {target_root}: {error}"
+            ) from error
 
     def begin(
         self,
@@ -188,11 +190,17 @@ class SqliteArtifactStore(IArtifactStore):
 
         for item in deletes:
             target_path = resolve_inside(root, item.rel_path)
-            backup_path = backup_root / item.rel_path if target_path.exists() and target_path.is_file() else None
+            backup_path = (
+                backup_root / item.rel_path
+                if target_path.exists() and target_path.is_file()
+                else None
+            )
             if backup_path is not None:
                 _copy_file(target_path, backup_path)
             delete_rows.append(
-                _DeleteRow(rel_path=item.rel_path, backup_path=str(backup_path) if backup_path else None)
+                _DeleteRow(
+                    rel_path=item.rel_path, backup_path=str(backup_path) if backup_path else None
+                )
             )
 
         _fsync_directory(staged_root)
@@ -216,7 +224,9 @@ class SqliteArtifactStore(IArtifactStore):
                 )
         except Exception as error:
             self._cleanup_tx_dir(txid)
-            raise ArtifactTransactionError(f"Failed to begin artifact transaction {txid}: {error}") from error
+            raise ArtifactTransactionError(
+                f"Failed to begin artifact transaction {txid}: {error}"
+            ) from error
         return txid
 
     def _load_tx(self, txid: str) -> tuple[_TxRow, tuple[_WriteRow, ...], tuple[_DeleteRow, ...]]:
@@ -242,7 +252,11 @@ class SqliteArtifactStore(IArtifactStore):
             state=str(row["state"]),
         )
         write_rows = tuple(
-            _WriteRow(rel_path=str(w["rel_path"]), staged_path=str(w["staged_path"]), backup_path=w["backup_path"])
+            _WriteRow(
+                rel_path=str(w["rel_path"]),
+                staged_path=str(w["staged_path"]),
+                backup_path=w["backup_path"],
+            )
             for w in writes
         )
         delete_rows = tuple(
@@ -279,7 +293,9 @@ class SqliteArtifactStore(IArtifactStore):
 
             self._set_state(txid, "committed")
         except Exception as error:
-            raise ArtifactTransactionError(f"Failed to apply artifact transaction {txid}: {error}") from error
+            raise ArtifactTransactionError(
+                f"Failed to apply artifact transaction {txid}: {error}"
+            ) from error
 
     def _rollback_tx(self, *, txid: str, target_root: Path) -> None:
         _tx, writes, deletes = self._load_tx(txid)
@@ -316,4 +332,6 @@ class SqliteArtifactStore(IArtifactStore):
                 conn.execute("DELETE FROM tx WHERE txid=?", (txid,))
             self._cleanup_tx_dir(txid)
         except Exception as error:
-            raise ArtifactTransactionError(f"Failed to finalize artifact transaction {txid}: {error}") from error
+            raise ArtifactTransactionError(
+                f"Failed to finalize artifact transaction {txid}: {error}"
+            ) from error

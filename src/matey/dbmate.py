@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import os
 import platform
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +49,24 @@ def default_dbmate_binary() -> Path:
     return Path(__file__).resolve().parent / "_vendor" / "dbmate" / _platform_tag() / binary_name
 
 
+def passthrough(
+    *args: str,
+    dbmate_bin: Path | None = None,
+    env: Mapping[str, str] | None = None,
+) -> CmdResult:
+    binary = Dbmate._resolve_dbmate_binary(dbmate_bin=dbmate_bin)
+    argv = (str(binary), *args)
+    cmd = local[argv[0]][argv[1:]]
+    run_env = dict(os.environ) if env is None else dict(env)
+    exit_code, stdout, stderr = cmd.run(retcode=None, env=run_env)
+    return CmdResult(
+        argv=argv,
+        exit_code=exit_code,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+
 class Dbmate:
     def __init__(
         self,
@@ -85,11 +104,13 @@ class Dbmate:
         *,
         dbmate_bin: Path | None,
     ) -> Path:
-        candidate = dbmate_bin if dbmate_bin is not None else default_dbmate_binary()
+        candidate = (dbmate_bin if dbmate_bin is not None else default_dbmate_binary()).resolve()
         if not candidate.exists():
             raise DbmateConfigError(f"dbmate binary not found: {candidate}")
         if not candidate.is_file():
             raise DbmateConfigError(f"dbmate binary path is not a file: {candidate}")
+        if not os.access(candidate, os.X_OK):
+            raise DbmateConfigError(f"dbmate binary is not executable: {candidate}")
         return candidate
 
     def new(self, name: str) -> CmdResult:
@@ -169,14 +190,14 @@ class DbConnection:
         return self.dbmate._run_url_verb(
             url=self.url,
             verb="create",
-            no_dump_schema=False,
+            no_dump_schema=True,
         )
 
     def drop(self) -> CmdResult:
         return self.dbmate._run_url_verb(
             url=self.url,
             verb="drop",
-            no_dump_schema=False,
+            no_dump_schema=True,
         )
 
     def up(self) -> CmdResult:
@@ -235,14 +256,6 @@ class DbConnection:
                 global_args=("--schema-file", str(schema_path)),
             )
 
-    def raw(self, *args: str) -> CmdResult:
-        argv = (
-            str(self.dbmate.dbmate_bin),
-            *self.dbmate._base_args(self.url),
-            *args,
-        )
-        return self.dbmate._run(argv)
-
 
 __all__ = [
     "CmdResult",
@@ -251,4 +264,5 @@ __all__ = [
     "DbmateConfigError",
     "DbmateError",
     "default_dbmate_binary",
+    "passthrough",
 ]

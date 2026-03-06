@@ -8,11 +8,19 @@ from pathlib import PurePosixPath
 
 from mashumaro.mixins.toml import DataClassTOMLMixin
 
+from matey.snapshot import Snapshot
+from matey.sql import ensure_newline
+
 DigestFn = Callable[[bytes], str]
 
 
 def _digest_blake2b256(payload: bytes) -> str:
     return hashlib.blake2b(payload, digest_size=32).hexdigest()
+
+
+def _generated_sql_bytes(payload: bytes | str) -> bytes:
+    text = payload.decode("utf-8") if isinstance(payload, bytes) else payload
+    return ensure_newline(text).encode("utf-8")
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,7 +38,9 @@ class LockPolicy:
         seed = f"{self.chain_prefix}|{engine}|{target}".encode()
         return self.digest(seed)
 
-    def chain_step(self, *, previous: str, version: str, migration_file: str, migration_digest: str) -> str:
+    def chain_step(
+        self, *, previous: str, version: str, migration_file: str, migration_digest: str
+    ) -> str:
         payload = f"{previous}|{version}|{migration_file}|{migration_digest}".encode()
         return self.digest(payload)
 
@@ -72,15 +82,6 @@ class Diagnostic:
     code: DiagnosticCode
     path: str
     detail: str
-
-
-@dataclass(frozen=True, slots=True)
-class LockInput:
-    target_name: str
-    schema_sql: bytes | None
-    lock_toml: bytes | None
-    migrations: Mapping[str, bytes]
-    checkpoints: Mapping[str, bytes]
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +141,12 @@ class Divergence:
     field: str
     base_value: str
     head_value: str
+
+
+def generated_sql_digest(payload: bytes | str | None, *, policy: LockPolicy) -> str | None:
+    if payload is None:
+        return None
+    return policy.digest(_generated_sql_bytes(payload))
 
 
 def _diag(
@@ -312,29 +319,19 @@ def _normalize_lock_step_paths(
 ) -> tuple[tuple[str, str] | None, tuple[Diagnostic, ...]]:
     diagnostics: list[Diagnostic] = []
 
-    try:
-        normalized_migration_file = _normalize_rel_path(migration_file)
-    except ValueError as error:
-        diagnostics.append(
-            _diag(
-                DiagnosticCode.LOCKFILE_STEP_PATH_INVALID,
-                migration_file,
-                f"Invalid lock migration path: {error}",
-            )
-        )
-        normalized_migration_file = None
+    normalized_migration_file, migration_diag = _normalize_lock_path(
+        value=migration_file,
+        kind="migration",
+    )
+    if migration_diag is not None:
+        diagnostics.append(migration_diag)
 
-    try:
-        normalized_checkpoint_file = _normalize_rel_path(checkpoint_file)
-    except ValueError as error:
-        diagnostics.append(
-            _diag(
-                DiagnosticCode.LOCKFILE_STEP_PATH_INVALID,
-                checkpoint_file,
-                f"Invalid lock checkpoint path: {error}",
-            )
-        )
-        normalized_checkpoint_file = None
+    normalized_checkpoint_file, checkpoint_diag = _normalize_lock_path(
+        value=checkpoint_file,
+        kind="checkpoint",
+    )
+    if checkpoint_diag is not None:
+        diagnostics.append(checkpoint_diag)
 
     if normalized_migration_file is None or normalized_checkpoint_file is None:
         return None, tuple(diagnostics)
@@ -360,6 +357,18 @@ def _normalize_lock_step_paths(
     if diagnostics:
         return None, tuple(diagnostics)
     return (normalized_migration_file, normalized_checkpoint_file), ()
+
+
+def _normalize_lock_path(*, value: str, kind: str) -> tuple[str | None, Diagnostic | None]:
+    try:
+        normalized = _normalize_rel_path(value)
+    except ValueError as error:
+        return None, _diag(
+            DiagnosticCode.LOCKFILE_STEP_PATH_INVALID,
+            value,
+            f"Invalid lock {kind} path: {error}",
+        )
+    return normalized, None
 
 
 def _check_duplicate_lock_step(
@@ -400,7 +409,7 @@ def _check_duplicate_lock_step(
 
 
 def _build_worktree_steps(
-    input_files: LockInput,
+    input_files: Snapshot,
     *,
     policy: LockPolicy,
     lock: LockFile | None,
@@ -424,13 +433,15 @@ def _build_worktree_steps(
     steps: list[WorktreeStep] = []
     for index, (migration_file, migration_payload) in enumerate(migration_rows, start=1):
         migration_name = PurePosixPath(migration_file).name
-        stem = migration_name.removesuffix(".sql")
         version = _migration_version(migration_name)
-        checkpoint_file = f"{policy.checkpoints_dir}/{stem}.sql"
+        checkpoint_file = _checkpoint_for_migration(
+            migration_file=migration_file,
+            policy=policy,
+        )
 
         migration_digest = policy.digest(migration_payload)
         checkpoint_payload = checkpoint_by_path.get(checkpoint_file)
-        checkpoint_digest = policy.digest(checkpoint_payload) if checkpoint_payload is not None else None
+        checkpoint_digest = generated_sql_digest(checkpoint_payload, policy=policy)
 
         chain = policy.chain_step(
             previous=chain,
@@ -458,10 +469,14 @@ def _build_worktree_steps(
     return tuple(steps), orphans, diagnostics
 
 
+def _checkpoint_for_migration(*, migration_file: str, policy: LockPolicy) -> str:
+    migration_path = PurePosixPath(migration_file)
+    relative_path = migration_path.relative_to(PurePosixPath(policy.migrations_dir))
+    return (PurePosixPath(policy.checkpoints_dir) / relative_path).as_posix()
+
+
 def _schema_digest(schema_sql: bytes | None, *, policy: LockPolicy) -> str | None:
-    if schema_sql is None:
-        return None
-    return policy.digest(schema_sql)
+    return generated_sql_digest(schema_sql, policy=policy)
 
 
 def _validate_lock_header(*, lock: LockFile | None, policy: LockPolicy) -> tuple[Diagnostic, ...]:
@@ -469,22 +484,46 @@ def _validate_lock_header(*, lock: LockFile | None, policy: LockPolicy) -> tuple
         return ()
 
     checks = (
-        (lock.lock_version != policy.lock_version, DiagnosticCode.LOCKFILE_VERSION_MISMATCH, f"lock_version={lock.lock_version}, expected {policy.lock_version}."),
-        (lock.hash_algorithm != policy.hash_algorithm, DiagnosticCode.LOCKFILE_HASH_ALGORITHM_MISMATCH, f"hash_algorithm={lock.hash_algorithm!r}, expected {policy.hash_algorithm!r}."),
-        (lock.canonicalizer != policy.canonicalizer, DiagnosticCode.LOCKFILE_CANONICALIZER_MISMATCH, f"canonicalizer={lock.canonicalizer!r}, expected {policy.canonicalizer!r}."),
-        (lock.schema_file != policy.schema_file, DiagnosticCode.LOCKFILE_SCHEMA_PATH_MISMATCH, f"schema_file={lock.schema_file!r}, expected {policy.schema_file!r}."),
-        (lock.migrations_dir != policy.migrations_dir, DiagnosticCode.LOCKFILE_MIGRATIONS_PATH_MISMATCH, f"migrations_dir={lock.migrations_dir!r}, expected {policy.migrations_dir!r}."),
-        (lock.checkpoints_dir != policy.checkpoints_dir, DiagnosticCode.LOCKFILE_CHECKPOINTS_PATH_MISMATCH, f"checkpoints_dir={lock.checkpoints_dir!r}, expected {policy.checkpoints_dir!r}."),
+        (
+            lock.lock_version != policy.lock_version,
+            DiagnosticCode.LOCKFILE_VERSION_MISMATCH,
+            f"lock_version={lock.lock_version}, expected {policy.lock_version}.",
+        ),
+        (
+            lock.hash_algorithm != policy.hash_algorithm,
+            DiagnosticCode.LOCKFILE_HASH_ALGORITHM_MISMATCH,
+            f"hash_algorithm={lock.hash_algorithm!r}, expected {policy.hash_algorithm!r}.",
+        ),
+        (
+            lock.canonicalizer != policy.canonicalizer,
+            DiagnosticCode.LOCKFILE_CANONICALIZER_MISMATCH,
+            f"canonicalizer={lock.canonicalizer!r}, expected {policy.canonicalizer!r}.",
+        ),
+        (
+            lock.schema_file != policy.schema_file,
+            DiagnosticCode.LOCKFILE_SCHEMA_PATH_MISMATCH,
+            f"schema_file={lock.schema_file!r}, expected {policy.schema_file!r}.",
+        ),
+        (
+            lock.migrations_dir != policy.migrations_dir,
+            DiagnosticCode.LOCKFILE_MIGRATIONS_PATH_MISMATCH,
+            f"migrations_dir={lock.migrations_dir!r}, expected {policy.migrations_dir!r}.",
+        ),
+        (
+            lock.checkpoints_dir != policy.checkpoints_dir,
+            DiagnosticCode.LOCKFILE_CHECKPOINTS_PATH_MISMATCH,
+            f"checkpoints_dir={lock.checkpoints_dir!r}, expected {policy.checkpoints_dir!r}.",
+        ),
     )
 
     return tuple(
-        _diag(code, "schema.lock.toml", detail)
-        for failed, code, detail in checks
-        if failed
+        _diag(code, "schema.lock.toml", detail) for failed, code, detail in checks if failed
     )
 
 
-def _validate_target_coherence(*, input_files: LockInput, lock: LockFile | None) -> tuple[Diagnostic, ...]:
+def _validate_target_coherence(
+    *, input_files: Snapshot, lock: LockFile | None
+) -> tuple[Diagnostic, ...]:
     if lock is None:
         return ()
     if lock.target == input_files.target_name:
@@ -498,7 +537,9 @@ def _validate_target_coherence(*, input_files: LockInput, lock: LockFile | None)
     )
 
 
-def _validate_schema(*, lock: LockFile | None, schema_digest: str | None, policy: LockPolicy) -> tuple[Diagnostic, ...]:
+def _validate_schema(
+    *, lock: LockFile | None, schema_digest: str | None, policy: LockPolicy
+) -> tuple[Diagnostic, ...]:
     if lock is None:
         return ()
     if schema_digest is None:
@@ -531,14 +572,29 @@ def _validate_orphans(orphans: tuple[str, ...]) -> tuple[Diagnostic, ...]:
     )
 
 
-def _validate_step_alignment(*, lock: LockFile | None, steps: tuple[WorktreeStep, ...], policy: LockPolicy) -> tuple[Diagnostic, ...]:
+def _validate_step_alignment(
+    *, lock: LockFile | None, steps: tuple[WorktreeStep, ...], policy: LockPolicy
+) -> tuple[Diagnostic, ...]:
     if lock is None:
         return ()
 
-    rows: list[Diagnostic] = []
     lock_by_file = {step.migration_file: step for step in lock.steps}
     step_by_file = {step.migration_file: step for step in steps}
 
+    return (
+        _validate_lock_structure(lock=lock, steps=steps, policy=policy)
+        + _validate_step_coherence(steps=steps, lock_by_file=lock_by_file)
+        + _validate_missing_from_input(lock=lock, step_by_file=step_by_file)
+    )
+
+
+def _validate_lock_structure(
+    *,
+    lock: LockFile,
+    steps: tuple[WorktreeStep, ...],
+    policy: LockPolicy,
+) -> tuple[Diagnostic, ...]:
+    rows: list[Diagnostic] = []
     for expected_index, lock_step in enumerate(lock.steps, start=1):
         if lock_step.index != expected_index:
             rows.append(
@@ -577,7 +633,15 @@ def _validate_step_alignment(*, lock: LockFile | None, steps: tuple[WorktreeStep
                 "head_chain_hash differs from deterministic recomputation.",
             )
         )
+    return tuple(rows)
 
+
+def _validate_step_coherence(
+    *,
+    steps: tuple[WorktreeStep, ...],
+    lock_by_file: Mapping[str, LockStep],
+) -> tuple[Diagnostic, ...]:
+    rows: list[Diagnostic] = []
     for step in steps:
         lock_step = lock_by_file.get(step.migration_file)
         if lock_step is None:
@@ -659,8 +723,15 @@ def _validate_step_alignment(*, lock: LockFile | None, steps: tuple[WorktreeStep
                     "Chain hash differs from deterministic recomputation.",
                 )
             )
+    return tuple(rows)
 
-    rows.extend(
+
+def _validate_missing_from_input(
+    *,
+    lock: LockFile,
+    step_by_file: Mapping[str, WorktreeStep],
+) -> tuple[Diagnostic, ...]:
+    return tuple(
         _diag(
             DiagnosticCode.COHERENCE_MISSING_FROM_INPUT,
             lock_step.migration_file,
@@ -670,11 +741,9 @@ def _validate_step_alignment(*, lock: LockFile | None, steps: tuple[WorktreeStep
         if lock_step.migration_file not in step_by_file
     )
 
-    return tuple(rows)
-
 
 def build_lock_state(
-    input_files: LockInput,
+    input_files: Snapshot,
     *,
     policy: LockPolicy | None = None,
 ) -> LockState:
@@ -695,13 +764,12 @@ def build_lock_state(
         + _validate_target_coherence(input_files=input_files, lock=lock)
         + _validate_schema(lock=lock, schema_digest=schema_digest, policy=effective_policy)
         + _validate_orphans(orphans)
-    )
-    if not diagnostics:
-        diagnostics = diagnostics + _validate_step_alignment(
+        + _validate_step_alignment(
             lock=lock,
             steps=steps,
             policy=effective_policy,
         )
+    )
 
     return LockState(
         target_name=input_files.target_name,
@@ -713,50 +781,40 @@ def build_lock_state(
     )
 
 
-def _lock_signatures(state: LockState) -> tuple[tuple[str, str, str, str], ...]:
+def _step_signatures(steps: tuple[Step, ...]) -> tuple[tuple[str, str, str], ...]:
     return tuple(
         (
             step.version,
             step.migration_file,
             step.migration_digest,
-            step.chain_hash,
         )
-        for step in state.worktree_steps
+        for step in steps
     )
 
 
-def first_lock_divergence(base: LockState, head: LockState) -> Divergence | None:
-    if not base.is_clean or not head.is_clean:
-        raise ValueError("Cannot compare divergence for non-clean lock states.")
-
-    if base.target_name != head.target_name:
-        return Divergence(
-            index=1,
-            field="target_name",
-            base_value=base.target_name,
-            head_value=head.target_name,
-        )
-
-    base_signatures = _lock_signatures(base)
-    head_signatures = _lock_signatures(head)
-
+def _first_signature_divergence(
+    *,
+    base_signatures: tuple[tuple[str, str, str], ...],
+    head_signatures: tuple[tuple[str, str, str], ...],
+) -> Divergence | None:
+    fields = (
+        "version",
+        "migration_file",
+        "migration_digest",
+    )
     shared = min(len(base_signatures), len(head_signatures))
     for idx in range(shared):
         left = base_signatures[idx]
         right = head_signatures[idx]
-        if left[0] != right[0]:
-            return Divergence(index=idx + 1, field="version", base_value=left[0], head_value=right[0])
-        if left[1] != right[1]:
-            return Divergence(index=idx + 1, field="migration_file", base_value=left[1], head_value=right[1])
-        if left[2] != right[2]:
+        for field, base_value, head_value in zip(fields, left, right, strict=True):
+            if base_value == head_value:
+                continue
             return Divergence(
                 index=idx + 1,
-                field="migration_digest",
-                base_value=left[2],
-                head_value=right[2],
+                field=field,
+                base_value=base_value,
+                head_value=head_value,
             )
-        if left[3] != right[3]:
-            return Divergence(index=idx + 1, field="chain_hash", base_value=left[3], head_value=right[3])
 
     if len(base_signatures) == len(head_signatures):
         return None
@@ -769,17 +827,58 @@ def first_lock_divergence(base: LockState, head: LockState) -> Divergence | None
     )
 
 
+def lock_worktree_divergence(state: LockState) -> Divergence | None:
+    lock = state.lock
+    base_target = lock.target if lock is not None else state.target_name
+    if base_target != state.target_name:
+        return Divergence(
+            index=1,
+            field="target_name",
+            base_value=base_target,
+            head_value=state.target_name,
+        )
+
+    base_signatures = _step_signatures(lock.steps) if lock is not None else ()
+    head_signatures = _step_signatures(state.worktree_steps)
+    return _first_signature_divergence(
+        base_signatures=base_signatures,
+        head_signatures=head_signatures,
+    )
+
+
+def divergence_between_states(base: LockState, head: LockState) -> Divergence | None:
+    if base.target_name != head.target_name:
+        return Divergence(
+            index=1,
+            field="target_name",
+            base_value=base.target_name,
+            head_value=head.target_name,
+        )
+    return _first_signature_divergence(
+        base_signatures=_step_signatures(base.worktree_steps),
+        head_signatures=_step_signatures(head.worktree_steps),
+    )
+
+
+def first_lock_divergence(base: LockState, head: LockState) -> Divergence | None:
+    if not base.is_clean or not head.is_clean:
+        raise ValueError("Cannot compare divergence for non-clean lock states.")
+    return divergence_between_states(base, head)
+
+
 __all__ = [
     "Diagnostic",
     "DiagnosticCode",
     "Divergence",
     "LockFile",
-    "LockInput",
     "LockPolicy",
     "LockState",
     "LockStep",
     "Step",
     "WorktreeStep",
     "build_lock_state",
+    "divergence_between_states",
     "first_lock_divergence",
+    "generated_sql_digest",
+    "lock_worktree_divergence",
 ]

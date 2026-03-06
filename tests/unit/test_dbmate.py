@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from matey.dbmate import CmdResult, Dbmate, DbmateConfigError
+from matey.dbmate import CmdResult, Dbmate, DbmateConfigError, passthrough
 
 
 def _make_dbmate(tmp_path: Path) -> Dbmate:
@@ -14,6 +14,7 @@ def _make_dbmate(tmp_path: Path) -> Dbmate:
     dbmate_bin = tmp_path / "bin" / "dbmate"
     dbmate_bin.parent.mkdir(parents=True, exist_ok=True)
     dbmate_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    dbmate_bin.chmod(dbmate_bin.stat().st_mode | stat.S_IEXEC)
     return Dbmate(migrations_dir=migrations_dir, dbmate_bin=dbmate_bin)
 
 
@@ -75,7 +76,9 @@ def test_dump_reads_temp_schema_file(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert result.stdout == "CREATE TABLE widget(id INTEGER);\n"
 
 
-def test_load_writes_sql_to_temp_schema_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_load_writes_sql_to_temp_schema_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     dbmate = _make_dbmate(tmp_path)
     db = dbmate.database("postgres://db")
     observed: dict[str, object] = {}
@@ -115,25 +118,6 @@ def test_wait_timeout_must_be_positive(tmp_path: Path) -> None:
         db.wait(0)
 
 
-def test_raw_passes_suffix_verbatim(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    dbmate = _make_dbmate(tmp_path)
-    db = dbmate.database("postgres://db")
-    captured: dict[str, object] = {}
-
-    def fake_run(self: Dbmate, argv: tuple[str, ...]) -> CmdResult:
-        captured["argv"] = argv
-        return CmdResult(argv=argv, exit_code=0, stdout="", stderr="")
-
-    monkeypatch.setattr(Dbmate, "_run", fake_run)
-
-    result = db.raw("status", "--quiet")
-
-    assert isinstance(result, CmdResult)
-    argv = captured["argv"]
-    assert isinstance(argv, tuple)
-    assert argv[-2:] == ("status", "--quiet")
-
-
 def test_constructor_raises_for_missing_binary(tmp_path: Path) -> None:
     migrations_dir = tmp_path / "db" / "migrations"
     migrations_dir.mkdir(parents=True, exist_ok=True)
@@ -148,6 +132,7 @@ def test_constructor_raises_for_missing_migrations_dir(tmp_path: Path) -> None:
     dbmate_bin = tmp_path / "bin" / "dbmate"
     dbmate_bin.parent.mkdir(parents=True, exist_ok=True)
     dbmate_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    dbmate_bin.chmod(dbmate_bin.stat().st_mode | stat.S_IEXEC)
 
     with pytest.raises(DbmateConfigError):
         Dbmate(migrations_dir=missing_dir, dbmate_bin=dbmate_bin)
@@ -160,6 +145,7 @@ def test_constructor_raises_for_non_directory_migrations_dir(tmp_path: Path) -> 
     dbmate_bin = tmp_path / "bin" / "dbmate"
     dbmate_bin.parent.mkdir(parents=True, exist_ok=True)
     dbmate_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    dbmate_bin.chmod(dbmate_bin.stat().st_mode | stat.S_IEXEC)
 
     with pytest.raises(DbmateConfigError):
         Dbmate(migrations_dir=migrations_file, dbmate_bin=dbmate_bin)
@@ -183,6 +169,7 @@ def test_run_uses_explicit_env_without_ambient_inheritance(
     dbmate_bin = tmp_path / "bin" / "dbmate"
     dbmate_bin.parent.mkdir(parents=True, exist_ok=True)
     dbmate_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    dbmate_bin.chmod(dbmate_bin.stat().st_mode | stat.S_IEXEC)
 
     monkeypatch.setenv("MATEY_TEST_AMBIENT", "ambient-value")
     dbmate = Dbmate(
@@ -197,3 +184,36 @@ def test_run_uses_explicit_env_without_ambient_inheritance(
     assert "ambient=" in result.stdout
     assert "ambient=ambient-value" not in result.stdout
     assert "explicit=explicit-value" in result.stdout
+
+
+def test_constructor_raises_for_non_executable_binary(tmp_path: Path) -> None:
+    migrations_dir = tmp_path / "db" / "migrations"
+    migrations_dir.mkdir(parents=True, exist_ok=True)
+    dbmate_bin = tmp_path / "bin" / "dbmate"
+    dbmate_bin.parent.mkdir(parents=True, exist_ok=True)
+    dbmate_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    dbmate_bin.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+    with pytest.raises(DbmateConfigError, match="not executable"):
+        Dbmate(migrations_dir=migrations_dir, dbmate_bin=dbmate_bin)
+
+
+def test_passthrough_runs_verbatim_and_inherits_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "dbmate"
+    script.write_text(
+        "#!/bin/sh\n"
+        'printf "args:%s\\n" "$*"\n'
+        'printf "env:%s\\n" "${MATEY_DBMATE_TEST_ENV}"\n',
+        encoding="utf-8",
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("MATEY_DBMATE_TEST_ENV", "ok")
+
+    result = passthrough("status", "--wait", dbmate_bin=script)
+
+    assert result.exit_code == 0
+    assert "args:status --wait" in result.stdout
+    assert "env:ok" in result.stdout

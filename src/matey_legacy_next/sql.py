@@ -27,7 +27,9 @@ class SqlPipeline(ISqlPipeline):
                 tofile="actual",
             )
             diff_text = "".join(diff)
-        return SqlComparison(expected=expected_prepared, actual=actual_prepared, equal=equal, diff=diff_text)
+        return SqlComparison(
+            expected=expected_prepared, actual=actual_prepared, equal=equal, diff=diff_text
+        )
 
 
 def _normalize_text(text: str) -> str:

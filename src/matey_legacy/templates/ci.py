@@ -45,8 +45,8 @@ def _github_content(targets: list[str]) -> str:
         "      - uses: actions/checkout@v4\n"
         "      - uses: prefix-dev/setup-pixi@v0\n"
         "      - run: pixi install\n"
-        "      - run: pixi run matey --target \"${{ matrix.target }}\" lock doctor\n"
-        "      - run: pixi run matey --target \"${{ matrix.target }}\" schema validate\n"
+        '      - run: pixi run matey --target "${{ matrix.target }}" lock doctor\n'
+        '      - run: pixi run matey --target "${{ matrix.target }}" schema validate\n'
     )
 
 
@@ -92,7 +92,7 @@ def _buildkite_content(targets: list[str]) -> str:
     if not targets:
         return (
             "steps:\n"
-            "  - label: \":matey: schema validate\"\n"
+            '  - label: ":matey: schema validate"\n'
             "    command:\n"
             "      - pixi install\n"
             "      - pixi run matey lock doctor\n"
@@ -116,9 +116,14 @@ def _buildkite_content(targets: list[str]) -> str:
 
 def render_ci_template(provider: CIProvider, *, targets: list[str]) -> TemplateFile:
     if provider == "github":
-        return TemplateFile(path=Path(".github/workflows/matey-schema-validate.yml"), content=_github_content(targets))
+        return TemplateFile(
+            path=Path(".github/workflows/matey-schema-validate.yml"),
+            content=_github_content(targets),
+        )
     if provider == "gitlab":
         return TemplateFile(path=Path(".gitlab-ci.matey.yml"), content=_gitlab_content(targets))
     if provider == "buildkite":
-        return TemplateFile(path=Path(".buildkite/matey-schema-validate.yml"), content=_buildkite_content(targets))
+        return TemplateFile(
+            path=Path(".buildkite/matey-schema-validate.yml"), content=_buildkite_content(targets)
+        )
     raise ValueError(f"Unsupported provider: {provider}")

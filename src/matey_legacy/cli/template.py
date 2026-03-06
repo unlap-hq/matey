@@ -33,10 +33,14 @@ def _write_or_fail(
 def register_ci(ci_app: typer.Typer) -> None:
     @ci_app.command("print", help=command_help("ci", "print"))
     def ci_print(
-        provider: Annotated[CIProvider, typer.Argument(help="CI provider: github, gitlab, buildkite.")],
+        provider: Annotated[
+            CIProvider, typer.Argument(help="CI provider: github, gitlab, buildkite.")
+        ],
         targets: Annotated[
             str | None,
-            typer.Option("--targets", help="Comma-separated target names (for example: core,analytics)."),
+            typer.Option(
+                "--targets", help="Comma-separated target names (for example: core,analytics)."
+            ),
         ] = None,
     ) -> None:
         try:
@@ -48,14 +52,18 @@ def register_ci(ci_app: typer.Typer) -> None:
     @ci_app.command("init", help=command_help("ci", "init"))
     def ci_init(
         ctx: typer.Context,
-        provider: Annotated[CIProvider, typer.Argument(help="CI provider: github, gitlab, buildkite.")],
+        provider: Annotated[
+            CIProvider, typer.Argument(help="CI provider: github, gitlab, buildkite.")
+        ],
         force: Annotated[
             bool,
             typer.Option("--force", help="Overwrite existing files."),
         ] = False,
         targets: Annotated[
             str | None,
-            typer.Option("--targets", help="Comma-separated target names (for example: core,analytics)."),
+            typer.Option(
+                "--targets", help="Comma-separated target names (for example: core,analytics)."
+            ),
         ] = None,
     ) -> None:
         options = get_options(ctx)
@@ -71,7 +79,9 @@ def register_config(config_app: typer.Typer) -> None:
     def config_print(
         targets: Annotated[
             str | None,
-            typer.Option("--targets", help="Comma-separated target names (for example: core,analytics)."),
+            typer.Option(
+                "--targets", help="Comma-separated target names (for example: core,analytics)."
+            ),
         ] = None,
     ) -> None:
         try:
@@ -85,7 +95,9 @@ def register_config(config_app: typer.Typer) -> None:
         ctx: typer.Context,
         targets: Annotated[
             str | None,
-            typer.Option("--targets", help="Comma-separated target names (for example: core,analytics)."),
+            typer.Option(
+                "--targets", help="Comma-separated target names (for example: core,analytics)."
+            ),
         ] = None,
         force: Annotated[
             bool,

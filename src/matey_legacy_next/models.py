@@ -103,7 +103,9 @@ def canonical_db_dir_rel(*, repo_root: Path, db_dir: Path) -> str:
     try:
         rel = candidate.relative_to(repo)
     except ValueError as error:
-        raise TargetIdentityError(f"Target db dir is outside repository root: {candidate}") from error
+        raise TargetIdentityError(
+            f"Target db dir is outside repository root: {candidate}"
+        ) from error
     return rel.as_posix()
 
 

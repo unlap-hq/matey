@@ -115,9 +115,7 @@ def _parse_matey_payload(payload: dict) -> MateyConfig:
         if key in _RESERVED_SCALAR_KEYS:
             continue
         if not isinstance(value, dict):
-            raise ConfigError(
-                f"Unexpected top-level key {key!r}; expected a target table."
-            )
+            raise ConfigError(f"Unexpected top-level key {key!r}; expected a target table.")
         targets[key] = _parse_target_table(target_name=key, payload=value)
 
     return MateyConfig(defaults=defaults, targets=targets or None)
@@ -143,7 +141,9 @@ def _merge_target(base: ConfigTarget | None, override: ConfigTarget) -> ConfigTa
     return ConfigTarget(
         dir=override.dir if override.dir is not None else base.dir,
         url_env=override.url_env if override.url_env is not None else base.url_env,
-        test_url_env=override.test_url_env if override.test_url_env is not None else base.test_url_env,
+        test_url_env=override.test_url_env
+        if override.test_url_env is not None
+        else base.test_url_env,
     )
 
 
@@ -202,7 +202,9 @@ def load_effective_config(*, repo_root: Path, config_path: Path | None) -> Resol
     return ResolvedConfig(defaults=defaults, targets=targets)
 
 
-def select_target_names(*, config: ResolvedConfig, target: str | None, select_all: bool) -> tuple[str, ...]:
+def select_target_names(
+    *, config: ResolvedConfig, target: str | None, select_all: bool
+) -> tuple[str, ...]:
     if target and select_all:
         raise TargetSelectionError("Use either --target or --all, not both.")
 

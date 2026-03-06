@@ -69,8 +69,12 @@ def _load_build_env(environ: Mapping[str, str]) -> _BuildEnv:
     module = _optional(environ.get("MATEY_DBMATE_MODULE")) or DEFAULT_DBMATE_MODULE
     version = _optional(environ.get("MATEY_DBMATE_VERSION")) or DEFAULT_DBMATE_VERSION
     cgo_enabled = _optional(environ.get("MATEY_DBMATE_CGO_ENABLED")) or DEFAULT_DBMATE_CGO_ENABLED
-    go_licenses_module = _optional(environ.get("MATEY_GO_LICENSES_MODULE")) or DEFAULT_GO_LICENSES_MODULE
-    go_licenses_version = _optional(environ.get("MATEY_GO_LICENSES_VERSION")) or DEFAULT_GO_LICENSES_VERSION
+    go_licenses_module = (
+        _optional(environ.get("MATEY_GO_LICENSES_MODULE")) or DEFAULT_GO_LICENSES_MODULE
+    )
+    go_licenses_version = (
+        _optional(environ.get("MATEY_GO_LICENSES_VERSION")) or DEFAULT_GO_LICENSES_VERSION
+    )
     go_licenses_disallowed_types = (
         _optional(environ.get("MATEY_GO_LICENSES_DISALLOWED_TYPES"))
         or DEFAULT_GO_LICENSES_DISALLOWED_TYPES
@@ -238,7 +242,9 @@ def _build_from_vendor(
 ) -> _BuiltSourceInfo:
     module_root = root / "vendor" / "dbmate"
     if not (module_root / "go.mod").exists():
-        raise RuntimeError("MATEY_DBMATE_SOURCE=vendor requested but vendor/dbmate/go.mod is missing.")
+        raise RuntimeError(
+            "MATEY_DBMATE_SOURCE=vendor requested but vendor/dbmate/go.mod is missing."
+        )
 
     build_target = "./cmd/dbmate" if (module_root / "cmd" / "dbmate").exists() else "."
 
@@ -279,7 +285,9 @@ def _build_from_go_install(
     binary_name = output_binary.name
     installed_binary = bin_dir / binary_name
     if not installed_binary.exists():
-        raise RuntimeError(f"Expected built dbmate binary at {installed_binary}, but it was not found.")
+        raise RuntimeError(
+            f"Expected built dbmate binary at {installed_binary}, but it was not found."
+        )
 
     shutil.copy2(installed_binary, output_binary)
     module_root = Path(_run(["go", "list", "-f", "{{.Dir}}", "-m", f"{module}@{version}"], env=env))
@@ -395,14 +403,15 @@ def _collect_go_dependency_licenses(
         env=env,
     )
     check_output = "\n".join(
-        text for text in ((check_result.stdout or "").strip(), (check_result.stderr or "").strip()) if text
+        text
+        for text in ((check_result.stdout or "").strip(), (check_result.stderr or "").strip())
+        if text
     )
     check_file = third_party_dir / "go-licenses-check.txt"
     check_file.write_text(check_output + ("\n" if check_output else ""), encoding="utf-8")
     if check_result.returncode != 0 and go_licenses_enforce:
         raise RuntimeError(
-            "go-licenses check failed and MATEY_GO_LICENSES_ENFORCE is enabled. "
-            f"See {check_file}"
+            f"go-licenses check failed and MATEY_GO_LICENSES_ENFORCE is enabled. See {check_file}"
         )
 
     report = _run(
@@ -424,7 +433,9 @@ def _collect_go_dependency_licenses(
         env=env,
     )
     save_output = "\n".join(
-        text for text in ((save_result.stdout or "").strip(), (save_result.stderr or "").strip()) if text
+        text
+        for text in ((save_result.stdout or "").strip(), (save_result.stderr or "").strip())
+        if text
     )
     save_output_file = third_party_dir / "go-licenses-save.txt"
     save_output_file.write_text(save_output + ("\n" if save_output else ""), encoding="utf-8")

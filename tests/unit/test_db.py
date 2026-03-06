@@ -1,0 +1,658 @@
+from __future__ import annotations
+
+from contextlib import contextmanager
+from pathlib import Path
+
+import pytest
+
+import matey.db as db_mod
+from matey.config import TargetConfig
+from matey.dbmate import CmdResult
+from matey.lockfile import LockState, WorktreeStep
+from matey.snapshot import Snapshot
+
+
+def _target(tmp_path: Path, name: str = "core") -> TargetConfig:
+    return TargetConfig(
+        name=name,
+        dir=(tmp_path / "db" / name).resolve(),
+        url_env=f"{name.upper()}_DATABASE_URL",
+        test_url_env=f"{name.upper()}_TEST_DATABASE_URL",
+    )
+
+
+def _step(index: int, filename: str) -> WorktreeStep:
+    return WorktreeStep(
+        index=index,
+        version=f"{index:03d}",
+        migration_file=f"migrations/{filename}",
+        migration_digest=f"m{index}",
+        checkpoint_file=f"checkpoints/{filename}",
+        checkpoint_digest=f"c{index}",
+        chain_hash=f"h{index}",
+    )
+
+
+def _cmd(*argv: str, exit_code: int = 0, stdout: str = "", stderr: str = "") -> CmdResult:
+    return CmdResult(argv=tuple(argv), exit_code=exit_code, stdout=stdout, stderr=stderr)
+
+
+class _FakeConn:
+    def __init__(self, *, url: str = "sqlite3:/tmp/test.sqlite3") -> None:
+        self.url = url
+        self.create_calls = 0
+        self.up_calls = 0
+        self.migrate_calls = 0
+        self.rollback_calls: list[int] = []
+
+    def create(self) -> CmdResult:
+        self.create_calls += 1
+        return _cmd("dbmate", "create")
+
+    def up(self) -> CmdResult:
+        self.up_calls += 1
+        return _cmd("dbmate", "up")
+
+    def migrate(self) -> CmdResult:
+        self.migrate_calls += 1
+        return _cmd("dbmate", "migrate")
+
+    def rollback(self, steps: int) -> CmdResult:
+        self.rollback_calls.append(steps)
+        return _cmd("dbmate", "rollback", str(steps))
+
+    def status(self) -> CmdResult:  # pragma: no cover - patched in tests
+        return _cmd("dbmate", "status")
+
+    def dump(self) -> CmdResult:  # pragma: no cover - patched in tests
+        return _cmd("dbmate", "dump")
+
+
+def _ctx(tmp_path: Path, *, conn: _FakeConn, steps: tuple[WorktreeStep, ...]) -> db_mod._Ctx:
+    target = _target(tmp_path)
+    snapshot = Snapshot(
+        target_name=target.name,
+        schema_sql=b"CREATE TABLE head(id INTEGER);\n",
+        lock_toml=None,
+        migrations={step.migration_file: b"-- migrate:up\nSELECT 1;\n" for step in steps},
+        checkpoints={
+            step.checkpoint_file: f"CREATE TABLE c{step.index}(id INTEGER);\n".encode()
+            for step in steps
+        },
+    )
+    state = LockState(
+        target_name=target.name,
+        lock=None,
+        worktree_steps=steps,
+        schema_digest=None,
+        orphan_checkpoints=(),
+        diagnostics=(),
+    )
+    return db_mod._Ctx(target=target, snapshot=snapshot, state=state, conn=conn)
+
+
+def _qualified_write(engine: str) -> str:
+    match engine:
+        case "bigquery":
+            return "CREATE TABLE analytics.events (id INT64);"
+        case "mysql":
+            return "CREATE TABLE other_db.events (id BIGINT);"
+        case "clickhouse":
+            return "CREATE TABLE other_db.events (id Int64) ENGINE = MergeTree ORDER BY tuple();"
+        case _:
+            return "CREATE TABLE events (id BIGINT);"
+
+
+def _qualified_down(engine: str) -> str:
+    match engine:
+        case "bigquery":
+            return "DROP TABLE analytics.events;"
+        case "mysql":
+            return "DROP TABLE other_db.events;"
+        case "clickhouse":
+            return "DROP TABLE other_db.events;"
+        case _:
+            return "DROP TABLE events;"
+
+
+def test_up_uses_create_if_pre_status_reports_missing_db(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    conn = _FakeConn()
+    ctx = _ctx(tmp_path, conn=conn, steps=(_step(1, "001_init.sql"),))
+
+    @contextmanager
+    def _fake_open_ctx(**kwargs):
+        del kwargs
+        yield ctx
+
+    missing = _cmd("dbmate", "status", exit_code=1, stderr="database does not exist")
+    statuses = iter(
+        [
+            db_mod._StatusError(result=missing, missing_db=True),
+            (
+                _cmd("dbmate", "status", stdout="[ ] 001_init.sql\nApplied: 0\n"),
+                db_mod._ParsedStatus(applied_files=(), applied_count=0),
+            ),
+            (
+                _cmd("dbmate", "status", stdout="[X] 001_init.sql\nApplied: 1\n"),
+                db_mod._ParsedStatus(applied_files=("001_init.sql",), applied_count=1),
+            ),
+        ]
+    )
+
+    def _fake_status(_conn: _FakeConn):
+        value = next(statuses)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(db_mod, "_status", _fake_status)
+    monkeypatch.setattr(
+        db_mod,
+        "_verify_expected_schema",
+        lambda **kwargs: True,
+    )
+
+    result = db_mod.up(ctx.target)
+
+    assert result.before_index == 0
+    assert result.after_index == 1
+    assert conn.create_calls == 1
+    assert conn.up_calls == 1
+
+
+def test_migrate_does_not_fallback_to_create_on_missing_db(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    conn = _FakeConn()
+    ctx = _ctx(tmp_path, conn=conn, steps=(_step(1, "001_init.sql"),))
+
+    @contextmanager
+    def _fake_open_ctx(**kwargs):
+        del kwargs
+        yield ctx
+
+    missing = _cmd("dbmate", "status", exit_code=1, stderr="database does not exist")
+
+    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(
+        db_mod,
+        "_status",
+        lambda _conn: (_ for _ in ()).throw(
+            db_mod._StatusError(result=missing, missing_db=True)
+        ),
+    )
+
+    with pytest.raises(db_mod.DbError, match="db migrate pre-status failed"):
+        db_mod.migrate(ctx.target)
+    assert conn.create_calls == 0
+
+
+def test_down_expected_index_comes_from_post_status(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    conn = _FakeConn()
+    steps = (_step(1, "001_init.sql"), _step(2, "002_next.sql"), _step(3, "003_end.sql"))
+    ctx = _ctx(tmp_path, conn=conn, steps=steps)
+
+    @contextmanager
+    def _fake_open_ctx(**kwargs):
+        del kwargs
+        yield ctx
+
+    statuses = iter(
+        [
+            (
+                _cmd(
+                    "dbmate",
+                    "status",
+                    stdout="[X] 001_init.sql\n[X] 002_next.sql\n[X] 003_end.sql\nApplied: 3\n",
+                ),
+                db_mod._ParsedStatus(
+                    applied_files=("001_init.sql", "002_next.sql", "003_end.sql"),
+                    applied_count=3,
+                ),
+            ),
+            (
+                _cmd("dbmate", "status", stdout="[X] 001_init.sql\nApplied: 1\n"),
+                db_mod._ParsedStatus(applied_files=("001_init.sql",), applied_count=1),
+            ),
+        ]
+    )
+    captured: dict[str, int] = {}
+
+    def _fake_status(_conn: _FakeConn):
+        return next(statuses)
+
+    def _fake_verify(*, ctx: db_mod._Ctx, expected_index: int, context: str):
+        del ctx
+        del context
+        captured["expected_index"] = expected_index
+        return True
+
+    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(db_mod, "_status", _fake_status)
+    monkeypatch.setattr(db_mod, "_verify_expected_schema", _fake_verify)
+
+    result = db_mod.down(ctx.target, steps=2)
+
+    assert result.before_index == 3
+    assert result.after_index == 1
+    assert captured["expected_index"] == 1
+    assert conn.rollback_calls == [2]
+
+
+def test_plan_uses_worktree_target_index_for_expected_schema(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    conn = _FakeConn()
+    steps = (_step(1, "001_init.sql"), _step(2, "002_next.sql"))
+    ctx = _ctx(tmp_path, conn=conn, steps=steps)
+
+    @contextmanager
+    def _fake_open_ctx(**kwargs):
+        del kwargs
+        yield ctx
+
+    captured: dict[str, int] = {}
+
+    def _fake_compare(*, ctx: db_mod._Ctx, expected_index: int):
+        del ctx
+        captured["expected_index"] = expected_index
+        return True, "EXPECTED", "LIVE"
+
+    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(
+        db_mod,
+        "_status",
+        lambda _conn: (
+            _cmd("dbmate", "status", stdout="[X] 001_init.sql\nApplied: 1\n"),
+            db_mod._ParsedStatus(applied_files=("001_init.sql",), applied_count=1),
+        ),
+    )
+    monkeypatch.setattr(db_mod, "_compare_expected_schema", _fake_compare)
+
+    result = db_mod.plan(ctx.target)
+
+    assert captured["expected_index"] == 2
+    assert result.applied_index == 1
+    assert result.target_index == 2
+    assert result.matches is True
+
+
+def test_plan_sql_returns_worktree_target_schema(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    conn = _FakeConn()
+    steps = (_step(1, "001_init.sql"), _step(2, "002_next.sql"))
+    ctx = _ctx(tmp_path, conn=conn, steps=steps)
+
+    @contextmanager
+    def _fake_open_ctx(**kwargs):
+        del kwargs
+        yield ctx
+
+    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(
+        db_mod,
+        "_status",
+        lambda _conn: (
+            _cmd("dbmate", "status", stdout="[X] 001_init.sql\nApplied: 1\n"),
+            db_mod._ParsedStatus(applied_files=("001_init.sql",), applied_count=1),
+        ),
+    )
+
+    sql = db_mod.plan_sql(ctx.target)
+
+    assert sql == "CREATE TABLE head(id INTEGER);\n"
+
+
+def test_plan_diff_compares_live_vs_worktree_target(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    conn = _FakeConn()
+    steps = (_step(1, "001_init.sql"),)
+    ctx = _ctx(tmp_path, conn=conn, steps=steps)
+
+    @contextmanager
+    def _fake_open_ctx(**kwargs):
+        del kwargs
+        yield ctx
+
+    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(
+        db_mod,
+        "_status",
+        lambda _conn: (
+            _cmd("dbmate", "status", stdout="[X] 001_init.sql\nApplied: 1\n"),
+            db_mod._ParsedStatus(applied_files=("001_init.sql",), applied_count=1),
+        ),
+    )
+    monkeypatch.setattr(
+        db_mod,
+        "_compare_expected_schema",
+        lambda **kwargs: (False, "CREATE TABLE expected(id INTEGER);\n", "CREATE TABLE live(id INTEGER);\n"),
+    )
+
+    diff = db_mod.plan_diff(ctx.target)
+
+    assert "--- live/schema.sql" in diff
+    assert "+++ expected/worktree.sql" in diff
+    assert "-CREATE TABLE live (id INTEGER)" in diff
+    assert "+CREATE TABLE expected (id INTEGER)" in diff
+
+
+def test_new_calls_dbmate_new(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    target = _target(tmp_path)
+    captured: dict[str, object] = {}
+
+    class _FakeDbmate:
+        def __init__(self, *, migrations_dir: Path, dbmate_bin: Path | None = None) -> None:
+            captured["migrations_dir"] = migrations_dir
+            captured["dbmate_bin"] = dbmate_bin
+
+        def new(self, name: str) -> CmdResult:
+            captured["name"] = name
+            return _cmd("dbmate", "new", name, stdout=f"{name}.sql\n")
+
+    monkeypatch.setattr(db_mod, "Dbmate", _FakeDbmate)
+
+    result = db_mod.new(target, name="add_users")
+
+    assert result.exit_code == 0
+    assert captured["migrations_dir"] == target.migrations
+    assert captured["name"] == "add_users"
+
+
+def test_new_requires_non_empty_name(tmp_path: Path) -> None:
+    target = _target(tmp_path)
+    with pytest.raises(db_mod.DbError, match="Migration name is required"):
+        db_mod.new(target, name="   ")
+
+
+def test_expected_sql_for_index_uses_checkpoint_and_head(tmp_path: Path) -> None:
+    conn = _FakeConn()
+    steps = (_step(1, "001_init.sql"), _step(2, "002_next.sql"))
+    ctx = _ctx(tmp_path, conn=conn, steps=steps)
+
+    assert db_mod._expected_sql_for_index(ctx=ctx, index=0) is None
+    assert db_mod._expected_sql_for_index(ctx=ctx, index=1) == "CREATE TABLE c1(id INTEGER);\n"
+    assert (
+        db_mod._expected_sql_for_index(ctx=ctx, index=2) == "CREATE TABLE head(id INTEGER);\n"
+    )
+
+
+def test_ensure_prefix_rejects_non_prefix(tmp_path: Path) -> None:
+    conn = _FakeConn()
+    steps = (_step(1, "001_init.sql"), _step(2, "002_next.sql"))
+    ctx = _ctx(tmp_path, conn=conn, steps=steps)
+    parsed = db_mod._ParsedStatus(applied_files=("009_bad.sql",), applied_count=1)
+
+    with pytest.raises(db_mod.DbError, match="does not match worktree migration prefix"):
+        db_mod._ensure_prefix(state=ctx.state, parsed=parsed)
+
+
+def test_ensure_prefix_rejects_ambiguous_basename_only_status(tmp_path: Path) -> None:
+    conn = _FakeConn()
+    duplicate_steps = (
+        WorktreeStep(
+            index=1,
+            version="001",
+            migration_file="migrations/a/001_init.sql",
+            migration_digest="m1",
+            checkpoint_file="checkpoints/a/001_init.sql",
+            checkpoint_digest="c1",
+            chain_hash="h1",
+        ),
+        WorktreeStep(
+            index=2,
+            version="002",
+            migration_file="migrations/b/001_init.sql",
+            migration_digest="m2",
+            checkpoint_file="checkpoints/b/001_init.sql",
+            checkpoint_digest="c2",
+            chain_hash="h2",
+        ),
+    )
+    ctx = _ctx(tmp_path, conn=conn, steps=duplicate_steps)
+    parsed = db_mod._ParsedStatus(applied_files=("001_init.sql",), applied_count=1)
+
+    with pytest.raises(db_mod.DbError, match="duplicate migration basenames"):
+        db_mod._ensure_prefix(state=ctx.state, parsed=parsed)
+
+
+def test_drift_reports_live_ahead_as_drift(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    conn = _FakeConn()
+    steps = (_step(1, "001_init.sql"),)
+    ctx = _ctx(tmp_path, conn=conn, steps=steps)
+
+    @contextmanager
+    def _fake_open_ctx(**kwargs):
+        del kwargs
+        yield ctx
+
+    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(
+        db_mod,
+        "_status",
+        lambda _conn: (
+            _cmd(
+                "dbmate",
+                "status",
+                stdout="[X] 001_init.sql\n[X] 002_extra.sql\nApplied: 2\n",
+            ),
+            db_mod._ParsedStatus(
+                applied_files=("001_init.sql", "002_extra.sql"),
+                applied_count=2,
+            ),
+        ),
+    )
+
+    result = db_mod.drift(ctx.target)
+
+    assert result.drifted is True
+    assert result.applied_index == 2
+
+
+def test_plan_reports_live_ahead_as_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    conn = _FakeConn()
+    steps = (_step(1, "001_init.sql"),)
+    ctx = _ctx(tmp_path, conn=conn, steps=steps)
+
+    @contextmanager
+    def _fake_open_ctx(**kwargs):
+        del kwargs
+        yield ctx
+
+    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(
+        db_mod,
+        "_status",
+        lambda _conn: (
+            _cmd(
+                "dbmate",
+                "status",
+                stdout="[X] 001_init.sql\n[X] 002_extra.sql\nApplied: 2\n",
+            ),
+            db_mod._ParsedStatus(
+                applied_files=("001_init.sql", "002_extra.sql"),
+                applied_count=2,
+            ),
+        ),
+    )
+
+    result = db_mod.plan(ctx.target)
+
+    assert result.matches is False
+    assert result.applied_index == 2
+
+
+def test_up_rejects_live_ahead(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    conn = _FakeConn()
+    steps = (_step(1, "001_init.sql"),)
+    ctx = _ctx(tmp_path, conn=conn, steps=steps)
+
+    @contextmanager
+    def _fake_open_ctx(**kwargs):
+        del kwargs
+        yield ctx
+
+    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(
+        db_mod,
+        "_status",
+        lambda _conn: (
+            _cmd(
+                "dbmate",
+                "status",
+                stdout="[X] 001_init.sql\n[X] 002_extra.sql\nApplied: 2\n",
+            ),
+            db_mod._ParsedStatus(
+                applied_files=("001_init.sql", "002_extra.sql"),
+                applied_count=2,
+            ),
+        ),
+    )
+
+    with pytest.raises(db_mod.DbError, match="ahead of worktree"):
+        db_mod.up(ctx.target)
+
+
+@pytest.mark.parametrize(
+    ("engine", "url"),
+    [
+        ("bigquery", "bigquery://example-project/us/target_ds"),
+        ("mysql", "mysql://user:pass@127.0.0.1:3306/target_db"),
+        ("clickhouse", "clickhouse://default:@127.0.0.1:8123/target_db"),
+    ],
+)
+def test_up_rejects_qualified_pending_writes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    engine: str,
+    url: str,
+) -> None:
+    conn = _FakeConn(url=url)
+    steps = (_step(1, "001_init.sql"),)
+    ctx = _ctx(tmp_path, conn=conn, steps=steps)
+    ctx.snapshot.migrations[steps[0].migration_file] = (
+        f"-- migrate:up\n{_qualified_write(engine)}\n\n-- migrate:down\nDROP TABLE events;\n".encode()
+    )
+
+    @contextmanager
+    def _fake_open_ctx(**kwargs):
+        del kwargs
+        yield ctx
+
+    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(
+        db_mod,
+        "_status",
+        lambda _conn: (
+            _cmd("dbmate", "status", stdout="[ ] 001_init.sql\nApplied: 0\n"),
+            db_mod._ParsedStatus(applied_files=(), applied_count=0),
+        ),
+    )
+
+    with pytest.raises(db_mod.DbError, match=r"qualified .* write target"):
+        db_mod.up(ctx.target)
+    assert conn.up_calls == 0
+
+
+@pytest.mark.parametrize(
+    ("engine", "url"),
+    [
+        ("bigquery", "bigquery://example-project/us/target_ds"),
+        ("mysql", "mysql://user:pass@127.0.0.1:3306/target_db"),
+        ("clickhouse", "clickhouse://default:@127.0.0.1:8123/target_db"),
+    ],
+)
+def test_migrate_rejects_qualified_pending_writes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    engine: str,
+    url: str,
+) -> None:
+    conn = _FakeConn(url=url)
+    steps = (_step(1, "001_init.sql"),)
+    ctx = _ctx(tmp_path, conn=conn, steps=steps)
+    ctx.snapshot.migrations[steps[0].migration_file] = (
+        f"-- migrate:up\n{_qualified_write(engine)}\n\n-- migrate:down\nDROP TABLE events;\n".encode()
+    )
+
+    @contextmanager
+    def _fake_open_ctx(**kwargs):
+        del kwargs
+        yield ctx
+
+    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(
+        db_mod,
+        "_status",
+        lambda _conn: (
+            _cmd("dbmate", "status", stdout="[ ] 001_init.sql\nApplied: 0\n"),
+            db_mod._ParsedStatus(applied_files=(), applied_count=0),
+        ),
+    )
+
+    with pytest.raises(db_mod.DbError, match=r"qualified .* write target"):
+        db_mod.migrate(ctx.target)
+    assert conn.migrate_calls == 0
+
+
+@pytest.mark.parametrize(
+    ("engine", "url"),
+    [
+        ("bigquery", "bigquery://example-project/us/target_ds"),
+        ("mysql", "mysql://user:pass@127.0.0.1:3306/target_db"),
+        ("clickhouse", "clickhouse://default:@127.0.0.1:8123/target_db"),
+    ],
+)
+def test_down_rejects_qualified_executable_down_writes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    engine: str,
+    url: str,
+) -> None:
+    conn = _FakeConn(url=url)
+    steps = (_step(1, "001_init.sql"),)
+    ctx = _ctx(tmp_path, conn=conn, steps=steps)
+    ctx.snapshot.migrations[steps[0].migration_file] = (
+        f"-- migrate:up\nCREATE TABLE events (id BIGINT);\n\n-- migrate:down\n{_qualified_down(engine)}\n".encode()
+    )
+
+    @contextmanager
+    def _fake_open_ctx(**kwargs):
+        del kwargs
+        yield ctx
+
+    monkeypatch.setattr(db_mod, "_open_ctx", _fake_open_ctx)
+    monkeypatch.setattr(
+        db_mod,
+        "_status",
+        lambda _conn: (
+            _cmd("dbmate", "status", stdout="[X] 001_init.sql\nApplied: 1\n"),
+            db_mod._ParsedStatus(applied_files=("001_init.sql",), applied_count=1),
+        ),
+    )
+
+    with pytest.raises(db_mod.DbError, match=r"qualified .* write target"):
+        db_mod.down(ctx.target)
+    assert conn.rollback_calls == []

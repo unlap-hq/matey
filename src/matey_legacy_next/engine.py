@@ -22,7 +22,12 @@ class EnginePolicyRegistry(IEnginePolicyRegistry):
                 build_scratch_url=_replace_path_segment,
                 classifier=EngineClassifierPolicy(
                     missing_db_positive=(r"does not exist", r"3d000"),
-                    missing_db_negative=(r"connection refused", r"i/o timeout", r"no such host", r"28p01"),
+                    missing_db_negative=(
+                        r"connection refused",
+                        r"i/o timeout",
+                        r"no such host",
+                        r"28p01",
+                    ),
                     create_exists=(),
                     create_fatal=(r"permission denied", r"access denied"),
                 ),
@@ -33,7 +38,12 @@ class EnginePolicyRegistry(IEnginePolicyRegistry):
                 build_scratch_url=_replace_path_segment,
                 classifier=EngineClassifierPolicy(
                     missing_db_positive=(r"unknown database", r"\b1049\b"),
-                    missing_db_negative=(r"connection refused", r"i/o timeout", r"no such host", r"\b1045\b"),
+                    missing_db_negative=(
+                        r"connection refused",
+                        r"i/o timeout",
+                        r"no such host",
+                        r"\b1045\b",
+                    ),
                     create_exists=(),
                     create_fatal=(r"permission denied", r"access denied"),
                 ),
@@ -59,7 +69,12 @@ class EnginePolicyRegistry(IEnginePolicyRegistry):
                 build_scratch_url=_replace_path_segment,
                 classifier=EngineClassifierPolicy(
                     missing_db_positive=(r"database .* does not exist", r"code:\s*81"),
-                    missing_db_negative=(r"connection refused", r"i/o timeout", r"no such host", r"code:\s*516"),
+                    missing_db_negative=(
+                        r"connection refused",
+                        r"i/o timeout",
+                        r"no such host",
+                        r"code:\s*516",
+                    ),
                     create_exists=(),
                     create_fatal=(r"permission denied", r"access denied"),
                 ),

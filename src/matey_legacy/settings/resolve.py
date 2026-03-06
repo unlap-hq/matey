@@ -38,7 +38,9 @@ def select_targets(
         selected = config.targets.get(target_name)
         if selected is None:
             options = ", ".join(config.targets)
-            raise TargetSelectionError(f"Unknown target '{target_name}'. Configured targets: {options}")
+            raise TargetSelectionError(
+                f"Unknown target '{target_name}'. Configured targets: {options}"
+            )
         return [SelectedTarget(name=target_name, config=selected, implicit=False)]
 
     if len(config.targets) == 1:
@@ -86,7 +88,11 @@ def resolve_real_url(
         return cli_url
 
     runtime_env = load_runtime_env(environ=environ)
-    env_name = target.config.url_env if target.config and target.config.url_env else config.defaults.url_env
+    env_name = (
+        target.config.url_env
+        if target.config and target.config.url_env
+        else config.defaults.url_env
+    )
     value = runtime_env.get(env_name)
     if value:
         return value

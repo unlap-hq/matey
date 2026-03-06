@@ -9,7 +9,9 @@ from matey.errors import ExternalCommandError
 from matey.models import CmdResult
 
 _STATUS_LINE_PATTERN = re.compile(r"^\[(?P<mark>[ X])\]\s+(?P<file>.+?)\s*$")
-_SECTION_MARKER_PATTERN = re.compile(r"^\s*--\s*migrate:(up|down)\b.*$", re.IGNORECASE | re.MULTILINE)
+_SECTION_MARKER_PATTERN = re.compile(
+    r"^\s*--\s*migrate:(up|down)\b.*$", re.IGNORECASE | re.MULTILINE
+)
 _DOWN_MARKER_PATTERN = re.compile(r"^\s*--\s*migrate:down\b.*$", re.IGNORECASE | re.MULTILINE)
 _LINE_COMMENT_ONLY_PATTERN = re.compile(r"^\s*--.*$", re.MULTILINE)
 _BLOCK_COMMENT_PATTERN = re.compile(r"/\*.*?\*/", re.DOTALL)
@@ -117,7 +119,9 @@ def parse_migration_files(file_paths: Iterable[str]) -> tuple[MigrationFile, ...
         name = Path(raw_path).name
         if Path(name).suffix.lower() != ".sql":
             continue
-        rows.append(MigrationFile(version=_version_from_filename(name), filename=name, rel_path=rel))
+        rows.append(
+            MigrationFile(version=_version_from_filename(name), filename=name, rel_path=rel)
+        )
     rows.sort(key=lambda row: row.filename)
     return tuple(rows)
 
@@ -141,4 +145,6 @@ def _contains_executable_sql(section_text: str) -> bool:
 
 def parse_down_section_state(sql_text: str) -> DownSectionState:
     marker_present, section = _extract_down_section(sql_text)
-    return DownSectionState(marker_present=marker_present, has_executable_sql=_contains_executable_sql(section))
+    return DownSectionState(
+        marker_present=marker_present, has_executable_sql=_contains_executable_sql(section)
+    )

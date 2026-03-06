@@ -115,8 +115,7 @@ def _atomic_write_schema_and_lock(
         target_updates[checkpoint_path] = checkpoint_sql
 
     previous_contents: dict[Path, str | None] = {
-        path: (read_schema_sql(path) if path.exists() else None)
-        for path in target_updates
+        path: (read_schema_sql(path) if path.exists() else None) for path in target_updates
     }
     changed = any(previous_contents[path] != content for path, content in target_updates.items())
 
@@ -275,7 +274,9 @@ def register(schema_app: typer.Typer) -> None:
                 SchemaValidationError,
                 LockfileError,
             ) as error:
-                typer.secho(f"[matey] target={selected_target.name} validation error: {error}", fg="red")
+                typer.secho(
+                    f"[matey] target={selected_target.name} validation error: {error}", fg="red"
+                )
                 failures += 1
                 continue
             except Exception as error:
@@ -296,7 +297,9 @@ def register(schema_app: typer.Typer) -> None:
                 continue
 
             if not options.quiet:
-                typer.secho(f"[matey] target={selected_target.name}: schema validation passed.", fg="green")
+                typer.secho(
+                    f"[matey] target={selected_target.name}: schema validation passed.", fg="green"
+                )
 
         if failures:
             raise typer.Exit(1)
@@ -477,7 +480,9 @@ def register(schema_app: typer.Typer) -> None:
                 failures += 1
                 continue
             if options.keep_scratch and result.scratch_url:
-                typer.echo(f"[matey] target={selected_target.name}: keeping scratch at {result.scratch_url}")
+                typer.echo(
+                    f"[matey] target={selected_target.name}: keeping scratch at {result.scratch_url}"
+                )
             if not result.success:
                 failures += 1
             elif not options.quiet:

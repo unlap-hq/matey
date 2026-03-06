@@ -176,9 +176,7 @@ def _extract_source(doc: dict[str, Any], *, source: str) -> tuple[DefaultsMap, T
         override: dict[str, str] = {}
         for override_key, override_value in value.items():
             if override_key not in _SCALAR_KEYS:
-                raise ConfigError(
-                    f"{source}: target {key!r} has unsupported key {override_key!r}."
-                )
+                raise ConfigError(f"{source}: target {key!r} has unsupported key {override_key!r}.")
             if not isinstance(override_value, str):
                 raise ConfigError(
                     f"{source}: target {key!r} field {override_key!r} must be a string."

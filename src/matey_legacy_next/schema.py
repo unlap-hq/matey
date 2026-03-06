@@ -228,7 +228,9 @@ def _load_base_migrations(
     if not migration_paths:
         return (), schema_blob is not None
 
-    migration_rel = [path.relative_to(db_rel).as_posix() for path in migration_paths if path.suffix == ".sql"]
+    migration_rel = [
+        path.relative_to(db_rel).as_posix() for path in migration_paths if path.suffix == ".sql"
+    ]
     migrations = parse_migration_files(migration_rel)
     checkpoint_set = {path.relative_to(db_rel).as_posix() for path in checkpoint_paths}
 
@@ -319,9 +321,7 @@ def _require_base_lock_coherence(
             f"Base lock checkpoint digest mismatch at step {idx}: {lock_step.checkpoint_file}"
         )
     if field == "chain_hash":
-        raise ReplayError(
-            f"Base lock chain mismatch at step {idx}: {lock_step.migration_file}"
-        )
+        raise ReplayError(f"Base lock chain mismatch at step {idx}: {lock_step.migration_file}")
     raise ReplayError(f"Base lock mismatch at step {idx}: {field}")
 
 
@@ -525,7 +525,9 @@ def _evaluate_schema_status(*, ctx: AppContext, runtime) -> SchemaStatusResult:
             rows.append(
                 SchemaStatusRow(
                     marker="warn",
-                    migration_file=runtime.paths.schema_file.relative_to(runtime.paths.db_dir).as_posix(),
+                    migration_file=runtime.paths.schema_file.relative_to(
+                        runtime.paths.db_dir
+                    ).as_posix(),
                     status="schema-missing",
                     detail="schema.sql is missing from workspace.",
                 )
@@ -542,7 +544,9 @@ def _evaluate_schema_status(*, ctx: AppContext, runtime) -> SchemaStatusResult:
                 rows.append(
                     SchemaStatusRow(
                         marker="warn",
-                        migration_file=runtime.paths.schema_file.relative_to(runtime.paths.db_dir).as_posix(),
+                        migration_file=runtime.paths.schema_file.relative_to(
+                            runtime.paths.db_dir
+                        ).as_posix(),
                         status="schema-digest-mismatch",
                         detail="schema.sql digest differs from lock head_schema_digest.",
                     )
@@ -651,7 +655,9 @@ class SchemaEngine:
         )
         with self._ctx.scope.open(target_key=op.target_key, target_root=op.target_paths.db_dir):
             computation = self._run_plan(op=op)
-            checkpoint_texts = self._build_checkpoint_texts(op=op, replay_plan=computation.replay_plan)
+            checkpoint_texts = self._build_checkpoint_texts(
+                op=op, replay_plan=computation.replay_plan
+            )
             self._apply_artifacts(
                 op=op,
                 normalized_schema_sql=computation.normalized_b_sql,
@@ -727,7 +733,9 @@ class SchemaEngine:
 
     def _run_plan(self, *, op: SchemaOpContext) -> PlanComputation:
         replay_plan = _build_replay_plan(ctx=self._ctx, op=op)
-        comparison, normalized_b_sql, scratch_url = self._execute_replay(op=op, replay_plan=replay_plan)
+        comparison, normalized_b_sql, scratch_url = self._execute_replay(
+            op=op, replay_plan=replay_plan
+        )
         self._execute_down_roundtrip(op=op, replay_plan=replay_plan)
         return PlanComputation(
             op=op,
@@ -746,7 +754,9 @@ class SchemaEngine:
             keep=op.keep_scratch,
         )
 
-    def _load_anchor(self, *, op: SchemaOpContext, scratch_url: str, anchor_sql: str | None, context: str) -> None:
+    def _load_anchor(
+        self, *, op: SchemaOpContext, scratch_url: str, anchor_sql: str | None, context: str
+    ) -> None:
         if anchor_sql is None:
             return
         with tempfile.NamedTemporaryFile(mode="w", suffix=".sql", delete=False) as handle:
@@ -762,7 +772,14 @@ class SchemaEngine:
             anchor_path.unlink(missing_ok=True)
         require_cmd_success(result, f"dbmate load failed while loading {context} anchor checkpoint")
 
-    def _apply_step_set(self, *, op: SchemaOpContext, scratch_url: str, states: tuple[MigrationState, ...], context: str) -> None:
+    def _apply_step_set(
+        self,
+        *,
+        op: SchemaOpContext,
+        scratch_url: str,
+        states: tuple[MigrationState, ...],
+        context: str,
+    ) -> None:
         if not states:
             return
         with tempfile.TemporaryDirectory(prefix="matey-tail-") as tmp_name:
@@ -790,11 +807,19 @@ class SchemaEngine:
         normalized_sql: str
         try:
             self._ensure_scratch_ready(op=op, handle=scratch)
-            self._load_anchor(op=op, scratch_url=scratch.url, anchor_sql=replay_plan.anchor_sql, context="replay")
-            self._apply_step_set(op=op, scratch_url=scratch.url, states=replay_plan.tail_states, context="tail")
+            self._load_anchor(
+                op=op, scratch_url=scratch.url, anchor_sql=replay_plan.anchor_sql, context="replay"
+            )
+            self._apply_step_set(
+                op=op, scratch_url=scratch.url, states=replay_plan.tail_states, context="tail"
+            )
             b_raw = self._dump_sql(op=op, url=scratch.url, context="replay scratch")
 
-            a_text = op.target_paths.schema_file.read_text(encoding="utf-8") if op.target_paths.schema_file.exists() else ""
+            a_text = (
+                op.target_paths.schema_file.read_text(encoding="utf-8")
+                if op.target_paths.schema_file.exists()
+                else ""
+            )
             comparison = self._ctx.sql_pipeline.compare(
                 engine=op.replay_engine,
                 expected=SqlSource(text=a_text, origin="artifact"),
@@ -816,7 +841,12 @@ class SchemaEngine:
         primary_error: BaseException | None = None
         try:
             self._ensure_scratch_ready(op=op, handle=scratch)
-            self._load_anchor(op=op, scratch_url=scratch.url, anchor_sql=replay_plan.anchor_sql, context="down-roundtrip")
+            self._load_anchor(
+                op=op,
+                scratch_url=scratch.url,
+                anchor_sql=replay_plan.anchor_sql,
+                context="down-roundtrip",
+            )
 
             for state in replay_plan.tail_states:
                 src_path = op.target_paths.db_dir / state.migration.rel_path
@@ -824,19 +854,26 @@ class SchemaEngine:
 
                 baseline_raw: str | None = None
                 if down_state.has_executable_sql:
-                    baseline_raw = self._dump_sql(op=op, url=scratch.url, context="down-roundtrip baseline")
+                    baseline_raw = self._dump_sql(
+                        op=op, url=scratch.url, context="down-roundtrip baseline"
+                    )
 
                 with tempfile.TemporaryDirectory(prefix="matey-down-step-") as tmp_name:
                     temp_dir = Path(tmp_name)
                     (temp_dir / state.migration.filename).write_bytes(src_path.read_bytes())
 
                     up_result = self._ctx.dbmate.up(url=scratch.url, migrations_dir=temp_dir)
-                    require_cmd_success(up_result, f"dbmate up failed for down-roundtrip step {state.migration.rel_path}")
+                    require_cmd_success(
+                        up_result,
+                        f"dbmate up failed for down-roundtrip step {state.migration.rel_path}",
+                    )
 
                     if not down_state.has_executable_sql:
                         continue
 
-                    rollback_result = self._ctx.dbmate.rollback(url=scratch.url, migrations_dir=temp_dir, steps=1)
+                    rollback_result = self._ctx.dbmate.rollback(
+                        url=scratch.url, migrations_dir=temp_dir, steps=1
+                    )
                     require_cmd_success(
                         rollback_result,
                         f"dbmate rollback failed for down-roundtrip step {state.migration.rel_path}",
@@ -850,8 +887,12 @@ class SchemaEngine:
                     assert baseline_raw is not None
                     comparison = self._ctx.sql_pipeline.compare(
                         engine=op.replay_engine,
-                        expected=SqlSource(text=baseline_raw, origin="scratch_dump", context_url=scratch.url),
-                        actual=SqlSource(text=after_raw, origin="scratch_dump", context_url=scratch.url),
+                        expected=SqlSource(
+                            text=baseline_raw, origin="scratch_dump", context_url=scratch.url
+                        ),
+                        actual=SqlSource(
+                            text=after_raw, origin="scratch_dump", context_url=scratch.url
+                        ),
                     )
                     if not comparison.equal:
                         self._raise_down_roundtrip_mismatch(
@@ -897,7 +938,9 @@ class SchemaEngine:
                 raise CheckpointIntegrityError(
                     f"Prefix checkpoint digest mismatch for {state.checkpoint_rel}. Run schema apply --clean."
                 )
-            checkpoint_texts[state.checkpoint_rel] = state.checkpoint_path.read_text(encoding="utf-8")
+            checkpoint_texts[state.checkpoint_rel] = state.checkpoint_path.read_text(
+                encoding="utf-8"
+            )
 
         tail_states = tuple(head_states[prefix_count:])
         if tail_states:
@@ -923,7 +966,9 @@ class SchemaEngine:
         primary_error: BaseException | None = None
         try:
             self._ensure_scratch_ready(op=op, handle=scratch)
-            self._load_anchor(op=op, scratch_url=scratch.url, anchor_sql=anchor_sql, context="checkpoint-capture")
+            self._load_anchor(
+                op=op, scratch_url=scratch.url, anchor_sql=anchor_sql, context="checkpoint-capture"
+            )
 
             for state in states:
                 src = op.target_paths.db_dir / state.migration.rel_path
@@ -1020,14 +1065,8 @@ class SchemaEngine:
         txid = self._ctx.artifact_store.begin(
             target_key=op.target_key,
             target_root=op.target_paths.db_dir,
-            writes=tuple(
-                ArtifactWrite(rel_path=rel, content=content)
-                for rel, content in writes
-            ),
-            deletes=tuple(
-                ArtifactDelete(rel_path=rel)
-                for rel in sorted(set(orphan_checkpoints))
-            ),
+            writes=tuple(ArtifactWrite(rel_path=rel, content=content) for rel, content in writes),
+            deletes=tuple(ArtifactDelete(rel_path=rel) for rel in sorted(set(orphan_checkpoints))),
         )
         self._ctx.artifact_store.apply(txid=txid)
         self._ctx.artifact_store.finalize(txid=txid)
@@ -1037,17 +1076,25 @@ class SchemaEngine:
         if policy.wait_required:
             wait = self._ctx.dbmate.wait(url=handle.url, timeout_seconds=60)
             require_cmd_success(wait, "dbmate wait failed for scratch")
-        create = self._ctx.dbmate.create(url=handle.url, migrations_dir=op.target_paths.migrations_dir)
+        create = self._ctx.dbmate.create(
+            url=handle.url, migrations_dir=op.target_paths.migrations_dir
+        )
         require_cmd_success(create, "dbmate create failed for scratch")
 
-    def _cleanup_scratch(self, *, op: SchemaOpContext, handle, primary_error: BaseException | None = None) -> None:
+    def _cleanup_scratch(
+        self, *, op: SchemaOpContext, handle, primary_error: BaseException | None = None
+    ) -> None:
         if op.keep_scratch:
             return
         cleanup_errors: list[str] = []
         if handle.cleanup_required:
-            result = self._ctx.dbmate.drop(url=handle.url, migrations_dir=op.target_paths.migrations_dir)
+            result = self._ctx.dbmate.drop(
+                url=handle.url, migrations_dir=op.target_paths.migrations_dir
+            )
             if result.exit_code != 0:
-                cleanup_errors.append((result.stderr or result.stdout or "dbmate drop failed").strip())
+                cleanup_errors.append(
+                    (result.stderr or result.stdout or "dbmate drop failed").strip()
+                )
         try:
             self._ctx.scratch.cleanup(handle)
         except Exception as error:

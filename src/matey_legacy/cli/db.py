@@ -153,7 +153,9 @@ def register(db_app: typer.Typer) -> None:
                 SchemaValidationError,
                 LockfileError,
             ) as error:
-                typer.secho(f"[matey] target={selected_target.name} db diff error: {error}", fg="red")
+                typer.secho(
+                    f"[matey] target={selected_target.name} db diff error: {error}", fg="red"
+                )
                 failures += 1
                 continue
             except Exception as error:
@@ -174,7 +176,10 @@ def register(db_app: typer.Typer) -> None:
             if not result.success:
                 failures += 1
             elif not options.quiet:
-                typer.secho(f"[matey] target={selected_target.name}: no schema differences found.", fg="green")
+                typer.secho(
+                    f"[matey] target={selected_target.name}: no schema differences found.",
+                    fg="green",
+                )
 
         if failures:
             raise typer.Exit(1)

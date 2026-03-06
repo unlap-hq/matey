@@ -46,7 +46,9 @@ def main_callback(
     ] = None,
     all_targets: Annotated[
         bool,
-        typer.Option("--all", help="Run command for all configured targets.", rich_help_panel="Targeting"),
+        typer.Option(
+            "--all", help="Run command for all configured targets.", rich_help_panel="Targeting"
+        ),
     ] = False,
     config_path: Annotated[
         Path | None,
@@ -82,7 +84,11 @@ def main_callback(
     ] = None,
     keep_scratch: Annotated[
         bool,
-        typer.Option("--keep-scratch", help="Keep scratch DB/dataset after command.", rich_help_panel="Scratch"),
+        typer.Option(
+            "--keep-scratch",
+            help="Keep scratch DB/dataset after command.",
+            rich_help_panel="Scratch",
+        ),
     ] = False,
     dbmate_bin: Annotated[
         str | None,

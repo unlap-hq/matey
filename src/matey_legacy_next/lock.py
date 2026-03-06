@@ -82,7 +82,9 @@ def _validate_rel_path(*, value: str, field_name: str, must_be_under: str | None
 
 def validate_lock_shape(lock: SchemaLock) -> None:
     if lock.lock_version != LOCK_VERSION:
-        raise LockfileError(f"Unsupported lock_version={lock.lock_version}; expected {LOCK_VERSION}.")
+        raise LockfileError(
+            f"Unsupported lock_version={lock.lock_version}; expected {LOCK_VERSION}."
+        )
     if lock.hash_algorithm != HASH_ALGORITHM:
         raise LockfileError(
             f"Unsupported hash_algorithm={lock.hash_algorithm!r}; expected {HASH_ALGORITHM!r}."

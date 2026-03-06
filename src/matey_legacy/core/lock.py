@@ -217,7 +217,9 @@ def _migration_version_from_name(name: str) -> str:
 def _sorted_migrations(paths: ResolvedPaths) -> list[Path]:
     if not paths.migrations_dir.exists():
         return []
-    migrations = [path for path in paths.migrations_dir.iterdir() if path.is_file() and path.suffix == ".sql"]
+    migrations = [
+        path for path in paths.migrations_dir.iterdir() if path.is_file() and path.suffix == ".sql"
+    ]
     return sorted(migrations, key=lambda item: item.name)
 
 
@@ -241,7 +243,9 @@ def _default_checkpoint_rel(migration_path: Path) -> str:
 def _resolve_lock_relative_path(*, db_dir: Path, relative_path: str, field_name: str) -> Path:
     candidate_rel = Path(relative_path)
     if candidate_rel.is_absolute():
-        raise LockfileError(f"Invalid {field_name}: absolute paths are not allowed: {relative_path}")
+        raise LockfileError(
+            f"Invalid {field_name}: absolute paths are not allowed: {relative_path}"
+        )
 
     db_root = db_dir.resolve()
     candidate = (db_dir / candidate_rel).resolve()

@@ -81,7 +81,9 @@ def load_runtime_env(environ: Mapping[str, str] | None = None) -> RuntimeEnv:
     env = _MappedEnv(values)
 
     dbmate_bin = _optional(env.str("MATEY_DBMATE_BIN", ""))
-    wait_timeout = _optional(env.str("MATEY_DBMATE_WAIT_TIMEOUT", "")) or DEFAULT_DBMATE_WAIT_TIMEOUT
+    wait_timeout = (
+        _optional(env.str("MATEY_DBMATE_WAIT_TIMEOUT", "")) or DEFAULT_DBMATE_WAIT_TIMEOUT
+    )
     github_base_ref = _optional(env.str("GITHUB_BASE_REF", ""))
     gitlab_base_ref = _optional(env.str("CI_MERGE_REQUEST_TARGET_BRANCH_NAME", ""))
     buildkite_base_ref = _optional(env.str("BUILDKITE_PULL_REQUEST_BASE_BRANCH", ""))
@@ -104,8 +106,12 @@ def load_build_env(environ: Mapping[str, str] | None = None) -> BuildEnv:
     module = _optional(env.str("MATEY_DBMATE_MODULE", "")) or DEFAULT_DBMATE_MODULE
     version = _optional(env.str("MATEY_DBMATE_VERSION", "")) or DEFAULT_DBMATE_VERSION
     cgo_enabled = _optional(env.str("MATEY_DBMATE_CGO_ENABLED", "")) or DEFAULT_DBMATE_CGO_ENABLED
-    go_licenses_module = _optional(env.str("MATEY_GO_LICENSES_MODULE", "")) or DEFAULT_GO_LICENSES_MODULE
-    go_licenses_version = _optional(env.str("MATEY_GO_LICENSES_VERSION", "")) or DEFAULT_GO_LICENSES_VERSION
+    go_licenses_module = (
+        _optional(env.str("MATEY_GO_LICENSES_MODULE", "")) or DEFAULT_GO_LICENSES_MODULE
+    )
+    go_licenses_version = (
+        _optional(env.str("MATEY_GO_LICENSES_VERSION", "")) or DEFAULT_GO_LICENSES_VERSION
+    )
     go_licenses_disallowed_types = (
         _optional(env.str("MATEY_GO_LICENSES_DISALLOWED_TYPES", ""))
         or DEFAULT_GO_LICENSES_DISALLOWED_TYPES

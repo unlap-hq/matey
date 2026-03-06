@@ -198,8 +198,12 @@ def _run_check_on_scratch(
                 ),
             )
             if up_code != 0:
-                error_message = f"dbmate up failed on {check_name} scratch target ({phase_name} phase)."
-                return _ScratchRunResult(scratch_url=scratch_url, schema_sql=None, error=error_message)
+                error_message = (
+                    f"dbmate up failed on {check_name} scratch target ({phase_name} phase)."
+                )
+                return _ScratchRunResult(
+                    scratch_url=scratch_url, schema_sql=None, error=error_message
+                )
 
         dump_result = _run_capture_with_retry(
             retries=retry_count,
@@ -430,12 +434,15 @@ def validate_schema_clean_target(
 
     if error_message is None and run_clean and not no_repo_check:
         repo_schema = _normalize_sql(_read_text(paths.schema_file))
-        diff_text = _schema_diff(
-            repo_schema,
-            clean_schema or "",
-            expected_name=str(paths.schema_file),
-            actual_name=f"{target_name}.clean.sql",
-        ) or None
+        diff_text = (
+            _schema_diff(
+                repo_schema,
+                clean_schema or "",
+                expected_name=str(paths.schema_file),
+                actual_name=f"{target_name}.clean.sql",
+            )
+            or None
+        )
 
     if error_message is None and run_clean and run_upgrade and not no_upgrade_diff:
         clean_schema_for_diff = clean_schema or ""
@@ -449,12 +456,15 @@ def validate_schema_clean_target(
                 upgrade_schema_for_diff,
                 scratch_urls[1],
             )
-        upgrade_diff_text = _schema_diff(
-            clean_schema_for_diff,
-            upgrade_schema_for_diff,
-            expected_name=f"{target_name}.clean.sql",
-            actual_name=f"{target_name}.upgrade.sql",
-        ) or None
+        upgrade_diff_text = (
+            _schema_diff(
+                clean_schema_for_diff,
+                upgrade_schema_for_diff,
+                expected_name=f"{target_name}.clean.sql",
+                actual_name=f"{target_name}.upgrade.sql",
+            )
+            or None
+        )
 
     success = error_message is None and diff_text is None and upgrade_diff_text is None
     primary_url = scratch_urls[0] if scratch_urls else ""

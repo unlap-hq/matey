@@ -64,19 +64,27 @@ DB_GROUP = GroupMeta(
     name="db",
     help="Live database commands.",
     commands=(
-        CommandMeta(name="new", help="Create a new migration file in the target migrations directory."),
+        CommandMeta(
+            name="new", help="Create a new migration file in the target migrations directory."
+        ),
         CommandMeta(name="create", help="Create the target database/dataset if missing."),
         CommandMeta(name="wait", help="Wait until the target database is reachable."),
         CommandMeta(name="up", help="Run guarded dbmate up with pre/post schema checks."),
         CommandMeta(name="migrate", help="Run guarded dbmate migrate with pre/post schema checks."),
         CommandMeta(name="status", help="Show live migration status from dbmate."),
-        CommandMeta(name="drift", help="Fail if live schema differs from expected schema at current index."),
+        CommandMeta(
+            name="drift", help="Fail if live schema differs from expected schema at current index."
+        ),
         CommandMeta(name="plan", help=DB_PLAN.help),
         CommandMeta(name="load", help="Load schema SQL into live database via dbmate."),
         CommandMeta(name="dump", help="Dump live schema SQL via dbmate."),
-        CommandMeta(name="down", help="Run guarded rollback of last migration(s) with pre/post checks."),
+        CommandMeta(
+            name="down", help="Run guarded rollback of last migration(s) with pre/post checks."
+        ),
         CommandMeta(name="drop", help="Drop the target database/dataset."),
-        CommandMeta(name="dbmate", help="Pass through raw arguments to dbmate under command scope."),
+        CommandMeta(
+            name="dbmate", help="Pass through raw arguments to dbmate under command scope."
+        ),
     ),
     subgroups=(DB_PLAN,),
 )
@@ -186,7 +194,9 @@ PATH_OPT = typer.Option(
     resolve_path=True,
     help="Write template to this path; omit to print to stdout.",
 )
-OVERWRITE_OPT = typer.Option(False, "--overwrite", help="Allow overwriting existing file when --path is set.")
+OVERWRITE_OPT = typer.Option(
+    False, "--overwrite", help="Allow overwriting existing file when --path is set."
+)
 SCHEMA_FILE_ARG = typer.Argument(..., exists=True, dir_okay=False, resolve_path=True)
 
 
@@ -274,7 +284,10 @@ def _resolve_targets(ctx: typer.Context) -> tuple[tuple[str, TargetRuntime, Conf
         runtime = build_target_runtime(resolved=override)
         return ((names[0], runtime, resolved.defaults),)
 
-    return tuple((name, build_target_runtime(resolved=resolved.targets[name]), resolved.defaults) for name in names)
+    return tuple(
+        (name, build_target_runtime(resolved=resolved.targets[name]), resolved.defaults)
+        for name in names
+    )
 
 
 def _target_text_blocks(
@@ -359,12 +372,16 @@ app.add_typer(template_app, name="template")
 
 
 @db_app.command("new", help=_command_help(group_name="db", command_name="new"))
-def db_new(ctx: typer.Context, name: str = typer.Argument(..., help="Migration name suffix.")) -> None:
+def db_new(
+    ctx: typer.Context, name: str = typer.Argument(..., help="Migration name suffix.")
+) -> None:
     state = _state(ctx)
     _emit_target_text(
         ctx,
         command_id="db.new",
-        render_text=lambda _name, runtime, _defaults: state.db_engine.db_new(runtime=runtime, name=name),
+        render_text=lambda _name, runtime, _defaults: state.db_engine.db_new(
+            runtime=runtime, name=name
+        ),
     )
 
 
@@ -472,7 +489,9 @@ def db_plan_callback(ctx: typer.Context, output: str = OUTPUT_OPT) -> None:
     _db_plan_summary(ctx, output=output)
 
 
-@db_plan_app.command("diff", help=_command_help(group_name="db", subgroup_name="plan", command_name="diff"))
+@db_plan_app.command(
+    "diff", help=_command_help(group_name="db", subgroup_name="plan", command_name="diff")
+)
 def db_plan_diff(ctx: typer.Context) -> None:
     state = _state(ctx)
     _emit_target_text(
@@ -491,7 +510,9 @@ def db_plan_diff(ctx: typer.Context) -> None:
     )
 
 
-@db_plan_app.command("sql", help=_command_help(group_name="db", subgroup_name="plan", command_name="sql"))
+@db_plan_app.command(
+    "sql", help=_command_help(group_name="db", subgroup_name="plan", command_name="sql")
+)
 def db_plan_sql(ctx: typer.Context) -> None:
     state = _state(ctx)
     _emit_target_text(
@@ -589,7 +610,9 @@ def schema_status(ctx: typer.Context, output: str = OUTPUT_OPT) -> None:
     records = tuple(
         SchemaStatusRecord(
             target=name,
-            result=state.schema_engine.schema_status(runtime=runtime, defaults=defaults, base_ref=None),
+            result=state.schema_engine.schema_status(
+                runtime=runtime, defaults=defaults, base_ref=None
+            ),
         )
         for name, runtime, defaults in _resolve_targets(ctx)
     )
@@ -623,7 +646,9 @@ def schema_plan_callback(
     _schema_plan_summary(ctx, clean=clean, output=output)
 
 
-@schema_plan_app.command("diff", help=_command_help(group_name="schema", subgroup_name="plan", command_name="diff"))
+@schema_plan_app.command(
+    "diff", help=_command_help(group_name="schema", subgroup_name="plan", command_name="diff")
+)
 def schema_plan_diff(
     ctx: typer.Context,
     clean: bool = typer.Option(False, "--clean", help="Replay full chain from empty scratch."),
@@ -640,7 +665,9 @@ def schema_plan_diff(
     raise typer.Exit(exit_code)
 
 
-@schema_plan_app.command("sql", help=_command_help(group_name="schema", subgroup_name="plan", command_name="sql"))
+@schema_plan_app.command(
+    "sql", help=_command_help(group_name="schema", subgroup_name="plan", command_name="sql")
+)
 def schema_plan_sql(
     ctx: typer.Context,
     clean: bool = typer.Option(False, "--clean", help="Replay full chain from empty scratch."),

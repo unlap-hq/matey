@@ -18,6 +18,7 @@ dependencies = [
   "pygit2>=1.19.1,<2",
   "python-statemachine>=3.0.0,<4",
   "rich>=14.3.3,<15",
+  "sqlglot>=29.0.1,<30",
   "testcontainers[postgres,mysql,clickhouse]>=4.14.1,<5",
   "typed-settings[dotenv]>=25.3.0,<26",
 ]
