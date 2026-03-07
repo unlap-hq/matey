@@ -326,7 +326,7 @@ def test_live_status_recovers_pending_tx_before_read(tmp_path: Path) -> None:
     tx_root.mkdir(parents=True, exist_ok=True)
     (tx_root / "state").write_text("applying\n", encoding="utf-8")
     (tx_root / "manifest.json").write_text(
-        '{"version":1,"writes":["schema.sql"],"deletes":[]}',
+        '{"version":1,"created_ns":1,"writes":["schema.sql"],"deletes":[]}',
         encoding="utf-8",
     )
     (tx_root / "backup").mkdir(parents=True, exist_ok=True)
@@ -361,7 +361,7 @@ DROP TABLE one;
     tx_root.mkdir(parents=True, exist_ok=True)
     (tx_root / "state").write_text("applying\n", encoding="utf-8")
     (tx_root / "manifest.json").write_text(
-        '{"version":1,"writes":["schema.lock.toml"],"deletes":[]}',
+        '{"version":1,"created_ns":1,"writes":["schema.lock.toml"],"deletes":[]}',
         encoding="utf-8",
     )
     (tx_root / "backup").mkdir(parents=True, exist_ok=True)
@@ -394,7 +394,7 @@ DROP TABLE one;
     tx_root.mkdir(parents=True, exist_ok=True)
     (tx_root / "state").write_text("applying\n", encoding="utf-8")
     (tx_root / "manifest.json").write_text(
-        '{"version":1,"writes":["schema.lock.toml"],"deletes":[]}',
+        '{"version":1,"created_ns":1,"writes":["schema.lock.toml"],"deletes":[]}',
         encoding="utf-8",
     )
     (tx_root / "backup").mkdir(parents=True, exist_ok=True)

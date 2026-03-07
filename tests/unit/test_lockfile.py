@@ -198,6 +198,28 @@ def test_parse_lockfile_unexpected_exception_propagates(monkeypatch) -> None:
         lockfile_parse_mod.parse_lockfile(b"lock_version = 0\n")
 
 
+def test_parse_lockfile_type_error_propagates(monkeypatch) -> None:
+    monkeypatch.setattr(
+        lockfile_parse_mod.LockFile,
+        "from_toml",
+        lambda text: (_ for _ in ()).throw(TypeError("boom")),
+    )
+
+    with pytest.raises(TypeError, match="boom"):
+        lockfile_parse_mod.parse_lockfile(b"lock_version = 0\n")
+
+
+def test_parse_lockfile_generic_value_error_propagates(monkeypatch) -> None:
+    monkeypatch.setattr(
+        lockfile_parse_mod.LockFile,
+        "from_toml",
+        lambda text: (_ for _ in ()).throw(ValueError("boom")),
+    )
+
+    with pytest.raises(ValueError, match="boom"):
+        lockfile_parse_mod.parse_lockfile(b"lock_version = 0\n")
+
+
 def test_build_lock_state_handles_invalid_snapshot_paths_as_diagnostics() -> None:
     state = build_lock_state(
         Snapshot(
@@ -260,6 +282,56 @@ chain_hash = "{chain}"
 
     codes = {row.code for row in state.diagnostics}
     assert DiagnosticCode.COHERENCE_STEP_VERSION_MISMATCH in codes
+    assert DiagnosticCode.COHERENCE_STEP_SCHEMA_MISMATCH in codes
+
+
+def test_build_lock_state_reports_both_checkpoint_and_schema_mismatch() -> None:
+    policy = LockPolicy()
+    migration_sql = b"-- migrate:up\nCREATE TABLE a(id INTEGER);\n"
+    checkpoint_sql = b"CREATE TABLE a(id INTEGER);\n"
+    checkpoint_digest = policy.digest(checkpoint_sql)
+    wrong_checkpoint_digest = policy.digest(b"CREATE TABLE b(id INTEGER);\n")
+    wrong_step_schema_digest = policy.digest(b"CREATE TABLE c(id INTEGER);\n")
+    chain_seed = policy.chain_seed(engine="sqlite", target="core")
+    chain = policy.chain_step(
+        previous=chain_seed,
+        version="001",
+        migration_file="migrations/001_init.sql",
+        migration_digest=policy.digest(migration_sql),
+    )
+    lock_toml = _lock_toml(
+        policy=policy,
+        target="core",
+        engine="sqlite",
+        head_schema_digest=checkpoint_digest,
+        head_index=1,
+        head_chain_hash=chain,
+        steps=f"""
+[[steps]]
+index = 1
+version = "001"
+migration_file = "migrations/001_init.sql"
+migration_digest = "{policy.digest(migration_sql)}"
+checkpoint_file = "checkpoints/001_init.sql"
+checkpoint_digest = "{wrong_checkpoint_digest}"
+schema_digest = "{wrong_step_schema_digest}"
+chain_hash = "{chain}"
+""".strip(),
+    )
+
+    state = build_lock_state(
+        Snapshot(
+            target_name="core",
+            schema_sql=checkpoint_sql,
+            lock_toml=lock_toml,
+            migrations={"migrations/001_init.sql": migration_sql},
+            checkpoints={"checkpoints/001_init.sql": checkpoint_sql},
+        ),
+        policy=policy,
+    )
+
+    codes = {row.code for row in state.diagnostics}
+    assert DiagnosticCode.COHERENCE_CHECKPOINT_MISMATCH in codes
     assert DiagnosticCode.COHERENCE_STEP_SCHEMA_MISMATCH in codes
 
 
@@ -333,8 +405,16 @@ def test_first_lock_divergence_ignores_lock_only_chain_seed_difference() -> None
                 migration_file=migration_file,
                 migration_digest=policy.digest(migration_sql),
                 checkpoint_file=checkpoint_file,
-                checkpoint_digest=generated_sql_digest(checkpoint_sql, policy=policy) or "",
-                schema_digest=generated_sql_digest(checkpoint_sql, policy=policy) or "",
+                checkpoint_digest=generated_sql_digest(
+                    checkpoint_sql.decode("utf-8"),
+                    policy=policy,
+                )
+                or "",
+                schema_digest=generated_sql_digest(
+                    checkpoint_sql.decode("utf-8"),
+                    policy=policy,
+                )
+                or "",
                 policy=policy,
             ),
             migrations={migration_file: migration_sql},
@@ -602,8 +682,16 @@ def test_build_lock_state_ignores_trailing_newline_only_generated_sql_difference
         migration_file="migrations/001_init.sql",
         migration_digest=policy.digest(migration_sql),
         checkpoint_file="checkpoints/001_init.sql",
-        checkpoint_digest=generated_sql_digest(checkpoint_with_newline, policy=policy) or "",
-        schema_digest=generated_sql_digest(checkpoint_with_newline, policy=policy) or "",
+        checkpoint_digest=generated_sql_digest(
+            checkpoint_with_newline.decode("utf-8"),
+            policy=policy,
+        )
+        or "",
+        schema_digest=generated_sql_digest(
+            checkpoint_with_newline.decode("utf-8"),
+            policy=policy,
+        )
+        or "",
         policy=policy,
     )
 

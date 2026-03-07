@@ -10,6 +10,9 @@ from pathlib import Path
 
 from plumbum import local
 
+from matey.paths import PathBoundaryError, describe_path_boundary_error, ensure_non_symlink_path
+from matey.sql import SqlTextDecodeError, decode_sql_text
+
 
 @dataclass(frozen=True, slots=True)
 class CmdResult:
@@ -93,7 +96,15 @@ class Dbmate:
 
     @classmethod
     def _resolve_migrations_dir(cls, migrations_dir: Path) -> Path:
-        resolved = migrations_dir.resolve()
+        try:
+            resolved = ensure_non_symlink_path(
+                migrations_dir,
+                label="migrations_dir",
+                allow_missing_leaf=True,
+                expected_kind="dir",
+            )
+        except PathBoundaryError as error:
+            raise DbmateConfigError(describe_path_boundary_error(error)) from error
         if not resolved.exists():
             raise DbmateConfigError(f"migrations_dir does not exist: {resolved}")
         if not resolved.is_dir():
@@ -177,7 +188,7 @@ class DbConnection:
 
     def wait(self, timeout_seconds: int) -> CmdResult:
         if timeout_seconds <= 0:
-            raise ValueError("wait timeout_seconds must be greater than zero.")
+            raise DbmateError("wait timeout_seconds must be greater than zero.")
         argv = (
             str(self.dbmate.dbmate_bin),
             "--url",
@@ -218,7 +229,7 @@ class DbConnection:
 
     def rollback(self, steps: int = 1) -> CmdResult:
         if steps <= 0:
-            raise ValueError("rollback steps must be greater than zero.")
+            raise DbmateError("rollback steps must be greater than zero.")
         return self.dbmate._run_url_verb(
             url=self.url,
             verb="rollback",
@@ -241,7 +252,19 @@ class DbConnection:
                 no_dump_schema=False,
                 global_args=("--schema-file", str(schema_path)),
             )
-            dump_text = schema_path.read_text(encoding="utf-8") if schema_path.exists() else ""
+            if result.exit_code != 0:
+                return result
+            if not schema_path.exists():
+                raise DbmateError(
+                    "dbmate dump completed without producing a schema file."
+                )
+            try:
+                dump_text = decode_sql_text(
+                    schema_path.read_bytes(),
+                    label="dbmate dump schema file",
+                )
+            except SqlTextDecodeError as error:
+                raise DbmateError(str(error)) from error
             return CmdResult(
                 argv=result.argv,
                 exit_code=result.exit_code,

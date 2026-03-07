@@ -5,20 +5,20 @@ import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
-from urllib.parse import urlsplit
+from pathlib import Path, PurePosixPath
 
 from matey.config import TargetConfig
-from matey.dbmate import CmdResult, DbConnection, Dbmate
+from matey.dbmate import CmdResult, DbConnection, Dbmate, DbmateError
 from matey.lockfile import LockState, build_lock_state
-from matey.repo import Snapshot
+from matey.repo import Snapshot, SnapshotError
 from matey.sql import (
+    MigrationSqlError,
     SqlError,
     SqlProgram,
     SqlTextDecodeError,
-    WriteViolation,
     decode_sql_text,
     engine_from_url,
+    first_migration_violation_message,
 )
 from matey.tx import TxError, recover_artifacts, serialized_target
 
@@ -79,7 +79,10 @@ def open_runtime(
 ) -> Iterator[RuntimeContext]:
     with serialized_target(target.dir):
         recover_target(target)
-        snapshot = Snapshot.from_worktree(target)
+        try:
+            snapshot = Snapshot.from_worktree(target)
+        except SnapshotError as error:
+            raise DbError(str(error)) from error
         state = build_lock_state(snapshot)
         if not state.is_clean:
             raise DbError(format_lock_diagnostics(state))
@@ -168,22 +171,47 @@ def is_missing_db_status_error(url: str, details: str) -> bool:
 def ensure_prefix(*, state: LockState, live: LiveStatus) -> None:
     worktree_paths = tuple(step.migration_file for step in state.worktree_steps)
     expected_prefix = worktree_paths[: len(live.applied_files)]
-    expected_basenames = tuple(Path(path).name for path in expected_prefix)
-    status_is_basename_only = any(
-        "/" not in entry and "\\" not in entry for entry in live.applied_files
-    )
-    if status_is_basename_only and len(set(expected_basenames)) != len(expected_basenames):
+    expected_basenames = tuple(status_basename(path) for path in expected_prefix)
+    status_mode = live_status_path_mode(live.applied_files)
+    if status_mode == "mixed":
+        raise DbError(
+            "dbmate status returned mixed path styles; cannot validate live migration prefix safely."
+        )
+    if status_mode == "basename" and len(set(expected_basenames)) != len(expected_basenames):
         raise DbError(
             "Cannot validate live migration prefix: applied worktree prefix has duplicate "
             "migration basenames, but dbmate status output is basename-only."
         )
 
     for live_entry, expected_path in zip(live.applied_files, expected_prefix, strict=False):
-        if live_entry == expected_path:
+        if status_mode == "path" and normalize_status_path(live_entry) == normalize_status_path(
+            expected_path
+        ):
             continue
-        if Path(live_entry).name == Path(expected_path).name:
+        if status_mode == "basename" and status_basename(live_entry) == status_basename(
+            expected_path
+        ):
             continue
         raise DbError("Live migration status does not match worktree migration prefix.")
+
+
+def live_status_path_mode(applied_files: tuple[str, ...]) -> str:
+    if not applied_files:
+        return "basename"
+    path_like = tuple("/" in entry or "\\" in entry for entry in applied_files)
+    if all(path_like):
+        return "path"
+    if not any(path_like):
+        return "basename"
+    return "mixed"
+
+
+def normalize_status_path(path: str) -> str:
+    return PurePosixPath(path.replace("\\", "/")).as_posix()
+
+
+def status_basename(path: str) -> str:
+    return PurePosixPath(path.replace("\\", "/")).name
 
 
 def live_relation(*, state: LockState, live: LiveStatus) -> str:
@@ -210,23 +238,13 @@ def ensure_pending_up_allowed(
     engine = migration_guard_engine(runtime.conn.url)
     if engine is None:
         return
-    for step in runtime.state.worktree_steps[applied_count:]:
-        try:
-            program = SqlProgram(
-                migration_sql(runtime=runtime, migration_file=step.migration_file),
-                engine=engine,
-            )
-            violations = program.section_write_violations("up")
-        except SqlError as error:
-            raise DbError(
-                f"{context} failed: SQL analysis failed for {step.migration_file}: {error}"
-            ) from error
-        raise_on_write_violations(
-            migration_file=step.migration_file,
-            engine=engine,
-            violations=violations,
-            context=context,
-        )
+    ensure_migration_range_allowed(
+        runtime=runtime,
+        steps=runtime.state.worktree_steps[applied_count:],
+        engine=engine,
+        section="up",
+        context=context,
+    )
 
 
 def ensure_rollback_allowed(
@@ -240,61 +258,52 @@ def ensure_rollback_allowed(
     if engine is None or applied_count <= 0:
         return
     start = max(applied_count - steps, 0)
-    for step in runtime.state.worktree_steps[start:applied_count]:
-        try:
-            program = SqlProgram(
-                migration_sql(runtime=runtime, migration_file=step.migration_file),
-                engine=engine,
-            )
-            violations = program.section_write_violations("down")
-        except SqlError as error:
-            raise DbError(
-                f"{context} failed: SQL analysis failed for {step.migration_file}: {error}"
-            ) from error
-        raise_on_write_violations(
-            migration_file=step.migration_file,
+    ensure_migration_range_allowed(
+        runtime=runtime,
+        steps=runtime.state.worktree_steps[start:applied_count],
+        engine=engine,
+        section="down",
+        context=context,
+    )
+
+
+def ensure_migration_range_allowed(
+    *,
+    runtime: RuntimeContext,
+    steps: tuple[object, ...],
+    engine: str,
+    section: str,
+    context: str,
+) -> None:
+    try:
+        message = first_migration_violation_message(
+            entries=(
+                (
+                    step.migration_file,
+                    migration_payload(runtime=runtime, migration_file=step.migration_file),
+                )
+                for step in steps
+            ),
             engine=engine,
-            violations=violations,
+            section=section,
             context=context,
         )
+    except MigrationSqlError as error:
+        raise DbError(str(error)) from error
+    if message is not None:
+        raise DbError(message)
 
 
 def migration_guard_engine(url: str) -> str | None:
-    scheme = urlsplit(url).scheme.lower().split("+", 1)[0]
-    if scheme == "postgresql":
-        scheme = "postgres"
+    scheme = engine_from_url(url)
     return scheme if scheme in {"bigquery", "mysql", "clickhouse"} else None
 
 
-def migration_sql(*, runtime: RuntimeContext, migration_file: str) -> str:
+def migration_payload(*, runtime: RuntimeContext, migration_file: str) -> bytes:
     payload = runtime.snapshot.migrations.get(migration_file)
     if payload is None:
         raise DbError(f"Missing migration payload for {migration_file}.")
-    try:
-        return payload.decode("utf-8")
-    except UnicodeDecodeError as error:
-        raise DbError(f"Unable to decode migration {migration_file} as UTF-8.") from error
-
-
-def raise_on_write_violations(
-    *,
-    migration_file: str,
-    engine: str,
-    violations: tuple[WriteViolation, ...],
-    context: str,
-) -> None:
-    if not violations:
-        return
-    violation = violations[0]
-    if violation.reason == "qualified write target":
-        reason = f"qualified {engine} write target"
-    else:
-        reason = f"unsupported {engine} mutating syntax"
-    raise DbError(
-        f"{context} failed: {migration_file} {violation.section} contains a {reason} "
-        f"{violation.target!r}. Use unqualified target-local names or "
-        f"split this into another matey target. Statement: {violation.excerpt()!r}"
-    )
+    return payload
 
 
 def verify_expected_schema(
@@ -306,6 +315,7 @@ def verify_expected_schema(
     schema_match, _expected_sql, _live_sql = compare_expected_schema(
         runtime=runtime,
         expected_index=expected_index,
+        context=context,
     )
     if schema_match is False:
         raise DbError(f"{context} failed: live schema differs from expected schema.")
@@ -316,14 +326,13 @@ def compare_expected_schema(
     *,
     runtime: RuntimeContext,
     expected_index: int,
+    context: str,
 ) -> tuple[bool | None, str | None, str | None]:
     expected_sql = expected_sql_for_index(runtime=runtime, index=expected_index)
     if expected_sql is None:
         return None, None, None
 
-    dump_result = runtime.conn.dump()
-    require_success(dump_result, context="db dump")
-    live_sql = dump_result.stdout
+    live_sql = dump_live_schema(runtime.conn, context=f"{context} dump")
     engine = engine_from_url(runtime.conn.url)
     try:
         schema_match = SqlProgram(expected_sql, engine=engine).schema_equals(
@@ -367,15 +376,20 @@ def expected_sql_for_index(*, runtime: RuntimeContext, index: int) -> str | None
 
 
 def is_bigquery_url(url: str) -> bool:
-    scheme = urlsplit(url).scheme.lower().split("+", 1)[0]
-    return scheme == "bigquery"
+    return engine_from_url(url) == "bigquery"
 
 
 def ensure_bigquery_dataset_exists(*, conn: DbConnection, context: str) -> None:
-    dump_result = conn.dump()
-    if dump_result.exit_code == 0:
-        return
-    raise DbError(format_command_error(context, dump_result))
+    _ = dump_live_schema(conn, context=context)
+
+
+def dump_live_schema(conn: DbConnection, *, context: str) -> str:
+    try:
+        dump_result = conn.dump()
+    except DbmateError as error:
+        raise DbError(f"{context} failed: {error}") from error
+    require_success(dump_result, context=context)
+    return dump_result.stdout
 
 
 def require_success(result: CmdResult, *, context: str) -> None:
@@ -419,11 +433,11 @@ __all__ = [
     "is_bigquery_url",
     "is_missing_db_status_error",
     "live_relation",
+    "live_status_path_mode",
     "migration_guard_engine",
-    "migration_sql",
+    "migration_payload",
     "open_runtime",
     "parse_status",
-    "raise_on_write_violations",
     "read_status",
     "read_status_checked",
     "recover_target",

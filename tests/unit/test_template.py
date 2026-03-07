@@ -6,7 +6,6 @@ import pytest
 
 from matey.cli.template import (
     TemplateProvider,
-    default_ci_template_path,
     render_ci_template,
     render_config_template,
     write_text_file,
@@ -35,22 +34,31 @@ def test_render_config_template_rejects_invalid_target() -> None:
         render_config_template(("bad.name",))
 
 
+def test_render_config_template_prefixes_digit_leading_env_stem() -> None:
+    rendered = render_config_template(("1foo",))
+
+    assert 'url_env = "_1FOO_DATABASE_URL"' in rendered
+    assert 'test_url_env = "_1FOO_TEST_DATABASE_URL"' in rendered
+
+
+def test_render_config_template_rejects_colliding_env_stems() -> None:
+    with pytest.raises(ValueError, match="normalize to the same env stem"):
+        render_config_template(("alpha-beta", "alpha_beta"))
+
+
 @pytest.mark.parametrize(
-    ("provider", "expected_path", "expected_base_var"),
+    ("provider", "expected_base_var"),
     [
-        ("github", Path(".github/workflows/matey-schema.yml"), "${{ github.base_ref }}"),
-        ("gitlab", Path(".gitlab-ci.matey.yml"), "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"),
-        ("buildkite", Path(".buildkite/matey-schema.yml"), "$BUILDKITE_PULL_REQUEST_BASE_BRANCH"),
+        ("github", "${{ github.base_ref }}"),
+        ("gitlab", "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"),
+        ("buildkite", "$BUILDKITE_PULL_REQUEST_BASE_BRANCH"),
     ],
 )
 def test_render_ci_template(
     provider: TemplateProvider,
-    expected_path: Path,
     expected_base_var: str,
 ) -> None:
-    path = default_ci_template_path(provider)
     content = render_ci_template(provider)
-    assert path == expected_path
     assert "pixi run matey schema status --all" in content
     assert expected_base_var in content
 

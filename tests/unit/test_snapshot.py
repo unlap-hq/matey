@@ -53,6 +53,75 @@ def test_snapshot_from_worktree_reads_expected_files(tmp_path: Path) -> None:
     assert set(snapshot.checkpoints.keys()) == {"checkpoints/001_init.sql"}
 
 
+def test_snapshot_from_worktree_rejects_symlinked_schema_file(tmp_path: Path) -> None:
+    target_dir = tmp_path / "db" / "core"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside.sql"
+    outside.write_text("CREATE TABLE outside(id INTEGER);\n", encoding="utf-8")
+    (target_dir / "schema.sql").symlink_to(outside)
+
+    target = TargetConfig(
+        name="core",
+        dir=target_dir.resolve(),
+        url_env="CORE_DATABASE_URL",
+        test_url_env="CORE_TEST_DATABASE_URL",
+    )
+
+    with pytest.raises(SnapshotError, match="Refusing to read symlinked file"):
+        Snapshot.from_worktree(target)
+
+
+def test_snapshot_from_worktree_rejects_broken_symlinked_schema_file(tmp_path: Path) -> None:
+    target_dir = tmp_path / "db" / "core"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / "schema.sql").symlink_to(tmp_path / "missing.sql")
+
+    target = TargetConfig(
+        name="core",
+        dir=target_dir.resolve(),
+        url_env="CORE_DATABASE_URL",
+        test_url_env="CORE_TEST_DATABASE_URL",
+    )
+
+    with pytest.raises(SnapshotError, match="Refusing to read symlinked file"):
+        Snapshot.from_worktree(target)
+
+
+def test_snapshot_from_worktree_rejects_symlinked_migration_file(tmp_path: Path) -> None:
+    target_dir = tmp_path / "db" / "core"
+    migrations_dir = target_dir / "migrations"
+    migrations_dir.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside.sql"
+    outside.write_text("CREATE TABLE outside(id INTEGER);\n", encoding="utf-8")
+    (migrations_dir / "001_init.sql").symlink_to(outside)
+
+    target = TargetConfig(
+        name="core",
+        dir=target_dir.resolve(),
+        url_env="CORE_DATABASE_URL",
+        test_url_env="CORE_TEST_DATABASE_URL",
+    )
+
+    with pytest.raises(SnapshotError, match="Refusing to read symlinked file"):
+        Snapshot.from_worktree(target)
+
+
+def test_snapshot_from_worktree_rejects_broken_symlinked_migrations_dir(tmp_path: Path) -> None:
+    target_dir = tmp_path / "db" / "core"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / "migrations").symlink_to(tmp_path / "missing-migrations")
+
+    target = TargetConfig(
+        name="core",
+        dir=target_dir.resolve(),
+        url_env="CORE_DATABASE_URL",
+        test_url_env="CORE_TEST_DATABASE_URL",
+    )
+
+    with pytest.raises(SnapshotError, match="Refusing to traverse symlinked directory"):
+        Snapshot.from_worktree(target)
+
+
 def test_snapshot_from_tree_reads_committed_state(tmp_path: Path) -> None:
     target_dir = tmp_path / "db" / "core"
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -157,6 +226,47 @@ def test_snapshot_from_tree_rejects_non_blob_schema_file(tmp_path: Path) -> None
     head_tree = repo.revparse_single("HEAD").peel(pygit2.Commit).tree
 
     with pytest.raises(SnapshotError, match=r"Expected blob but found non-blob object at 'schema\.sql'"):
+        Snapshot.from_tree(
+            target_name="core",
+            target_rel_dir="db/core",
+            root_tree=head_tree,
+        )
+
+
+def test_snapshot_from_tree_rejects_symlinked_schema_file(tmp_path: Path) -> None:
+    target_dir = tmp_path / "db" / "core"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside.sql"
+    outside.write_text("CREATE TABLE outside(id INTEGER);\n", encoding="utf-8")
+    (target_dir / "schema.sql").symlink_to(outside.name)
+    (target_dir / "migrations").mkdir(parents=True, exist_ok=True)
+    (target_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
+
+    repo = _init_repo(tmp_path)
+    head_tree = repo.revparse_single("HEAD").peel(pygit2.Commit).tree
+
+    with pytest.raises(SnapshotError, match="Refusing to read symlinked blob object"):
+        Snapshot.from_tree(
+            target_name="core",
+            target_rel_dir="db/core",
+            root_tree=head_tree,
+        )
+
+
+def test_snapshot_from_tree_rejects_symlinked_migration_file(tmp_path: Path) -> None:
+    target_dir = tmp_path / "db" / "core"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / "schema.sql").write_text("CREATE TABLE a(id INTEGER);\n", encoding="utf-8")
+    (target_dir / "migrations").mkdir(parents=True, exist_ok=True)
+    (target_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside.sql"
+    outside.write_text("-- migrate:up\nSELECT 1;\n", encoding="utf-8")
+    (target_dir / "migrations" / "001_init.sql").symlink_to(outside.name)
+
+    repo = _init_repo(tmp_path)
+    head_tree = repo.revparse_single("HEAD").peel(pygit2.Commit).tree
+
+    with pytest.raises(SnapshotError, match="Refusing to read symlinked tree object"):
         Snapshot.from_tree(
             target_name="core",
             target_rel_dir="db/core",

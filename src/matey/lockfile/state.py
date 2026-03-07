@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from matey.repo import Snapshot
-from matey.sql import SqlTextDecodeError
+from matey.sql import SqlTextDecodeError, decode_sql_text
 
 from .model import DiagnosticCode, Divergence, LockPolicy, LockState, Step
 from .parse import build_worktree_steps, diag, parse_lockfile, schema_digest
@@ -22,7 +22,12 @@ def build_lock_state(
     )
     schema_diagnostics = ()
     try:
-        current_schema_digest = schema_digest(input_files.schema_sql, policy=effective_policy)
+        current_schema_digest = schema_digest(
+            decode_sql_text(input_files.schema_sql, label=effective_policy.schema_file)
+            if input_files.schema_sql is not None
+            else None,
+            policy=effective_policy,
+        )
     except SqlTextDecodeError as error:
         current_schema_digest = None
         schema_diagnostics = (

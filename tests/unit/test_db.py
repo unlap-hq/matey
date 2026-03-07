@@ -8,7 +8,7 @@ import pytest
 
 import matey.db as db_mod
 from matey.config import TargetConfig
-from matey.dbmate import CmdResult
+from matey.dbmate import CmdResult, DbmateError
 from matey.lockfile import LockState, WorktreeStep
 from matey.repo import Snapshot
 
@@ -404,6 +404,45 @@ def test_expected_sql_for_index_wraps_invalid_utf8_schema_sql(tmp_path: Path) ->
         db_runtime_mod.expected_sql_for_index(runtime=ctx, index=1)
 
 
+def test_ensure_prefix_accepts_backslash_path_status_entries(tmp_path: Path) -> None:
+    steps = (_step(1, "001_init.sql"),)
+    state = LockState(
+        target_name="core",
+        lock=None,
+        worktree_steps=steps,
+        schema_digest=None,
+        orphan_checkpoints=(),
+        diagnostics=(),
+    )
+    live = db_runtime_mod.LiveStatus(
+        applied_files=("migrations\\001_init.sql",),
+        applied_count=1,
+    )
+
+    db_runtime_mod.ensure_prefix(state=state, live=live)
+
+
+def test_compare_expected_schema_wraps_dump_dbmate_error(tmp_path: Path) -> None:
+    conn = _FakeConn()
+    step = _step(1, "001_init.sql")
+    ctx = _ctx(tmp_path, conn=conn, steps=(step,))
+
+    def _boom() -> CmdResult:
+        raise DbmateError("dbmate dump completed without producing a schema file.")
+
+    conn.dump = _boom  # type: ignore[method-assign]
+
+    with pytest.raises(
+        db_mod.DbError,
+        match=r"db drift dump failed: dbmate dump completed without producing a schema file",
+    ):
+        db_runtime_mod.compare_expected_schema(
+            runtime=ctx,
+            expected_index=1,
+            context="db drift",
+        )
+
+
 def test_down_expected_index_comes_from_post_status(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -505,8 +544,9 @@ def test_plan_uses_worktree_target_index_for_expected_schema(
 
     captured: dict[str, int] = {}
 
-    def _fake_compare(*, runtime: db_runtime_mod.RuntimeContext, expected_index: int):
+    def _fake_compare(*, runtime: db_runtime_mod.RuntimeContext, expected_index: int, context: str):
         del runtime
+        del context
         captured["expected_index"] = expected_index
         return True, "EXPECTED", "LIVE"
 
@@ -581,8 +621,13 @@ def test_plan_diff_compares_live_vs_worktree_target(
     )
     monkeypatch.setattr(
         db_runtime_mod,
-        "compare_expected_schema",
-        lambda **kwargs: (False, "CREATE TABLE expected(id INTEGER);\n", "CREATE TABLE live(id INTEGER);\n"),
+        "expected_sql_for_index",
+        lambda **kwargs: "CREATE TABLE expected(id INTEGER);\n",
+    )
+    monkeypatch.setattr(
+        db_runtime_mod,
+        "dump_live_schema",
+        lambda *args, **kwargs: "CREATE TABLE live(id INTEGER);\n",
     )
 
     diff = db_mod.plan_diff(ctx.target)
@@ -600,6 +645,8 @@ def test_new_calls_dbmate_new(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     class _FakeDbmate:
         def __init__(self, *, migrations_dir: Path, dbmate_bin: Path | None = None) -> None:
             captured["migrations_dir"] = migrations_dir
+            captured["migrations_dir_exists"] = migrations_dir.exists()
+            captured["migrations_dir_is_dir"] = migrations_dir.is_dir()
             captured["dbmate_bin"] = dbmate_bin
 
         def new(self, name: str) -> CmdResult:
@@ -612,6 +659,8 @@ def test_new_calls_dbmate_new(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
 
     assert result.exit_code == 0
     assert captured["migrations_dir"] == target.migrations
+    assert captured["migrations_dir_exists"] is True
+    assert captured["migrations_dir_is_dir"] is True
     assert captured["name"] == "add_users"
 
 
@@ -619,6 +668,17 @@ def test_new_requires_non_empty_name(tmp_path: Path) -> None:
     target = _target(tmp_path)
     with pytest.raises(db_mod.DbError, match="Migration name is required"):
         db_mod.new(target, name="   ")
+
+
+def test_new_rejects_symlinked_migrations_dir(tmp_path: Path) -> None:
+    target = _target(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    target.dir.mkdir(parents=True, exist_ok=True)
+    target.migrations.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(db_mod.DbError, match="symlinked file or directory"):
+        db_mod.new(target, name="init")
 
 
 def test_expected_sql_for_index_uses_checkpoint_and_head(tmp_path: Path) -> None:
@@ -672,6 +732,22 @@ def test_ensure_prefix_rejects_ambiguous_basename_only_status(tmp_path: Path) ->
     )
 
     with pytest.raises(db_mod.DbError, match="duplicate migration basenames"):
+        db_runtime_mod.ensure_prefix(state=ctx.state, live=parsed)
+
+
+def test_ensure_prefix_rejects_mixed_path_styles(tmp_path: Path) -> None:
+    conn = _FakeConn()
+    steps = (_step(1, "001_init.sql"), _step(2, "002_next.sql"))
+    ctx = _ctx(tmp_path, conn=conn, steps=steps)
+    parsed = db_runtime_mod.LiveStatus(
+        applied_files=("001_init.sql", "migrations/002_next.sql"),
+        applied_count=2,
+    )
+
+    with pytest.raises(
+        db_mod.DbError,
+        match="mixed path styles; cannot validate live migration prefix safely",
+    ):
         db_runtime_mod.ensure_prefix(state=ctx.state, live=parsed)
 
 

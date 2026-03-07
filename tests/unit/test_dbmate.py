@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from matey.dbmate import CmdResult, Dbmate, DbmateConfigError, passthrough
+from matey.dbmate import CmdResult, Dbmate, DbmateConfigError, DbmateError, passthrough
 
 
 def _make_dbmate(tmp_path: Path) -> Dbmate:
@@ -76,6 +76,60 @@ def test_dump_reads_temp_schema_file(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert result.stdout == "CREATE TABLE widget(id INTEGER);\n"
 
 
+def test_dump_requires_schema_file_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    dbmate = _make_dbmate(tmp_path)
+    db = dbmate.database("postgres://db")
+
+    def fake_run(self: Dbmate, argv: tuple[str, ...]) -> CmdResult:
+        return CmdResult(argv=argv, exit_code=0, stdout="", stderr="")
+
+    monkeypatch.setattr(Dbmate, "_run", fake_run)
+
+    with pytest.raises(DbmateError, match="completed without producing a schema file"):
+        db.dump()
+
+
+def test_dump_wraps_invalid_utf8_schema_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dbmate = _make_dbmate(tmp_path)
+    db = dbmate.database("postgres://db")
+
+    def fake_run(self: Dbmate, argv: tuple[str, ...]) -> CmdResult:
+        schema_arg = argv.index("--schema-file")
+        schema_path = Path(argv[schema_arg + 1])
+        schema_path.write_bytes(b"\xff\xfe\x00")
+        return CmdResult(argv=argv, exit_code=0, stdout="", stderr="")
+
+    monkeypatch.setattr(Dbmate, "_run", fake_run)
+
+    with pytest.raises(DbmateError, match="Unable to decode dbmate dump schema file as UTF-8"):
+        db.dump()
+
+
+def test_dump_nonzero_exit_does_not_mask_dbmate_failure_with_decode_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dbmate = _make_dbmate(tmp_path)
+    db = dbmate.database("postgres://db")
+
+    def fake_run(self: Dbmate, argv: tuple[str, ...]) -> CmdResult:
+        schema_arg = argv.index("--schema-file")
+        schema_path = Path(argv[schema_arg + 1])
+        schema_path.write_bytes(b"\xff\xfe\x00")
+        return CmdResult(argv=argv, exit_code=1, stdout="", stderr="real failure")
+
+    monkeypatch.setattr(Dbmate, "_run", fake_run)
+
+    result = db.dump()
+
+    assert result.exit_code == 1
+    assert result.stderr == "real failure"
+    assert result.stdout == ""
+
+
 def test_load_writes_sql_to_temp_schema_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -106,7 +160,7 @@ def test_rollback_steps_must_be_positive(tmp_path: Path) -> None:
     dbmate = _make_dbmate(tmp_path)
     db = dbmate.database("postgres://db")
 
-    with pytest.raises(ValueError):
+    with pytest.raises(DbmateError, match="rollback steps must be greater than zero"):
         db.rollback(0)
 
 
@@ -114,7 +168,7 @@ def test_wait_timeout_must_be_positive(tmp_path: Path) -> None:
     dbmate = _make_dbmate(tmp_path)
     db = dbmate.database("postgres://db")
 
-    with pytest.raises(ValueError):
+    with pytest.raises(DbmateError, match="wait timeout_seconds must be greater than zero"):
         db.wait(0)
 
 

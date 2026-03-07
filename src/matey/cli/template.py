@@ -1,79 +1,17 @@
 from __future__ import annotations
 
-import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
+from matey.config import (
+    DEFAULT_CONFIG_VALUES,
+    ConfigError,
+    normalize_target_names,
+    target_env_stem,
+)
+
 TemplateProvider = Literal["github", "gitlab", "buildkite"]
-
-_TARGET_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
-
-
-def render_config_template(targets: tuple[str, ...]) -> str:
-    normalized_targets = _normalize_targets(targets)
-    lines = [
-        'dir = "db"',
-        'url_env = "DATABASE_URL"',
-        'test_url_env = "TEST_DATABASE_URL"',
-    ]
-    for target in normalized_targets:
-        env_stem = _target_env_stem(target)
-        lines.extend(
-            [
-                "",
-                f"[{target}]",
-                f'url_env = "{env_stem}_DATABASE_URL"',
-                f'test_url_env = "{env_stem}_TEST_DATABASE_URL"',
-            ]
-        )
-    return "\n".join(lines) + "\n"
-
-
-def default_ci_template_path(provider: TemplateProvider) -> Path:
-    if provider == "github":
-        return Path(".github/workflows/matey-schema.yml")
-    if provider == "gitlab":
-        return Path(".gitlab-ci.matey.yml")
-    if provider == "buildkite":
-        return Path(".buildkite/matey-schema.yml")
-    raise ValueError(f"Unsupported CI provider: {provider!r}")
-
-
-def render_ci_template(provider: TemplateProvider) -> str:
-    if provider == "github":
-        return _github_template()
-    if provider == "gitlab":
-        return _gitlab_template()
-    if provider == "buildkite":
-        return _buildkite_template()
-    raise ValueError(f"Unsupported CI provider: {provider!r}")
-
-
-def write_text_file(path: Path, content: str, *, overwrite: bool) -> None:
-    if path.exists() and not overwrite:
-        raise FileExistsError(f"Refusing to overwrite existing file: {path}")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-
-
-def _normalize_targets(targets: tuple[str, ...]) -> tuple[str, ...]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for raw in targets:
-        value = raw.strip()
-        if not value:
-            raise ValueError("Target names cannot be empty.")
-        if not _TARGET_NAME_PATTERN.fullmatch(value):
-            raise ValueError(f"Invalid target name: {value!r}")
-        if value in seen:
-            raise ValueError(f"Duplicate target name: {value!r}")
-        seen.add(value)
-        ordered.append(value)
-    return tuple(ordered)
-
-
-def _target_env_stem(target: str) -> str:
-    return target.replace("-", "_").upper()
 
 
 def _github_template() -> str:
@@ -119,9 +57,66 @@ def _buildkite_template() -> str:
     )
 
 
+_CI_TEMPLATES: dict[TemplateProvider, Callable[[], str]] = {
+    "github": _github_template,
+    "gitlab": _gitlab_template,
+    "buildkite": _buildkite_template,
+}
+
+
+def render_config_template(targets: tuple[str, ...]) -> str:
+    try:
+        normalized_targets = normalize_target_names(targets)
+    except ConfigError as error:
+        raise ValueError(str(error)) from error
+    _require_unique_env_stems(normalized_targets)
+    lines = [
+        f'dir = "{DEFAULT_CONFIG_VALUES["dir"]}"',
+        f'url_env = "{DEFAULT_CONFIG_VALUES["url_env"]}"',
+        f'test_url_env = "{DEFAULT_CONFIG_VALUES["test_url_env"]}"',
+    ]
+    for target in normalized_targets:
+        env_stem = target_env_stem(target)
+        lines.extend(
+            [
+                "",
+                f"[{target}]",
+                f'url_env = "{env_stem}_DATABASE_URL"',
+                f'test_url_env = "{env_stem}_TEST_DATABASE_URL"',
+            ]
+        )
+    return "\n".join(lines) + "\n"
+
+
+def render_ci_template(provider: TemplateProvider) -> str:
+    try:
+        render = _CI_TEMPLATES[provider]
+    except KeyError as error:
+        raise ValueError(f"Unsupported CI provider: {provider!r}") from error
+    return render()
+
+
+def write_text_file(path: Path, content: str, *, overwrite: bool) -> None:
+    if path.exists() and not overwrite:
+        raise FileExistsError(f"Refusing to overwrite existing file: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def _require_unique_env_stems(targets: tuple[str, ...]) -> None:
+    seen: dict[str, str] = {}
+    for target in targets:
+        stem = target_env_stem(target)
+        previous = seen.get(stem)
+        if previous is not None:
+            raise ValueError(
+                f"Targets {previous!r} and {target!r} normalize to the same env stem {stem!r}."
+            )
+        seen[stem] = target
+
+
 __all__ = [
     "TemplateProvider",
-    "default_ci_template_path",
     "render_ci_template",
     "render_config_template",
     "write_text_file",

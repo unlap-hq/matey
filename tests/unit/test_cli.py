@@ -4,6 +4,9 @@ import re
 from importlib import import_module
 from pathlib import Path
 
+import pygit2
+import pytest
+
 from matey.db import MutationResult
 from matey.dbmate import CmdResult
 from matey.lockfile import LockState
@@ -19,7 +22,8 @@ def _write(path: Path, content: str) -> None:
 
 
 def _init_repo(path: Path) -> None:
-    (path / ".git").mkdir()
+    path.mkdir(parents=True, exist_ok=True)
+    pygit2.init_repository(str(path), initial_head="main")
 
 
 def _help_command_names(output: str) -> list[str]:
@@ -138,6 +142,31 @@ test_url_env = "ANALYTICS_TEST_DATABASE_URL"
     assert calls == ["analytics", "core"]
 
 
+def test_schema_status_symlink_boundary_is_user_error(monkeypatch, tmp_path: Path, capsys) -> None:
+    _write(
+        tmp_path / "matey.toml",
+        """
+dir = "db"
+url_env = "DATABASE_URL"
+test_url_env = "TEST_DATABASE_URL"
+""".strip(),
+    )
+    _init_repo(tmp_path)
+    (tmp_path / "db").mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside.sql"
+    outside.write_text("x", encoding="utf-8")
+    (tmp_path / "db" / "schema.sql").symlink_to(outside)
+    monkeypatch.chdir(tmp_path)
+
+    rc = cli.main(["schema", "status"])
+
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "Unexpected error" not in captured.out
+    assert "Unexpected error" not in captured.err
+    assert "symlinked file" in captured.err
+
+
 def test_mutating_command_rejects_all_targets(monkeypatch, tmp_path: Path) -> None:
     _write(
         tmp_path / "matey.toml",
@@ -217,6 +246,40 @@ test_url_env = "CORE_TEST_DATABASE_URL"
     assert config.targets["core"].dir == (repo_root / "db" / "core").resolve()
 
 
+def test_load_config_preserves_root_pyproject_defaults_for_nested_config(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo_root = tmp_path / "repo"
+    config_path = repo_root / "configs" / "matey.toml"
+    repo_root.mkdir(parents=True)
+    _init_repo(repo_root)
+    _write(
+        repo_root / "pyproject.toml",
+        """
+[tool.matey]
+dir = "db_py"
+url_env = "PY_URL"
+test_url_env = "PY_TEST_URL"
+""".strip(),
+    )
+    _write(
+        config_path,
+        """
+[core]
+""".strip(),
+    )
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+
+    config = cli.commands.load_config(config_path)
+
+    core = config.targets["core"]
+    assert core.url_env == "PY_URL"
+    assert core.test_url_env == "PY_TEST_URL"
+    assert core.dir == (config_path.parent / "db_py" / "core").resolve()
+
+
 def test_schema_help_command_order_semantic(capsys) -> None:
     rc = cli.main(["schema", "--help"])
     assert rc == 0
@@ -274,6 +337,43 @@ def test_dbmate_passthrough_routes_verbatim(monkeypatch) -> None:
     assert captured == {"args": ("status", "--wait"), "dbmate_bin": None}
 
 
+def test_dbmate_top_level_intercept_uses_shared_helper(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_run(*, argv, dbmate_bin=None, renderer):
+        captured["argv"] = argv
+        captured["dbmate_bin"] = dbmate_bin
+        captured["renderer"] = renderer
+        return 0
+
+    monkeypatch.setattr(cli.commands, "handle_dbmate_passthrough", _fake_run)
+
+    rc = cli.main(["dbmate", "--", "status"])
+
+    assert rc == 0
+    assert captured["argv"] == ("dbmate", "--", "status")
+    assert captured["dbmate_bin"] is None
+
+
+def test_dbmate_registered_command_uses_shared_helper(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_run(*, argv, dbmate_bin=None, renderer):
+        captured["argv"] = argv
+        captured["dbmate_bin"] = dbmate_bin
+        captured["renderer"] = renderer
+        return 0
+
+    monkeypatch.setattr(cli.commands, "handle_dbmate_passthrough", _fake_run)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.app(["dbmate", "status"])
+
+    assert excinfo.value.code == 0
+    assert captured["argv"] == ("status",)
+    assert captured["dbmate_bin"] is None
+
+
 def test_dbmate_passthrough_propagates_exit_code(monkeypatch) -> None:
     monkeypatch.setattr(
         cli.commands.dbmate_api,
@@ -295,6 +395,34 @@ def test_dbmate_passthrough_invalid_binary_maps_to_user_error(tmp_path: Path) ->
     )
 
     assert rc == 2
+
+
+def test_dbmate_passthrough_empty_binary_value_maps_to_user_error() -> None:
+    rc = cli.main(["dbmate", "--dbmate-bin=", "--", "status"])
+
+    assert rc == 2
+
+
+def test_dbmate_passthrough_parses_binary_override_after_command(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_passthrough(*args: str, dbmate_bin):
+        captured["args"] = args
+        captured["dbmate_bin"] = dbmate_bin
+        return CmdResult(
+            argv=("dbmate", *args),
+            exit_code=0,
+            stdout="ok\n",
+            stderr="",
+        )
+
+    dbmate_bin = tmp_path / "dbmate"
+    monkeypatch.setattr(cli.commands.dbmate_api, "passthrough", _fake_passthrough)
+
+    rc = cli.main(["dbmate", "status", "--dbmate-bin", str(dbmate_bin)])
+
+    assert rc == 0
+    assert captured == {"args": ("status",), "dbmate_bin": dbmate_bin}
 
 
 def test_dbmate_passthrough_defaults_to_help_when_empty(monkeypatch) -> None:

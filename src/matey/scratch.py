@@ -11,6 +11,8 @@ from enum import StrEnum
 from pathlib import Path
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
+from matey.sql import engine_from_url as sql_engine_from_url
+
 _BIGQUERY_MULTI_REGION = {"us", "eu"}
 _DEFAULT_POSTGRES_IMAGE = "postgres:16-alpine"
 _DEFAULT_MYSQL_IMAGE = "mysql:8.4"
@@ -150,6 +152,22 @@ class Scratch:
             return lease, container.stop
 
         raise ScratchError(f"Unsupported scratch engine: {engine.value}")
+
+
+def engine_from_url(url: str) -> Engine:
+    match sql_engine_from_url(url):
+        case "postgres" | "postgresql":
+            return Engine.POSTGRES
+        case "mysql":
+            return Engine.MYSQL
+        case "sqlite":
+            return Engine.SQLITE
+        case "clickhouse":
+            return Engine.CLICKHOUSE
+        case "bigquery":
+            return Engine.BIGQUERY
+        case _:
+            raise ScratchError(f"Unsupported URL scheme for engine inference: {url!r}.")
 
 
 def _build_scratch_url(*, engine: Engine, base_url: str, scratch_name: str) -> str:
@@ -311,4 +329,5 @@ __all__ = [
     "ScratchConfigError",
     "ScratchError",
     "ScratchLease",
+    "engine_from_url",
 ]

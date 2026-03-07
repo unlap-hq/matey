@@ -7,11 +7,20 @@ from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any
 
+from matey.paths import (
+    PathBoundaryError,
+    RelativePathError,
+    describe_path_boundary_error,
+    normalize_relative_posix_path,
+    safe_descendant,
+)
+
 _DEFAULTS = {
     "dir": "db",
     "url_env": "DATABASE_URL",
     "test_url_env": "TEST_DATABASE_URL",
 }
+DEFAULT_CONFIG_VALUES = MappingProxyType(dict(_DEFAULTS))
 _SCALAR_KEYS = frozenset(_DEFAULTS.keys())
 _TARGET_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 _ENV_NAME_PATTERN = re.compile(r"^[A-Z_][A-Z0-9_]*$")
@@ -64,6 +73,7 @@ class Config:
         cls,
         repo_root: Path,
         config_path: Path | None = None,
+        config_root: Path | None = None,
     ) -> Config:
         py_defaults, py_targets = _load_pyproject_source(repo_root)
         file_defaults, file_targets = _load_matey_source(repo_root, config_path)
@@ -73,7 +83,8 @@ class Config:
             defaults_b=file_defaults,
             targets_b=file_targets,
         )
-        return cls(_resolve_targets(repo_root=repo_root, defaults=defaults, targets=targets))
+        target_root = (config_root if config_root is not None else repo_root).resolve()
+        return cls(_resolve_targets(repo_root=target_root, defaults=defaults, targets=targets))
 
     def select(
         self,
@@ -107,6 +118,10 @@ class Config:
 def _load_toml(path: Path, *, label: str) -> dict[str, Any]:
     try:
         parsed = tomllib.loads(path.read_text(encoding="utf-8"))
+    except OSError as error:
+        raise ConfigError(f"Unable to read {label}: {error.strerror or error}") from error
+    except UnicodeDecodeError as error:
+        raise ConfigError(f"Unable to decode {label} as UTF-8.") from error
     except tomllib.TOMLDecodeError as error:
         raise ConfigError(f"Unable to parse {label}: {error}") from error
     if not isinstance(parsed, dict):
@@ -254,24 +269,56 @@ def _resolve_targets(
     return resolved
 
 
+def normalize_target_names(targets: tuple[str, ...]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for raw in targets:
+        value = raw.strip()
+        if not value:
+            raise ConfigError("Target names cannot be empty.")
+        if not _TARGET_NAME_PATTERN.fullmatch(value):
+            raise ConfigError(f"Invalid target name: {value!r}")
+        if value in seen:
+            raise ConfigError(f"Duplicate target name: {value!r}")
+        seen.add(value)
+        ordered.append(value)
+    return tuple(ordered)
+
+
+def target_env_stem(target: str) -> str:
+    _require_target_name(target, source="target")
+    stem = target.replace("-", "_").upper()
+    if stem and stem[0].isdigit():
+        stem = f"_{stem}"
+    return stem
+
+
 def _target_default_dir(default_dir: str, target_name: str) -> str:
     return (PurePosixPath(default_dir) / target_name).as_posix()
 
 
 def _normalize_rel_dir(*, root: Path, raw: str, source: str) -> Path:
-    normalized = PurePosixPath(raw).as_posix()
-    candidate = PurePosixPath(normalized)
-    if not normalized or normalized == ".":
-        raise ConfigError(f"{source}: dir cannot be empty.")
-    if candidate.is_absolute():
-        raise ConfigError(f"{source}: dir must be relative, got absolute path {raw!r}.")
-    if any(part in {"..", "."} for part in candidate.parts):
-        raise ConfigError(f"{source}: dir contains unsupported traversal or dot segment.")
+    try:
+        normalized = normalize_relative_posix_path(raw, label=f"{source}: dir")
+    except RelativePathError as error:
+        raise ConfigError(str(error)) from error
 
-    resolved = (root / Path(normalized)).resolve()
-    if not resolved.is_relative_to(root):
-        raise ConfigError(f"{source}: dir resolves outside repository root: {resolved}")
-    return resolved
+    try:
+        return safe_descendant(
+            root=root,
+            candidate=root / Path(normalized),
+            label=f"{source} dir",
+            allow_missing_leaf=True,
+            expected_kind="dir",
+        )
+    except PathBoundaryError as error:
+        raise ConfigError(
+            describe_path_boundary_error(
+                error,
+                path=root / Path(normalized),
+                symlink_message=f"{source}: dir uses symlinked path segment",
+            )
+        ) from error
 
 
 def _require_target_name(name: str, *, source: str) -> None:
@@ -286,4 +333,11 @@ def _require_env_name(name: str, *, source: str) -> None:
         )
 
 
-__all__ = ["Config", "ConfigError", "TargetConfig"]
+__all__ = [
+    "DEFAULT_CONFIG_VALUES",
+    "Config",
+    "ConfigError",
+    "TargetConfig",
+    "normalize_target_names",
+    "target_env_stem",
+]

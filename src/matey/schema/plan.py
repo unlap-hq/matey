@@ -17,8 +17,8 @@ from matey.lockfile import (
 )
 from matey.repo import GitRepo, Snapshot
 from matey.scratch import Engine
+from matey.scratch import engine_from_url as scratch_engine_from_url
 from matey.sql import SqlTextDecodeError, decode_sql_text
-from matey.sql import engine_from_url as sql_engine_from_url
 
 _HEAD_FATAL_DIAGNOSTICS = frozenset(
     {
@@ -184,7 +184,7 @@ def resolve_replay_context(
     test_base_from_arg = _normalized_optional(explicit_test_base_url)
     test_base_from_env = _normalized_optional(os.getenv(target.test_url_env))
     url_from_env = _normalized_optional(os.getenv(target.url_env))
-    lock_engine = Engine(lock.engine) if lock is not None else None
+    lock_engine = resolved_lock_engine(lock)
 
     inferred_engine: Engine | None = None
     resolved_test_base_url: str | None = None
@@ -237,20 +237,22 @@ def resolve_replay_context(
     return inferred_engine, resolved_test_base_url
 
 
+def resolved_lock_engine(lock: LockFile | None) -> Engine | None:
+    if lock is None:
+        return None
+    try:
+        return Engine(lock.engine)
+    except ValueError as error:
+        raise SchemaError(
+            f"Invalid lockfile engine {lock.engine!r}. Regenerate schema artifacts."
+        ) from error
+
+
 def engine_from_url(url: str) -> Engine:
-    match sql_engine_from_url(url):
-        case "postgres" | "postgresql":
-            return Engine.POSTGRES
-        case "mysql":
-            return Engine.MYSQL
-        case "sqlite":
-            return Engine.SQLITE
-        case "clickhouse":
-            return Engine.CLICKHOUSE
-        case "bigquery":
-            return Engine.BIGQUERY
-        case _:
-            raise SchemaError(f"Unsupported URL scheme for engine inference: {url!r}.")
+    try:
+        return scratch_engine_from_url(url)
+    except Exception as error:
+        raise SchemaError(str(error)) from error
 
 
 def require_clean_state(state: LockState, *, label: str) -> None:

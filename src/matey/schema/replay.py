@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import tempfile
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from matey.dbmate import CmdResult, DbConnection, Dbmate
-from matey.sql import SqlError, SqlProgram, WriteViolation, ensure_newline
+from matey.dbmate import CmdResult, DbConnection, Dbmate, DbmateError
+from matey.sql import (
+    MigrationSqlError,
+    SqlError,
+    SqlProgram,
+    ensure_newline,
+    first_migration_violation_message,
+)
 
 from .plan import SchemaError, StructuralPlan
 
@@ -74,27 +81,19 @@ def run_down_roundtrip(
     down_checked: list[str] = []
     down_skipped: list[str] = []
     checkpoint_sql_by_file: dict[str, str] = {}
-    with (
-        tempfile.TemporaryDirectory(prefix="matey-schema-down-bootstrap-") as bootstrap_dir,
-        lease_bootstrapped_connection(
+    with tempfile.TemporaryDirectory(prefix="matey-schema-down-") as temp_root:
+        migrations_dir = Path(temp_root) / "migrations"
+        migrations_dir.mkdir(parents=True, exist_ok=True)
+        with lease_bootstrapped_connection(
             structural=structural,
             keep_scratch=keep_scratch,
             dbmate_bin=dbmate_bin,
-            migrations_dir=Path(bootstrap_dir),
+            migrations_dir=migrations_dir,
             scratch_label="schema_down",
             context="down-roundtrip",
-        ) as (_, down_scratch_url),
-    ):
-        for index, step in enumerate(structural.tail_steps, start=1):
-            with tempfile.TemporaryDirectory(prefix="matey-schema-down-step-") as temp_root:
-                step_dir = write_tail_slice(
-                    structural,
-                    Path(temp_root),
-                    step_count=index,
-                )
-                step_dbmate = Dbmate(migrations_dir=step_dir, dbmate_bin=dbmate_bin)
-                step_conn = step_dbmate.database(down_scratch_url)
-
+        ) as (step_conn, down_scratch_url):
+            for step in structural.tail_steps:
+                write_tail_migration(migrations_dir, structural, step)
                 try:
                     program = SqlProgram(
                         migration_sql_text(structural, step),
@@ -105,6 +104,7 @@ def run_down_roundtrip(
                     raise SchemaError(
                         f"Down roundtrip SQL analysis failed for {step.migration_file}: {error}"
                     ) from error
+
                 baseline: str | None = None
                 if has_down:
                     baseline = dump_schema(
@@ -185,13 +185,31 @@ def lease_bootstrapped_connection(
     ) as lease:
         dbmate = Dbmate(migrations_dir=migrations_dir, dbmate_bin=dbmate_bin)
         conn = dbmate.database(lease.url)
-        bootstrap_scratch(
+        cleanup = explicit_scratch_cleanup(
             conn=conn,
             engine=structural.engine,
-            anchor_sql=structural.anchor_sql,
-            context=context,
+            lease=lease,
+            keep_scratch=keep_scratch,
         )
-        yield conn, lease.url
+        active_error: Exception | None = None
+        try:
+            bootstrap_scratch(
+                conn=conn,
+                engine=structural.engine,
+                anchor_sql=structural.anchor_sql,
+                context=context,
+            )
+            yield conn, lease.url
+        except Exception as error:
+            active_error = error
+            raise
+        finally:
+            if cleanup is not None:
+                try:
+                    cleanup()
+                except SchemaError:
+                    if active_error is None:
+                        raise
 
 
 def bootstrap_scratch(
@@ -219,6 +237,38 @@ def bootstrap_scratch(
             )
 
 
+def explicit_scratch_cleanup(
+    *,
+    conn: DbConnection,
+    engine: object,
+    lease: object,
+    keep_scratch: bool,
+) -> Callable[[], None] | None:
+    if keep_scratch or lease.auto_provisioned:
+        return None
+
+    def _cleanup() -> None:
+        from matey.scratch import Engine
+
+        if engine is Engine.SQLITE:
+            sqlite_path = _sqlite_file_from_url(conn.url)
+            if sqlite_path is not None:
+                sqlite_path.unlink(missing_ok=True)
+            return
+        require_ok(conn.drop(), context="scratch cleanup drop")
+
+    return _cleanup
+
+
+def _sqlite_file_from_url(url: str) -> Path | None:
+    if not url.startswith("sqlite3:"):
+        return None
+    raw_path = url[len("sqlite3:") :]
+    if not raw_path:
+        return None
+    return Path(urlsplit(raw_path).path or raw_path)
+
+
 def write_tail_slice(
     structural: StructuralPlan,
     root: Path,
@@ -231,12 +281,20 @@ def write_tail_slice(
     migrations_dir = root / "migrations"
     migrations_dir.mkdir(parents=True, exist_ok=True)
     for step in selected:
-        payload = migration_payload(structural, step)
-        rel = Path(step.migration_file).relative_to(structural.policy.migrations_dir)
-        output_path = migrations_dir / rel
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(payload)
+        write_tail_migration(migrations_dir, structural, step)
     return migrations_dir
+
+
+def write_tail_migration(
+    migrations_dir: Path,
+    structural: StructuralPlan,
+    step: object,
+) -> None:
+    payload = migration_payload(structural, step)
+    rel = Path(step.migration_file).relative_to(structural.policy.migrations_dir)
+    output_path = migrations_dir / rel
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(payload)
 
 
 def migration_payload(structural: StructuralPlan, step: object) -> bytes:
@@ -254,7 +312,10 @@ def migration_sql_text(structural: StructuralPlan, step: object) -> str:
 
 
 def dump_schema(conn: DbConnection, *, context: str) -> str:
-    result = conn.dump()
+    try:
+        result = conn.dump()
+    except DbmateError as error:
+        raise SchemaError(f"{context} dump failed: {error}") from error
     require_ok(result, context=f"{context} dump")
     return ensure_newline(result.stdout)
 
@@ -272,42 +333,19 @@ def validate_tail_migration_targets(structural: StructuralPlan) -> None:
     engine = structural.engine.value
     if engine not in {"bigquery", "mysql", "clickhouse"}:
         return
-    for step in structural.tail_steps:
-        try:
-            program = SqlProgram(
-                migration_sql_text(structural, step),
-                engine=engine,
-            )
-            violations = program.migration_write_violations()
-        except SqlError as error:
-            raise SchemaError(
-                f"{step.migration_file} SQL analysis failed during target validation: {error}"
-            ) from error
-        raise_on_write_violations(
-            step.migration_file,
+    try:
+        message = first_migration_violation_message(
+            entries=(
+                (step.migration_file, migration_payload(structural, step))
+                for step in structural.tail_steps
+            ),
             engine=engine,
-            violations=violations,
+            section="migration",
         )
-
-
-def raise_on_write_violations(
-    migration_file: str,
-    *,
-    engine: str,
-    violations: tuple[WriteViolation, ...],
-) -> None:
-    if not violations:
-        return
-    violation = violations[0]
-    if violation.reason == "qualified write target":
-        reason = f"qualified {engine} write target"
-    else:
-        reason = f"unsupported {engine} mutating syntax"
-    raise SchemaError(
-        f"{migration_file} {violation.section} contains a {reason} "
-        f"{violation.target!r}. Use unqualified target-local names or split this into "
-        f"another matey target. Statement: {violation.excerpt()!r}"
-    )
+    except MigrationSqlError as error:
+        raise SchemaError(str(error)) from error
+    if message is not None:
+        raise SchemaError(message)
 
 
 __all__ = [
@@ -317,10 +355,10 @@ __all__ = [
     "lease_bootstrapped_connection",
     "migration_payload",
     "migration_sql_text",
-    "raise_on_write_violations",
     "require_ok",
     "run_down_roundtrip",
     "run_replay_checks",
     "validate_tail_migration_targets",
+    "write_tail_migration",
     "write_tail_slice",
 ]

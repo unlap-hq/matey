@@ -8,15 +8,21 @@ import pygit2
 import pytest
 
 import matey.schema as schema_mod
+import matey.scratch as scratch_mod
 import matey.sql as sql_mod
 from matey.config import TargetConfig
-from matey.lockfile import LockFile, LockPolicy
+from matey.dbmate import CmdResult, DbmateError
+from matey.lockfile import LockFile, LockPolicy, LockState
 from matey.repo import Snapshot
 from matey.schema import SchemaError, apply, plan, plan_diff, plan_sql, status
 from matey.scratch import Engine
 
 schema_plan_mod = importlib.import_module("matey.schema.plan")
 schema_replay_mod = importlib.import_module("matey.schema.replay")
+
+
+def _cmd(*argv: str, exit_code: int = 0, stdout: str = "", stderr: str = "") -> CmdResult:
+    return CmdResult(argv=tuple(argv), exit_code=exit_code, stdout=stdout, stderr=stderr)
 
 
 def _target(tmp_path: Path, name: str = "core") -> TargetConfig:
@@ -293,6 +299,18 @@ def test_plan_wraps_invalid_utf8_worktree_schema_as_schema_error(
         plan(target, test_base_url="sqlite3:/tmp/schema-invalid-schema.sqlite3")
 
 
+def test_dump_schema_wraps_dbmate_error(tmp_path: Path) -> None:
+    class _BoomConn:
+        def dump(self) -> CmdResult:
+            raise DbmateError("dbmate dump completed without producing a schema file.")
+
+    with pytest.raises(
+        SchemaError,
+        match=r"replay dump failed: dbmate dump completed without producing a schema file",
+    ):
+        schema_replay_mod.dump_schema(_BoomConn(), context="replay")
+
+
 def test_plan_base_uses_merge_base_vs_worktree(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -360,6 +378,31 @@ def test_plan_sql_returns_replay_b(
     sql = plan_sql(target, test_base_url="sqlite3:/tmp/schema-plan-sql.sqlite3")
 
     assert sql == expected
+
+
+def test_plan_sql_does_not_require_compare_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target = _target(tmp_path)
+    _write(target.migrations / "001_init.sql", "-- migrate:up\nCREATE TABLE a(id INTEGER);\n")
+    monkeypatch.setattr(
+        schema_replay_mod,
+        "run_replay_checks",
+        lambda *args, **kwargs: _check_outcome(
+            schema_sql="CREATE TABLE a(id INTEGER);\n",
+            checkpoint_map={},
+        ),
+    )
+    monkeypatch.setattr(
+        schema_mod,
+        "compare_replay_sql",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("compare should not run")),
+    )
+
+    sql = plan_sql(target, test_base_url="sqlite3:/tmp/schema-plan-sql.sqlite3")
+
+    assert sql == "CREATE TABLE a(id INTEGER);\n"
 
 
 def test_plan_diff_compares_worktree_vs_replay(
@@ -709,6 +752,137 @@ def test_resolve_replay_context_falls_back_to_lock_engine_on_invalid_urls(
     assert base_url is None
 
 
+def test_resolve_replay_context_rejects_invalid_lock_engine(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target = _target(tmp_path)
+    monkeypatch.delenv(target.test_url_env, raising=False)
+    monkeypatch.delenv(target.url_env, raising=False)
+    policy = LockPolicy()
+    lock = LockFile(
+        lock_version=policy.lock_version,
+        hash_algorithm=policy.hash_algorithm,
+        canonicalizer=policy.canonicalizer,
+        engine="bogus",
+        target=target.name,
+        schema_file=policy.schema_file,
+        migrations_dir=policy.migrations_dir,
+        checkpoints_dir=policy.checkpoints_dir,
+        head_index=0,
+        head_chain_hash=policy.chain_seed(engine="", target=target.name),
+        head_schema_digest="",
+        steps=(),
+    )
+
+    with pytest.raises(SchemaError, match="Invalid lockfile engine 'bogus'"):
+        schema_plan_mod.resolve_replay_context(
+            target=target,
+            lock=lock,
+            explicit_test_base_url=None,
+        )
+
+
+def test_run_down_roundtrip_uses_incremental_single_connection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target = _target(tmp_path)
+    step1 = schema_plan_mod.WorktreeStep(
+        index=1,
+        version="001",
+        migration_file="migrations/001_first.sql",
+        migration_digest="m1",
+        checkpoint_file="checkpoints/001_first.sql",
+        checkpoint_digest="c1",
+        chain_hash="h1",
+    )
+    step2 = schema_plan_mod.WorktreeStep(
+        index=2,
+        version="002",
+        migration_file="migrations/002_second.sql",
+        migration_digest="m2",
+        checkpoint_file="checkpoints/002_second.sql",
+        checkpoint_digest="c2",
+        chain_hash="h2",
+    )
+    structural = schema_plan_mod.StructuralPlan(
+        target=target,
+        policy=LockPolicy(),
+        head_snapshot=Snapshot(
+            target_name=target.name,
+            schema_sql=None,
+            lock_toml=None,
+            migrations={
+                step1.migration_file: (
+                    b"-- migrate:up\nCREATE TABLE first(id INTEGER);\n"
+                    b"-- migrate:down\nDROP TABLE first;\n"
+                ),
+                step2.migration_file: (
+                    b"-- migrate:up\nCREATE TABLE second(id INTEGER);\n"
+                    b"-- migrate:down\n-- irreversible\n"
+                ),
+            },
+            checkpoints={},
+        ),
+        head_state=LockState(
+            target_name=target.name,
+            lock=None,
+            worktree_steps=(step1, step2),
+            schema_digest=None,
+            orphan_checkpoints=(),
+            diagnostics=(),
+        ),
+        divergence_index=1,
+        anchor_index=0,
+        tail_steps=(step1, step2),
+        anchor_sql=None,
+        engine=Engine.SQLITE,
+        test_base_url="sqlite3:/tmp/schema-down.sqlite3",
+    )
+
+    class _FakeConn:
+        def __init__(self) -> None:
+            self.migrate_calls = 0
+            self.rollback_calls: list[int] = []
+
+        def migrate(self):
+            self.migrate_calls += 1
+            return _cmd("dbmate", "migrate")
+
+        def rollback(self, steps: int):
+            self.rollback_calls.append(steps)
+            return _cmd("dbmate", "rollback", str(steps))
+
+    conn = _FakeConn()
+
+    @contextmanager
+    def _fake_lease(**kwargs):
+        del kwargs
+        yield conn, "sqlite3:/tmp/schema-down.sqlite3"
+
+    dumps = iter(["BASE0\n", "STEP1\n", "BASE0\n", "STEP2\n"])
+
+    monkeypatch.setattr(schema_replay_mod, "lease_bootstrapped_connection", _fake_lease)
+    monkeypatch.setattr(schema_replay_mod, "dump_schema", lambda *_args, **_kwargs: next(dumps))
+
+    checkpoint_map, down_checked, down_skipped, scratch_url = schema_replay_mod.run_down_roundtrip(
+        structural,
+        keep_scratch=False,
+        dbmate_bin=None,
+    )
+
+    assert conn.migrate_calls == 3
+    assert conn.rollback_calls == [1]
+    assert checkpoint_map == {
+        "checkpoints/001_first.sql": "STEP1\n",
+        "checkpoints/002_second.sql": "STEP2\n",
+    }
+    assert down_checked == ("migrations/001_first.sql",)
+    assert down_skipped == ("migrations/002_second.sql",)
+    assert scratch_url == "sqlite3:/tmp/schema-down.sqlite3"
+
+
 def test_sanitize_mysql_anchor_sql_filters_replication_set_noise_only() -> None:
     anchor_sql = (
         "SET @@GLOBAL.GTID_PURGED = 'uuid:1-10';\n"
@@ -771,3 +945,141 @@ def test_retarget_bigquery_statement_rejects_inconsistent_foreign_write_targets(
 
     with pytest.raises(sql_mod.SqlError, match="multiple targets"):
         program.anchor_statements(target_url="bigquery://example-project/us/new_ds")
+
+
+def test_lease_bootstrapped_connection_drops_explicit_server_scratch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target = _target(tmp_path)
+    structural = schema_plan_mod.StructuralPlan(
+        target=target,
+        policy=LockPolicy(),
+        head_snapshot=Snapshot(target_name=target.name, schema_sql=None, lock_toml=None, migrations={}, checkpoints={}),
+        head_state=LockState(
+            target_name=target.name,
+            lock=None,
+            worktree_steps=(),
+            schema_digest=None,
+            orphan_checkpoints=(),
+            diagnostics=(),
+        ),
+        divergence_index=None,
+        anchor_index=0,
+        tail_steps=(),
+        anchor_sql=None,
+        engine=Engine.POSTGRES,
+        test_base_url="postgres://user:pass@127.0.0.1:5432/base_db",
+    )
+
+    class _FakeConn:
+        def __init__(self, url: str) -> None:
+            self.url = url
+            self.drop_calls = 0
+
+        def drop(self) -> CmdResult:
+            self.drop_calls += 1
+            return _cmd("dbmate", "drop")
+
+    fake_conn: _FakeConn | None = None
+
+    class _FakeDbmate:
+        def __init__(self, *, migrations_dir: Path, dbmate_bin: Path | None) -> None:
+            del migrations_dir, dbmate_bin
+
+        def database(self, url: str) -> _FakeConn:
+            nonlocal fake_conn
+            fake_conn = _FakeConn(url)
+            return fake_conn
+
+    @contextmanager
+    def _fake_lease(self, **kwargs):
+        del self, kwargs
+        yield scratch_mod.ScratchLease(
+            engine=Engine.POSTGRES,
+            scratch_name="matey_core_schema",
+            url="postgres://user:pass@127.0.0.1:5432/matey_core_schema",
+            auto_provisioned=False,
+        )
+
+    monkeypatch.setattr(schema_replay_mod, "Dbmate", _FakeDbmate)
+    monkeypatch.setattr(schema_replay_mod, "bootstrap_scratch", lambda **kwargs: None)
+    monkeypatch.setattr(scratch_mod.Scratch, "lease", _fake_lease)
+
+    with schema_replay_mod.lease_bootstrapped_connection(
+        structural=structural,
+        keep_scratch=False,
+        dbmate_bin=None,
+        migrations_dir=tmp_path / "migrations",
+        scratch_label="schema_replay",
+        context="replay",
+    ) as (_conn, _url):
+        pass
+
+    assert fake_conn is not None
+    assert fake_conn.drop_calls == 1
+
+
+def test_lease_bootstrapped_connection_unlinks_explicit_sqlite_scratch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target = _target(tmp_path)
+    scratch_file = (tmp_path / "scratch.sqlite3").resolve()
+    scratch_file.write_text("", encoding="utf-8")
+    structural = schema_plan_mod.StructuralPlan(
+        target=target,
+        policy=LockPolicy(),
+        head_snapshot=Snapshot(target_name=target.name, schema_sql=None, lock_toml=None, migrations={}, checkpoints={}),
+        head_state=LockState(
+            target_name=target.name,
+            lock=None,
+            worktree_steps=(),
+            schema_digest=None,
+            orphan_checkpoints=(),
+            diagnostics=(),
+        ),
+        divergence_index=None,
+        anchor_index=0,
+        tail_steps=(),
+        anchor_sql=None,
+        engine=Engine.SQLITE,
+        test_base_url=f"sqlite3:{tmp_path / 'base.sqlite3'}",
+    )
+
+    class _FakeConn:
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+    class _FakeDbmate:
+        def __init__(self, *, migrations_dir: Path, dbmate_bin: Path | None) -> None:
+            del migrations_dir, dbmate_bin
+
+        def database(self, url: str) -> _FakeConn:
+            return _FakeConn(url)
+
+    @contextmanager
+    def _fake_lease(self, **kwargs):
+        del self, kwargs
+        yield scratch_mod.ScratchLease(
+            engine=Engine.SQLITE,
+            scratch_name="matey_core_schema",
+            url=f"sqlite3:{scratch_file}",
+            auto_provisioned=False,
+        )
+
+    monkeypatch.setattr(schema_replay_mod, "Dbmate", _FakeDbmate)
+    monkeypatch.setattr(schema_replay_mod, "bootstrap_scratch", lambda **kwargs: None)
+    monkeypatch.setattr(scratch_mod.Scratch, "lease", _fake_lease)
+
+    with schema_replay_mod.lease_bootstrapped_connection(
+        structural=structural,
+        keep_scratch=False,
+        dbmate_bin=None,
+        migrations_dir=tmp_path / "migrations",
+        scratch_label="schema_replay",
+        context="replay",
+    ) as (_conn, _url):
+        pass
+
+    assert not scratch_file.exists()

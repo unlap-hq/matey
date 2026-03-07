@@ -3,13 +3,12 @@ from __future__ import annotations
 import traceback
 from collections.abc import Sequence
 from importlib.metadata import PackageNotFoundError, version
-from pathlib import Path
 
 from cyclopts import App
 from cyclopts.exceptions import CycloptsError
 
 from matey.dbmate import DbmateError
-from matey.repo import GitRepoError
+from matey.repo import GitRepoError, SnapshotError
 from matey.scratch import ScratchError
 from matey.tx import TxError
 
@@ -72,11 +71,11 @@ app.command(template_app)
 _USER_ERRORS = (
     commands.CliUsageError,
     commands.db_api.DbError,
-    commands.dbmate_api.DbmateError,
     commands.schema_api.SchemaError,
     commands.ConfigError,
     DbmateError,
     GitRepoError,
+    SnapshotError,
     ScratchError,
     TxError,
     CycloptsError,
@@ -110,33 +109,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def maybe_run_dbmate_passthrough(args: list[str]) -> int | None:
+    # Intercept raw top-level `matey dbmate ...` so `matey dbmate --help`
+    # preserves real dbmate help semantics instead of Cyclopts help.
     if not args or args[0] != "dbmate":
         return None
-
-    dbmate_bin: Path | None = None
-    index = 1
-    while index < len(args):
-        token = args[index]
-        if token == "--":
-            index += 1
-            break
-        if token == "--dbmate-bin":
-            if index + 1 >= len(args):
-                raise commands.CliUsageError("--dbmate-bin requires a path value.")
-            dbmate_bin = Path(args[index + 1])
-            index += 2
-            continue
-        if token.startswith("--dbmate-bin="):
-            dbmate_bin = Path(token.split("=", 1)[1])
-            index += 1
-            continue
-        break
-
-    passthrough_args = tuple(args[index:]) or ("--help",)
-    result = commands.dbmate_api.passthrough(*passthrough_args, dbmate_bin=dbmate_bin)
-    renderer.stdout_blob(result.stdout)
-    renderer.stderr_blob(result.stderr)
-    return result.exit_code
+    return commands.handle_dbmate_passthrough(
+        argv=tuple(args),
+        renderer=renderer,
+    )
 
 
 __all__ = ["app", "commands", "db_app", "main", "schema_app", "template_app"]

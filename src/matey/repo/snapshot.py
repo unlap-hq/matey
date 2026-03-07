@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -7,6 +8,7 @@ from pathlib import Path, PurePosixPath
 import pygit2
 
 from matey.config import TargetConfig
+from matey.paths import PathBoundaryError, describe_path_boundary_error, safe_descendant
 
 
 class SnapshotError(RuntimeError):
@@ -23,13 +25,23 @@ class Snapshot:
 
     @classmethod
     def from_worktree(cls, target: TargetConfig) -> Snapshot:
-        return cls(
-            target_name=target.name,
-            schema_sql=_read_optional_file(target.schema),
-            lock_toml=_read_optional_file(target.lockfile),
-            migrations=_read_sql_dir(target.migrations, prefix="migrations"),
-            checkpoints=_read_sql_dir(target.checkpoints, prefix="checkpoints"),
-        )
+        try:
+            target_root = safe_descendant(
+                root=target.dir,
+                candidate=target.dir,
+                label=f"target {target.name} directory",
+                allow_missing_leaf=True,
+                expected_kind="dir",
+            )
+            return cls(
+                target_name=target.name,
+                schema_sql=_read_optional_file(target_root, target.schema),
+                lock_toml=_read_optional_file(target_root, target.lockfile),
+                migrations=_read_sql_dir(target_root, target.migrations, prefix="migrations"),
+                checkpoints=_read_sql_dir(target_root, target.checkpoints, prefix="checkpoints"),
+            )
+        except PathBoundaryError as error:
+            raise SnapshotError(str(error)) from error
 
     @classmethod
     def from_tree(
@@ -63,30 +75,89 @@ class Snapshot:
         )
 
 
-def _read_optional_file(path: Path) -> bytes | None:
-    if not path.exists():
+def _read_optional_file(root: Path, path: Path) -> bytes | None:
+    safe_path = _safe_worktree_path(
+        root,
+        path,
+        allow_missing_leaf=True,
+        expected_kind="file",
+        symlink_message="Refusing to read symlinked file",
+    )
+    if not safe_path.exists():
         return None
-    if not path.is_file():
-        raise SnapshotError(f"Expected file but found non-file path: {path}")
-    return path.read_bytes()
+    return safe_path.read_bytes()
 
 
-def _read_sql_dir(directory: Path, *, prefix: str) -> dict[str, bytes]:
-    if not directory.exists():
+def _read_sql_dir(root: Path, directory: Path, *, prefix: str) -> dict[str, bytes]:
+    safe_dir = _safe_worktree_path(
+        root,
+        directory,
+        allow_missing_leaf=True,
+        expected_kind="dir",
+        symlink_message="Refusing to traverse symlinked directory",
+    )
+    if not safe_dir.exists():
         return {}
-    if not directory.is_dir():
-        raise SnapshotError(f"Expected directory but found non-directory path: {directory}")
 
     rows: dict[str, bytes] = {}
-    for file_path in sorted(directory.rglob("*.sql")):
-        rel_path = file_path.relative_to(directory).as_posix()
-        key = str(PurePosixPath(prefix) / rel_path)
-        rows[key] = file_path.read_bytes()
+    for walk_root, dirnames, filenames in os.walk(safe_dir, followlinks=False):
+        root_path = Path(walk_root)
+        for dirname in list(dirnames):
+            child = root_path / dirname
+            _safe_worktree_path(
+                root,
+                child,
+                allow_missing_leaf=False,
+                expected_kind="dir",
+                symlink_message="Refusing to traverse symlinked directory",
+            )
+        for filename in sorted(filenames):
+            if not filename.endswith(".sql"):
+                continue
+            file_path = root_path / filename
+            safe_file = _safe_worktree_path(
+                root,
+                file_path,
+                allow_missing_leaf=False,
+                expected_kind="file",
+                symlink_message="Refusing to read symlinked file",
+            )
+            rel_path = safe_file.relative_to(safe_dir).as_posix()
+            key = str(PurePosixPath(prefix) / rel_path)
+            rows[key] = safe_file.read_bytes()
     return rows
+
+
+def _safe_worktree_path(
+    root: Path,
+    path: Path,
+    *,
+    allow_missing_leaf: bool,
+    expected_kind: str,
+    symlink_message: str,
+) -> Path:
+    try:
+        return safe_descendant(
+            root=root,
+            candidate=path,
+            label=f"artifact {expected_kind} {path}",
+            allow_missing_leaf=allow_missing_leaf,
+            expected_kind=expected_kind,
+        )
+    except PathBoundaryError as error:
+        raise SnapshotError(
+            describe_path_boundary_error(
+                error,
+                path=path,
+                symlink_message=symlink_message,
+            )
+        ) from error
 
 
 def _tree_at_path(root: pygit2.Tree, rel_path: str) -> pygit2.Tree | None:
     obj = _resolve_tree_object(root, rel_path)
+    if _is_symlink_object(obj):
+        raise SnapshotError(f"Refusing to read symlinked tree object at {rel_path!r}.")
     if obj is not None and not isinstance(obj, pygit2.Tree):
         raise SnapshotError(f"Expected tree but found non-tree object at {rel_path!r}.")
     if isinstance(obj, pygit2.Tree):
@@ -96,6 +167,8 @@ def _tree_at_path(root: pygit2.Tree, rel_path: str) -> pygit2.Tree | None:
 
 def _blob_at_path(root: pygit2.Tree, rel_path: str) -> bytes | None:
     obj = _resolve_tree_object(root, rel_path)
+    if _is_symlink_object(obj):
+        raise SnapshotError(f"Refusing to read symlinked blob object at {rel_path!r}.")
     if obj is not None and not isinstance(obj, pygit2.Blob):
         raise SnapshotError(f"Expected blob but found non-blob object at {rel_path!r}.")
     if isinstance(obj, pygit2.Blob):
@@ -143,6 +216,8 @@ def _collect_tree_sql_rows(
 ) -> None:
     for obj in tree:
         entry_path = prefix / obj.name
+        if _is_symlink_object(obj):
+            raise SnapshotError(f"Refusing to read symlinked tree object at {entry_path.as_posix()!r}.")
         if isinstance(obj, pygit2.Tree):
             _collect_tree_sql_rows(obj, prefix=entry_path, rows=rows)
             continue
@@ -158,6 +233,10 @@ def _tree_object(tree: pygit2.Tree, name: str) -> pygit2.Object | None:
         return tree[name]
     except KeyError:
         return None
+
+
+def _is_symlink_object(obj: pygit2.Object | None) -> bool:
+    return getattr(obj, "filemode", None) == 0o120000
 
 
 __all__ = ["Snapshot", "SnapshotError"]

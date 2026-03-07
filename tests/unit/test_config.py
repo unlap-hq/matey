@@ -161,6 +161,23 @@ test_url_env = "AN_TEST_URL"
         Config.load(tmp_path)
 
 
+def test_symlinked_target_dir_is_rejected(tmp_path: Path) -> None:
+    real = tmp_path / "realdb"
+    real.mkdir()
+    (tmp_path / "db-link").symlink_to(real, target_is_directory=True)
+    _write(
+        tmp_path / "matey.toml",
+        """
+dir = "db-link"
+url_env = "MATEY_URL"
+test_url_env = "MATEY_TEST_URL"
+""".strip(),
+    )
+
+    with pytest.raises(ConfigError, match="symlinked path segment"):
+        Config.load(tmp_path)
+
+
 def test_select_rules(tmp_path: Path) -> None:
     _write(
         tmp_path / "matey.toml",
@@ -192,3 +209,35 @@ test_url_env = "AN_TEST_URL"
 def test_explicit_missing_config_path_errors(tmp_path: Path) -> None:
     with pytest.raises(ConfigError):
         Config.load(tmp_path, config_path=Path("missing.toml"))
+
+
+def test_config_read_io_error_is_wrapped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config_path = tmp_path / "matey.toml"
+    _write(
+        config_path,
+        """
+dir = "db"
+url_env = "DATABASE_URL"
+test_url_env = "TEST_DATABASE_URL"
+""".strip(),
+    )
+
+    original = Path.read_text
+
+    def _boom(self: Path, *args: object, **kwargs: object) -> str:
+        if self == config_path:
+            raise OSError("permission denied")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _boom)
+
+    with pytest.raises(ConfigError, match="Unable to read"):
+        Config.load(tmp_path)
+
+
+def test_config_invalid_utf8_is_wrapped(tmp_path: Path) -> None:
+    config_path = tmp_path / "matey.toml"
+    config_path.write_bytes(b"\xff\xfe\x00")
+
+    with pytest.raises(ConfigError, match=r"Unable to decode .* as UTF-8"):
+        Config.load(tmp_path)

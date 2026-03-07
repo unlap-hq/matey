@@ -227,16 +227,16 @@ def validate_step_coherence(
                 )
             )
 
-        match step.checkpoint_digest:
-            case None:
-                rows.append(
-                    diag(
-                        DiagnosticCode.COHERENCE_CHECKPOINT_MISSING,
-                        step.checkpoint_file,
-                        "Expected checkpoint file is missing.",
-                    )
+        if step.checkpoint_digest is None:
+            rows.append(
+                diag(
+                    DiagnosticCode.COHERENCE_CHECKPOINT_MISSING,
+                    step.checkpoint_file,
+                    "Expected checkpoint file is missing.",
                 )
-            case digest if digest != lock_step.checkpoint_digest:
+            )
+        else:
+            if step.checkpoint_digest != lock_step.checkpoint_digest:
                 rows.append(
                     diag(
                         DiagnosticCode.COHERENCE_CHECKPOINT_MISMATCH,
@@ -244,7 +244,7 @@ def validate_step_coherence(
                         "Checkpoint digest differs from lock step.",
                     )
                 )
-            case digest if digest != lock_step.schema_digest:
+            if step.checkpoint_digest != lock_step.schema_digest:
                 rows.append(
                     diag(
                         DiagnosticCode.COHERENCE_STEP_SCHEMA_MISMATCH,
@@ -252,8 +252,6 @@ def validate_step_coherence(
                         "Lock step schema_digest differs from deterministic checkpoint digest.",
                     )
                 )
-            case _:
-                pass
 
         if lock_step.chain_hash != step.chain_hash:
             rows.append(

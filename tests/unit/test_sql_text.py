@@ -40,6 +40,23 @@ def test_schema_fingerprint_postgres_preserves_schema_qualifier() -> None:
     assert public_fingerprint != audit_fingerprint
 
 
+def test_schema_fingerprint_preserves_literal_whitespace() -> None:
+    left = SqlProgram(
+        "CREATE VIEW widgets_v AS SELECT 'a  b' AS label;",
+        engine="postgres",
+    )
+    right = SqlProgram(
+        "CREATE VIEW widgets_v AS SELECT 'a b' AS label;",
+        engine="postgres",
+    )
+
+    assert left.schema_fingerprint(
+        context_url="postgresql://u:p@host:5432/app_db?sslmode=disable",
+    ) != right.schema_fingerprint(
+        context_url="postgresql://u:p@host:5432/app_db?sslmode=disable",
+    )
+
+
 def test_schema_fingerprint_mysql_strips_dump_noise() -> None:
     dump = """
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
@@ -57,6 +74,21 @@ UNLOCK TABLES;
         context_url="mysql://u:p@127.0.0.1:3306/db_name",
     )
     assert normalized_dump == normalized_expected
+
+
+def test_schema_fingerprint_mysql_normalizes_innodb_case() -> None:
+    left = SqlProgram(
+        "CREATE TABLE items (id bigint NOT NULL) ENGINE=InnoDB;",
+        engine="mysql",
+    )
+    right = SqlProgram(
+        "CREATE TABLE items (id bigint NOT NULL) ENGINE=innodb;",
+        engine="mysql",
+    )
+
+    assert left.schema_fingerprint(context_url="mysql://u:p@127.0.0.1:3306/db_name") == right.schema_fingerprint(
+        context_url="mysql://u:p@127.0.0.1:3306/db_name",
+    )
 
 
 def test_schema_fingerprint_clickhouse_strips_settings_and_qualifier() -> None:

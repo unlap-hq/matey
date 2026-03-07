@@ -9,7 +9,7 @@ from sqlglot import errors as sqlglot_errors
 from sqlglot import exp, parse
 
 from .policy import EnginePolicy, normalize_engine, policy_for_engine
-from .source import split_source_statements
+from .source import SqlTextDecodeError, _source_anchor_statements
 
 _MYSQL_CONDITIONAL_COMMENT_PATTERN = re.compile(r"/\*![0-9]{5}\s+(.*?)\*/", re.IGNORECASE)
 _MYSQL_EMPTY_CONDITIONAL_PATTERN = re.compile(r"/\*![0-9]{5}\s*\*/", re.IGNORECASE)
@@ -166,11 +166,22 @@ def _validated_source_anchor_statements(text: str, policy: EnginePolicy) -> tupl
     expressions = tuple(
         expr for expr in _parse_expressions(text, policy) if not isinstance(expr, exp.Semicolon)
     )
-    source_statements = split_source_statements(_prepare_sql_text(text, policy))
-    if len(source_statements) != len(expressions):
+    if policy.name == "sqlite" and any(_render(expr, policy).upper().startswith("CREATE TRIGGER") for expr in expressions):
         raise SqlError(
-            f"{policy.name or 'unknown'} anchor statements could not be aligned safely with source text."
+            "sqlite trigger bodies are not supported safely in source-preserving replay."
         )
+    try:
+        # Postgres/sqlite replay intentionally preserves validated source text
+        # instead of re-rendering SQL through sqlglot.
+        source_statements = _source_anchor_statements(
+            _prepare_sql_text(text, policy),
+            expected_count=len(expressions),
+            label=policy.name or "unknown",
+        )
+    except SqlTextDecodeError as error:
+        raise SqlError(
+            str(error)
+        ) from error
     return tuple(
         statement
         for statement, expr in zip(source_statements, expressions, strict=True)
@@ -240,7 +251,7 @@ def _canonical_statement(
         )
     if policy.name != "bigquery":
         canonical = _unquote_simple_identifiers(canonical)
-    return _compact(_render(canonical, policy))
+    return _render(canonical, policy)
 
 
 def _canonical_schema_creation(expr: exp.Expression, policy: EnginePolicy) -> str:
@@ -249,7 +260,7 @@ def _canonical_schema_creation(expr: exp.Expression, policy: EnginePolicy) -> st
         return f"CREATE DATASET{qualifier} __dataset__"
     if policy.target_kind == "database":
         return f"CREATE DATABASE{qualifier} __db__"
-    return _compact(_render(expr.copy(), policy))
+    return _render(expr.copy(), policy)
 
 
 def _canonicalize_expression(
@@ -513,7 +524,7 @@ def _looks_mutating_expr(expr: exp.Expression, statement: str) -> bool:
 
 
 def _render(expr: exp.Expression, policy: EnginePolicy) -> str:
-    return _compact(expr.sql(dialect=policy.dialect or None))
+    return expr.sql(dialect=policy.dialect or None)
 
 
 def _compact(text: str) -> str:
@@ -540,7 +551,10 @@ def _strip_compare_noise(expr: exp.Expression, policy: EnginePolicy) -> None:
                 ),
             ):
                 continue
-            if isinstance(prop, exp.EngineProperty) and _identifier_value(prop.args.get("this")) == "InnoDB":
+            if (
+                isinstance(prop, exp.EngineProperty)
+                and (_identifier_value(prop.args.get("this")) or "").lower() == "innodb"
+            ):
                 continue
         if policy.name == "clickhouse" and isinstance(prop, exp.SettingsProperty):
             continue

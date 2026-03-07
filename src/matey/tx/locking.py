@@ -1,24 +1,48 @@
 from __future__ import annotations
 
+import hashlib
+import tempfile
 import threading
+import weakref
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 from portalocker import RLock
 
+from matey.paths import PathBoundaryError, describe_path_boundary_error, ensure_non_symlink_path
+
+from .journal import TxError
+
 _TARGET_LOCK_FILE = "tx.lock"
 _RLOCKS_GUARD = threading.Lock()
-_RLOCKS_BY_PATH: dict[Path, RLock] = {}
+_RLOCKS_BY_PATH: weakref.WeakValueDictionary[Path, RLock] = weakref.WeakValueDictionary()
 
 
 @contextmanager
 def serialized_target(target_dir: Path) -> Iterator[None]:
-    target_root = target_dir.resolve()
-    lock_path = target_root / ".matey" / _TARGET_LOCK_FILE
+    try:
+        target_root = ensure_non_symlink_path(
+            target_dir,
+            label="target directory",
+            allow_missing_leaf=True,
+            expected_kind="dir",
+        )
+    except PathBoundaryError as error:
+        raise TxError(describe_path_boundary_error(error)) from error
+    lock_path = target_lock_path(target_root)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with target_rlock(lock_path):
         yield
+
+
+def target_lock_path(target_root: Path) -> Path:
+    digest = hashlib.blake2b(
+        target_root.as_posix().encode("utf-8"),
+        digest_size=16,
+    ).hexdigest()
+    lock_root = Path(tempfile.gettempdir()) / "matey-locks"
+    return lock_root / f"{digest}-{_TARGET_LOCK_FILE}"
 
 
 def target_rlock(lock_path: Path) -> RLock:
@@ -31,4 +55,4 @@ def target_rlock(lock_path: Path) -> RLock:
         return created
 
 
-__all__ = ["serialized_target"]
+__all__ = ["serialized_target", "target_lock_path"]

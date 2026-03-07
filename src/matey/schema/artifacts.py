@@ -5,6 +5,12 @@ from pathlib import Path
 
 from matey.config import TargetConfig
 from matey.lockfile import LockFile, LockPolicy, LockStep, WorktreeStep, generated_sql_digest
+from matey.paths import (
+    PathBoundaryError,
+    describe_path_boundary_error,
+    safe_descendant,
+    safe_relative_descendant,
+)
 from matey.sql import SqlTextDecodeError, decode_sql_text, ensure_newline
 from matey.tx import TxError, commit_artifacts
 
@@ -54,23 +60,50 @@ def compute_artifact_delta(
 ) -> tuple[dict[Path, bytes], tuple[Path, ...]]:
     writes: dict[Path, bytes] = {}
     for path, payload in desired_artifacts.items():
-        if path.exists():
-            if not path.is_file():
-                raise SchemaError(f"Cannot write artifact to non-file path: {path}")
-            if path.read_bytes() == payload:
-                continue
-        writes[path] = payload
+        try:
+            safe_path = safe_descendant(
+                root=target.dir,
+                candidate=path,
+                label=f"artifact path {path}",
+                allow_missing_leaf=True,
+                expected_kind="file",
+            )
+        except PathBoundaryError as error:
+            raise SchemaError(describe_path_boundary_error(error)) from error
+        if safe_path.exists() and safe_path.read_bytes() == payload:
+            continue
+        writes[safe_path] = payload
 
+    target_root = target.dir
+    checkpoints_root = safe_descendant(
+        root=target_root,
+        candidate=target.checkpoints,
+        label=f"checkpoints directory for target {target.name}",
+        allow_missing_leaf=True,
+        expected_kind="dir",
+    )
     desired_checkpoints = {
-        path.resolve()
+        safe_descendant(
+            root=target_root,
+            candidate=path,
+            label=f"checkpoint artifact {path}",
+            allow_missing_leaf=True,
+            expected_kind="file",
+        )
         for path in desired_artifacts
-        if path.resolve().is_relative_to(target.checkpoints.resolve())
+        if path.is_relative_to(checkpoints_root)
     }
     existing_checkpoints: set[Path] = set()
-    if target.checkpoints.exists():
-        for path in target.checkpoints.rglob("*.sql"):
-            if path.is_file():
-                existing_checkpoints.add(path.resolve())
+    if checkpoints_root.exists():
+        for path in checkpoints_root.rglob("*.sql"):
+            safe_path = safe_descendant(
+                root=target_root,
+                candidate=path,
+                label=f"checkpoint artifact {path}",
+                allow_missing_leaf=False,
+                expected_kind="file",
+            )
+            existing_checkpoints.add(safe_path)
 
     deletes = tuple(
         sorted(
@@ -181,9 +214,14 @@ def build_lock_toml(
 
 def relative_target_path(path: Path, target: TargetConfig) -> str:
     try:
-        return path.resolve().relative_to(target.dir.resolve()).as_posix()
-    except ValueError as error:
-        raise SchemaError(f"Changed artifact is outside target root: {path.resolve()}") from error
+        return safe_relative_descendant(
+            root=target.dir,
+            candidate=path,
+            label=f"changed artifact {path}",
+            allow_missing_leaf=True,
+        )
+    except PathBoundaryError as error:
+        raise SchemaError(describe_path_boundary_error(error)) from error
 
 
 __all__ = [

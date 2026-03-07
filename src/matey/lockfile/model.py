@@ -8,7 +8,7 @@ from enum import StrEnum
 
 from mashumaro.mixins.toml import DataClassTOMLMixin
 
-from matey.sql import decode_sql_text, ensure_newline
+from matey.sql import ensure_newline
 
 DigestFn = Callable[[bytes], str]
 
@@ -17,9 +17,8 @@ def _digest_blake2b256(payload: bytes) -> str:
     return hashlib.blake2b(payload, digest_size=32).hexdigest()
 
 
-def _generated_sql_bytes(payload: bytes | str, *, label: str) -> bytes:
-    text = decode_sql_text(payload, label=label) if isinstance(payload, bytes) else payload
-    return ensure_newline(text).encode("utf-8")
+def _generated_sql_bytes(payload: str) -> bytes:
+    return ensure_newline(payload).encode("utf-8")
 
 
 def _chain_payload(*parts: str) -> bytes:
@@ -145,14 +144,13 @@ class Divergence:
 
 
 def generated_sql_digest(
-    payload: bytes | str | None,
+    payload: str | None,
     *,
     policy: LockPolicy,
-    label: str = "SQL artifact",
 ) -> str | None:
     if payload is None:
         return None
-    return policy.digest(_generated_sql_bytes(payload, label=label))
+    return policy.digest(_generated_sql_bytes(payload))
 
 
 __all__ = [

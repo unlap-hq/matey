@@ -7,6 +7,8 @@ from pathlib import Path
 
 from boltons.fileutils import AtomicSaver
 
+from matey.paths import PathBoundaryError, describe_path_boundary_error, ensure_non_symlink_path
+
 from .journal import (
     BACKUP_DIR,
     STAGED_DIR,
@@ -17,12 +19,12 @@ from .journal import (
     TxManifest,
     absolute_target_path,
     create_tx_dir,
+    ensure_regular_journal_file,
+    ensure_safe_tx_root,
     normalize_deletes,
     normalize_writes,
     read_manifest,
     read_state,
-    tx_dir_created_ns,
-    tx_root,
     write_manifest,
     write_state,
 )
@@ -30,7 +32,15 @@ from .locking import serialized_target
 
 
 def recover_artifacts(target_dir: Path) -> None:
-    target_root = target_dir.resolve()
+    try:
+        target_root = ensure_non_symlink_path(
+            target_dir,
+            label="target directory",
+            allow_missing_leaf=True,
+            expected_kind="dir",
+        )
+    except PathBoundaryError as error:
+        raise TxError(describe_path_boundary_error(error)) from error
     with serialized_target(target_root):
         recover_artifacts_unlocked(target_root)
 
@@ -40,22 +50,41 @@ def commit_artifacts(
     writes: dict[Path, bytes],
     deletes: tuple[Path, ...],
 ) -> tuple[Path, ...]:
-    target_root = target_dir.resolve()
+    try:
+        target_root = ensure_non_symlink_path(
+            target_dir,
+            label="target directory",
+            allow_missing_leaf=True,
+            expected_kind="dir",
+        )
+    except PathBoundaryError as error:
+        raise TxError(describe_path_boundary_error(error)) from error
     with serialized_target(target_root):
         return commit_artifacts_unlocked(target_root, writes=writes, deletes=deletes)
 
 
 def recover_artifacts_unlocked(target_root: Path) -> None:
-    root = tx_root(target_root)
+    root = ensure_safe_tx_root(target_root)
     if not root.exists():
         return
 
     records: list[tuple[int, Path, TxManifest, str]] = []
-    for tx_dir in (entry for entry in root.iterdir() if entry.is_dir()):
-        manifest = read_manifest(tx_dir)
-        state = read_state(tx_dir)
-        created_ns = manifest.created_ns or tx_dir_created_ns(tx_dir)
-        records.append((created_ns, tx_dir, manifest, state))
+    errors: list[str] = []
+    for entry in root.iterdir():
+        if entry.is_symlink():
+            errors.append(f"{entry.name}: transaction root contains a symlinked entry")
+            continue
+        if not entry.is_dir():
+            errors.append(f"{entry.name}: transaction root contains a non-directory entry")
+            continue
+        tx_dir = entry
+        try:
+            manifest = read_manifest(tx_dir)
+            state = read_state(tx_dir)
+        except TxError as error:
+            errors.append(f"{tx_dir.name}: {error}")
+            continue
+        records.append((manifest.created_ns, tx_dir, manifest, state))
 
     applying = sorted(
         (
@@ -67,7 +96,8 @@ def recover_artifacts_unlocked(target_root: Path) -> None:
     )
     if len(applying) > 1:
         names = ", ".join(tx_dir.name for _, tx_dir, _, _ in applying)
-        raise TxError(f"Multiple applying transactions found; recovery order is ambiguous: {names}")
+        errors.append(f"Multiple applying transactions found; recovery order is ambiguous: {names}")
+        applying = []
 
     settled = sorted(
         (
@@ -78,12 +108,20 @@ def recover_artifacts_unlocked(target_root: Path) -> None:
         key=lambda row: (row[0], row[1].name),
     )
     for _, tx_dir, manifest, state in settled:
-        recover_tx(target_root=target_root, tx_dir=tx_dir, manifest=manifest, state=state)
+        try:
+            recover_tx(target_root=target_root, tx_dir=tx_dir, manifest=manifest, state=state)
+        except TxError as error:
+            errors.append(f"{tx_dir.name}: {error}")
     for _, tx_dir, manifest, state in applying:
-        recover_tx(target_root=target_root, tx_dir=tx_dir, manifest=manifest, state=state)
+        try:
+            recover_tx(target_root=target_root, tx_dir=tx_dir, manifest=manifest, state=state)
+        except TxError as error:
+            errors.append(f"{tx_dir.name}: {error}")
 
     if root.exists() and not any(root.iterdir()):
         shutil.rmtree(root, ignore_errors=True)
+    if errors:
+        raise TxError("Transaction recovery encountered invalid journal entries: " + "; ".join(errors))
 
 
 def commit_artifacts_unlocked(
@@ -156,6 +194,11 @@ def prepare_tx(
 def apply_tx(*, target_root: Path, tx_dir: Path, manifest: TxManifest) -> None:
     for rel_path in manifest.writes:
         staged_path = tx_dir / STAGED_DIR / rel_path
+        ensure_regular_journal_file(
+            tx_dir,
+            staged_path,
+            label=f"staged transaction file for {rel_path}",
+        )
         target_path = absolute_target_path(target_root, rel_path)
         target_path.parent.mkdir(parents=True, exist_ok=True)
         staged_path.replace(target_path)
@@ -181,7 +224,12 @@ def recover_tx(*, target_root: Path, tx_dir: Path, manifest: TxManifest, state: 
     for rel_path in touched:
         target_path = absolute_target_path(target_root, rel_path)
         backup_path = tx_dir / BACKUP_DIR / rel_path
-        if backup_path.exists():
+        if ensure_regular_journal_file(
+            tx_dir,
+            backup_path,
+            label=f"backup transaction file for {rel_path}",
+            allow_missing=True,
+        ):
             target_path.parent.mkdir(parents=True, exist_ok=True)
             backup_path.replace(target_path)
             fsync_dir(target_path.parent)

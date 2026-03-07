@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tomllib
 from collections.abc import Mapping
 from pathlib import PurePosixPath
 
@@ -10,8 +11,9 @@ from mashumaro.exceptions import (
     MissingField,
 )
 
+from matey.paths import RelativePathError, normalize_relative_posix_path
 from matey.repo import Snapshot
-from matey.sql import SqlTextDecodeError
+from matey.sql import SqlTextDecodeError, decode_sql_text
 
 from .model import (
     Diagnostic,
@@ -25,8 +27,7 @@ from .model import (
 
 _LOCKFILE_PARSE_ERRORS = (
     UnicodeDecodeError,
-    ValueError,
-    TypeError,
+    tomllib.TOMLDecodeError,
     InvalidFieldValue,
     MissingField,
     ExtraKeysError,
@@ -137,10 +138,17 @@ def build_worktree_steps(
         checkpoint_file = checkpoint_for_migration(migration_file=migration_file, policy=policy)
         migration_digest = policy.digest(migration_payload)
         try:
+            checkpoint_text = (
+                decode_sql_text(
+                    checkpoint_by_path[checkpoint_file],
+                    label=checkpoint_file,
+                )
+                if checkpoint_file in checkpoint_by_path
+                else None
+            )
             checkpoint_digest = generated_sql_digest(
-                checkpoint_by_path.get(checkpoint_file),
+                checkpoint_text,
                 policy=policy,
-                label=checkpoint_file,
             )
         except SqlTextDecodeError as error:
             diagnostics.append(
@@ -174,8 +182,8 @@ def build_worktree_steps(
     return tuple(steps), orphans, tuple(diagnostics)
 
 
-def schema_digest(schema_sql: bytes | None, *, policy: LockPolicy) -> str | None:
-    return generated_sql_digest(schema_sql, policy=policy, label=policy.schema_file)
+def schema_digest(schema_sql: str | None, *, policy: LockPolicy) -> str | None:
+    return generated_sql_digest(schema_sql, policy=policy)
 
 
 def checkpoint_for_migration(*, migration_file: str, policy: LockPolicy) -> str:
@@ -204,8 +212,8 @@ def collect_sql_rows(
 
     for raw_path, payload in values.items():
         try:
-            path = normalize_rel_path(raw_path)
-        except ValueError as error:
+            path = normalize_relative_posix_path(raw_path, label=f"{kind} path")
+        except RelativePathError as error:
             diagnostics.append(
                 diag(
                     DiagnosticCode.INPUT_PATH_INVALID,
@@ -336,22 +344,10 @@ def check_duplicate_lock_step(
     return duplicate_entry, tuple(diagnostics)
 
 
-def normalize_rel_path(path: str) -> str:
-    normalized = PurePosixPath(path).as_posix()
-    candidate = PurePosixPath(normalized)
-    if not normalized or normalized == ".":
-        raise ValueError("Path cannot be empty or current-directory.")
-    if candidate.is_absolute():
-        raise ValueError("Absolute paths are not allowed.")
-    if any(part in {"..", "."} for part in candidate.parts):
-        raise ValueError("Path traversal or dot-segment is not allowed.")
-    return normalized
-
-
 def normalize_lock_path(*, value: str, kind: str) -> tuple[str | None, Diagnostic | None]:
     try:
-        normalized = normalize_rel_path(value)
-    except ValueError as error:
+        normalized = normalize_relative_posix_path(value, label=f"lock {kind} path")
+    except RelativePathError as error:
         return None, diag(
             DiagnosticCode.LOCKFILE_STEP_PATH_INVALID,
             value,

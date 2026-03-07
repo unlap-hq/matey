@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from functools import cached_property
 from typing import Literal
 
@@ -11,7 +12,7 @@ from .ast import (
     schema_fingerprint,
     section_write_violations,
 )
-from .source import split_migration_sections, unified_sql_diff
+from .source import SqlTextDecodeError, decode_sql_text, split_migration_sections, unified_sql_diff
 
 
 class SqlProgram:
@@ -84,4 +85,93 @@ class SqlProgram:
         return anchor_statements(self._text, engine=self._engine, target_url=target_url)
 
 
-__all__ = ["SqlError", "SqlProgram"]
+class MigrationSqlError(SqlError):
+    def __init__(self, *, migration_file: str, detail: str) -> None:
+        self.migration_file = migration_file
+        super().__init__(detail)
+
+
+def describe_write_violation(
+    *,
+    migration_file: str,
+    engine: str,
+    violation: WriteViolation,
+    context: str | None = None,
+) -> str:
+    reason = (
+        f"qualified {engine} write target"
+        if violation.reason == "qualified write target"
+        else f"unsupported {engine} mutating syntax"
+    )
+    prefix = f"{context} failed: " if context else ""
+    return (
+        f"{prefix}{migration_file} {violation.section} contains a {reason} "
+        f"{violation.target!r}. Use unqualified target-local names or split this into "
+        f"another matey target. Statement: {violation.excerpt()!r}"
+    )
+
+
+def first_write_violation_message(
+    *,
+    sql_text: str,
+    engine: str,
+    migration_file: str,
+    section: Literal["up", "down", "migration"],
+    context: str | None = None,
+) -> str | None:
+    program = SqlProgram(sql_text, engine=engine)
+    violations = (
+        program.migration_write_violations()
+        if section == "migration"
+        else program.section_write_violations(section)
+    )
+    if not violations:
+        return None
+    return describe_write_violation(
+        migration_file=migration_file,
+        engine=engine,
+        violation=violations[0],
+        context=context,
+    )
+
+
+def first_migration_violation_message(
+    *,
+    entries: Iterable[tuple[str, bytes]],
+    engine: str,
+    section: Literal["up", "down", "migration"],
+    context: str | None = None,
+) -> str | None:
+    for migration_file, payload in entries:
+        try:
+            sql_text = decode_sql_text(payload, label=f"migration {migration_file}")
+            message = first_write_violation_message(
+                sql_text=sql_text,
+                engine=engine,
+                migration_file=migration_file,
+                section=section,
+                context=context,
+            )
+        except SqlTextDecodeError as error:
+            raise MigrationSqlError(
+                migration_file=migration_file,
+                detail=str(error),
+            ) from error
+        except SqlError as error:
+            raise MigrationSqlError(
+                migration_file=migration_file,
+                detail=f"{migration_file} SQL analysis failed: {error}",
+            ) from error
+        if message is not None:
+            return message
+    return None
+
+
+__all__ = [
+    "MigrationSqlError",
+    "SqlError",
+    "SqlProgram",
+    "SqlTextDecodeError",
+    "describe_write_violation",
+    "first_migration_violation_message",
+]
