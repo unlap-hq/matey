@@ -124,7 +124,20 @@ def apply_artifact_delta(
         changed_paths = commit_artifacts(target.dir, writes=writes, deletes=deletes)
     except TxError as error:
         raise SchemaError(f"apply: artifact commit failed: {error}") from error
-    return tuple(sorted(relative_target_path(path, target) for path in changed_paths))
+    changed_files: list[str] = []
+    for path in changed_paths:
+        try:
+            changed_files.append(
+                safe_relative_descendant(
+                    root=target.dir,
+                    candidate=path,
+                    label=f"changed artifact {path}",
+                    allow_missing_leaf=True,
+                )
+            )
+        except PathBoundaryError as error:
+            raise SchemaError(describe_path_boundary_error(error)) from error
+    return tuple(sorted(changed_files))
 
 
 def collect_checkpoint_texts(
@@ -212,23 +225,10 @@ def build_lock_toml(
     return lock.to_toml()
 
 
-def relative_target_path(path: Path, target: TargetConfig) -> str:
-    try:
-        return safe_relative_descendant(
-            root=target.dir,
-            candidate=path,
-            label=f"changed artifact {path}",
-            allow_missing_leaf=True,
-        )
-    except PathBoundaryError as error:
-        raise SchemaError(describe_path_boundary_error(error)) from error
-
-
 __all__ = [
     "apply_artifact_delta",
     "build_desired_artifacts",
     "build_lock_toml",
     "collect_checkpoint_texts",
     "compute_artifact_delta",
-    "relative_target_path",
 ]

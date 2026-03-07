@@ -47,35 +47,24 @@ def tx_root(target_root: Path) -> Path:
 def ensure_safe_tx_root(target_root: Path) -> Path:
     meta_root = target_root / ".matey"
     root = tx_root(target_root)
-    try:
-        safe_descendant(
-            root=target_root,
-            candidate=meta_root,
-            label="transaction metadata root",
-            allow_missing_leaf=True,
-            expected_kind="dir",
-        )
-    except PathBoundaryError as error:
-        if error.kind in {"symlink_leaf", "symlink_intermediate"}:
-            raise TxError(f"Transaction metadata root is symlinked: {meta_root}") from error
-        if error.kind == "not_dir":
-            raise TxError(f"Transaction metadata root is not a directory: {meta_root}") from error
-        raise TxError(describe_path_boundary_error(error)) from error
-
-    try:
-        safe_descendant(
-            root=target_root,
-            candidate=root,
-            label="transaction root",
-            allow_missing_leaf=True,
-            expected_kind="dir",
-        )
-    except PathBoundaryError as error:
-        if error.kind in {"symlink_leaf", "symlink_intermediate"}:
-            raise TxError(f"Transaction root is symlinked: {root}") from error
-        if error.kind == "not_dir":
-            raise TxError(f"Transaction root is not a directory: {root}") from error
-        raise TxError(describe_path_boundary_error(error)) from error
+    for path, label in (
+        (meta_root, "Transaction metadata root"),
+        (root, "Transaction root"),
+    ):
+        try:
+            safe_descendant(
+                root=target_root,
+                candidate=path,
+                label=label.lower(),
+                allow_missing_leaf=True,
+                expected_kind="dir",
+            )
+        except PathBoundaryError as error:
+            if error.kind in {"symlink_leaf", "symlink_intermediate"}:
+                raise TxError(f"{label} is symlinked: {path}") from error
+            if error.kind == "not_dir":
+                raise TxError(f"{label} is not a directory: {path}") from error
+            raise TxError(describe_path_boundary_error(error)) from error
     return root
 
 
@@ -211,19 +200,6 @@ def normalize_target_input_path(target_root: Path, raw_path: Path) -> str:
     except PathBoundaryError as error:
         raise TxError(describe_path_boundary_error(error)) from error
     return _validate_tx_relative_path(rel_path, source=f"path {candidate}")
-
-
-def relative_target_path(target_root: Path, path: Path) -> str:
-    try:
-        rel = safe_relative_descendant(
-            root=target_root,
-            candidate=path,
-            label=f"path {path}",
-            allow_missing_leaf=True,
-        )
-    except PathBoundaryError as error:
-        raise TxError(describe_path_boundary_error(error)) from error
-    return _validate_tx_relative_path(rel, source=f"path {path}")
 
 
 def absolute_target_path(target_root: Path, rel_path: str) -> Path:

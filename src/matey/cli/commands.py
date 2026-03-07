@@ -60,11 +60,12 @@ def register_commands(
         url: UrlOpt = None,
     ) -> None:
         """Show live migration status."""
-        run_multi_target_action(
+        _run_targets(
             config_path=config,
             target=target,
             all_targets=all_targets,
             renderer=renderer,
+            require_single=False,
             body=lambda item: render_cmd_blob(
                 renderer=renderer,
                 result=db_api.status_raw(item, url=url, dbmate_bin=dbmate_bin),
@@ -80,9 +81,12 @@ def register_commands(
         url: UrlOpt = None,
     ) -> None:
         """Create DB if missing, then apply pending migrations."""
-        run_single_target_action(
+        _run_targets(
             config_path=config,
             target=target,
+            all_targets=False,
+            renderer=renderer,
+            require_single=True,
             body=lambda item: renderer.db_mutation(
                 "up",
                 db_api.up(item, url=url, dbmate_bin=dbmate_bin),
@@ -97,9 +101,12 @@ def register_commands(
         url: UrlOpt = None,
     ) -> None:
         """Apply pending migrations (no create-if-needed)."""
-        run_single_target_action(
+        _run_targets(
             config_path=config,
             target=target,
+            all_targets=False,
+            renderer=renderer,
+            require_single=True,
             body=lambda item: renderer.db_mutation(
                 "migrate",
                 db_api.migrate(item, url=url, dbmate_bin=dbmate_bin),
@@ -115,9 +122,12 @@ def register_commands(
         steps: StepsOpt = 1,
     ) -> None:
         """Rollback migration(s)."""
-        run_single_target_action(
+        _run_targets(
             config_path=config,
             target=target,
+            all_targets=False,
+            renderer=renderer,
+            require_single=True,
             body=lambda item: renderer.db_mutation(
                 "down",
                 db_api.down(item, steps=steps, url=url, dbmate_bin=dbmate_bin),
@@ -133,11 +143,12 @@ def register_commands(
         url: UrlOpt = None,
     ) -> None:
         """Check live schema drift."""
-        run_multi_target_action(
+        _run_targets(
             config_path=config,
             target=target,
             all_targets=all_targets,
             renderer=renderer,
+            require_single=False,
             body=lambda item: renderer.db_drift(
                 db_api.drift(item, url=url, dbmate_bin=dbmate_bin)
             ),
@@ -154,23 +165,26 @@ def register_commands(
         diff: DiffOpt = False,
     ) -> None:
         """Compare live schema to expected worktree target schema."""
-        run_multi_target_action(
+        mode = plan_mode(sql=sql, diff=diff)
+
+        def render_target(item: TargetConfig) -> None:
+            match mode:
+                case "summary":
+                    renderer.db_plan(db_api.plan(item, url=url, dbmate_bin=dbmate_bin))
+                case "sql":
+                    renderer.sql_blob(db_api.plan_sql(item, url=url, dbmate_bin=dbmate_bin))
+                case "diff":
+                    renderer.diff_blob(db_api.plan_diff(item, url=url, dbmate_bin=dbmate_bin))
+                case _:
+                    raise AssertionError("invalid plan mode")
+
+        _run_targets(
             config_path=config,
             target=target,
             all_targets=all_targets,
             renderer=renderer,
-            body=lambda item: dispatch_plan_mode(
-                mode=plan_mode(sql=sql, diff=diff),
-                summary=lambda: renderer.db_plan(
-                    db_api.plan(item, url=url, dbmate_bin=dbmate_bin)
-                ),
-                sql=lambda: renderer.sql_blob(
-                    db_api.plan_sql(item, url=url, dbmate_bin=dbmate_bin)
-                ),
-                diff=lambda: renderer.diff_blob(
-                    db_api.plan_diff(item, url=url, dbmate_bin=dbmate_bin)
-                ),
-            ),
+            require_single=False,
+            body=render_target,
         )
 
     @db_app.command(name="new", sort_key=70)
@@ -181,9 +195,12 @@ def register_commands(
         dbmate_bin: DbmateBinOpt = None,
     ) -> None:
         """Create a new migration file."""
-        run_single_target_action(
+        _run_targets(
             config_path=config,
             target=target,
+            all_targets=False,
+            renderer=renderer,
+            require_single=True,
             body=lambda item: render_cmd_blob(
                 renderer=renderer,
                 result=db_api.new(item, name=name, dbmate_bin=dbmate_bin),
@@ -198,11 +215,12 @@ def register_commands(
         config: ConfigOpt = None,
     ) -> None:
         """Show schema artifact health."""
-        run_multi_target_action(
+        _run_targets(
             config_path=config,
             target=target,
             all_targets=all_targets,
             renderer=renderer,
+            require_single=False,
             body=lambda item: renderer.schema_status(schema_api.status(item)),
         )
 
@@ -220,24 +238,33 @@ def register_commands(
         diff: DiffOpt = False,
     ) -> None:
         """Run validated schema replay in scratch and inspect the resulting schema."""
-        kwargs = schema_plan_kwargs(
-            base=base,
-            clean=clean,
-            test_url=test_url,
-            keep_scratch=keep_scratch,
-            dbmate_bin=dbmate_bin,
-        )
-        run_multi_target_action(
+        mode = plan_mode(sql=sql, diff=diff)
+
+        def render_target(item: TargetConfig) -> None:
+            kwargs = {
+                "base_ref": base,
+                "clean": clean,
+                "test_base_url": test_url,
+                "keep_scratch": keep_scratch,
+                "dbmate_bin": dbmate_bin,
+            }
+            match mode:
+                case "summary":
+                    renderer.schema_plan(schema_api.plan(item, **kwargs))
+                case "sql":
+                    renderer.sql_blob(schema_api.plan_sql(item, **kwargs))
+                case "diff":
+                    renderer.diff_blob(schema_api.plan_diff(item, **kwargs))
+                case _:
+                    raise AssertionError("invalid plan mode")
+
+        _run_targets(
             config_path=config,
             target=target,
             all_targets=all_targets,
             renderer=renderer,
-            body=lambda item: dispatch_plan_mode(
-                mode=plan_mode(sql=sql, diff=diff),
-                summary=lambda: renderer.schema_plan(schema_api.plan(item, **kwargs)),
-                sql=lambda: renderer.sql_blob(schema_api.plan_sql(item, **kwargs)),
-                diff=lambda: renderer.diff_blob(schema_api.plan_diff(item, **kwargs)),
-            ),
+            require_single=False,
+            body=render_target,
         )
 
     @schema_app.command(name="apply", sort_key=30)
@@ -251,17 +278,22 @@ def register_commands(
         keep_scratch: KeepScratchOpt = False,
     ) -> None:
         """Run validated schema replay in scratch, then write schema artifacts."""
-        kwargs = schema_plan_kwargs(
-            base=base,
-            clean=clean,
-            test_url=test_url,
-            keep_scratch=keep_scratch,
-            dbmate_bin=dbmate_bin,
-        )
-        run_single_target_action(
+        _run_targets(
             config_path=config,
             target=target,
-            body=lambda item: renderer.schema_apply(schema_api.apply(item, **kwargs)),
+            all_targets=False,
+            renderer=renderer,
+            require_single=True,
+            body=lambda item: renderer.schema_apply(
+                schema_api.apply(
+                    item,
+                    base_ref=base,
+                    clean=clean,
+                    test_base_url=test_url,
+                    keep_scratch=keep_scratch,
+                    dbmate_bin=dbmate_bin,
+                )
+            ),
         )
 
     @template_app.command(name="config", sort_key=10)
@@ -307,20 +339,6 @@ def select_targets(
     if require_single and len(selected) != 1:
         raise CliUsageError("This command requires exactly one resolved target.")
     return selected
-
-
-def single_target(
-    *,
-    config_path: Path | None,
-    target: str | None,
-    all_targets: bool,
-) -> TargetConfig:
-    return select_targets(
-        config_path=config_path,
-        target=target,
-        all_targets=all_targets,
-        require_single=True,
-    )[0]
 
 
 def load_config(config_path: Path | None) -> Config:
@@ -424,31 +442,26 @@ def handle_dbmate_passthrough(
     return result.exit_code
 
 
-def run_single_target_action(
-    *,
-    config_path: Path | None,
-    target: str | None,
-    body: Callable[[TargetConfig], None],
-) -> None:
-    item = single_target(config_path=config_path, target=target, all_targets=False)
-    body(item)
-
-
-def run_multi_target_action(
+def _run_targets(
     *,
     config_path: Path | None,
     target: str | None,
     all_targets: bool,
     renderer: Renderer,
+    require_single: bool,
     body: Callable[[TargetConfig], None],
 ) -> None:
     selected = select_targets(
         config_path=config_path,
         target=target,
         all_targets=all_targets,
-        require_single=False,
+        require_single=require_single,
     )
-    _for_selected_targets(selected=selected, renderer=renderer, body=body)
+    show_headers = len(selected) > 1
+    for item in selected:
+        if show_headers:
+            renderer.target_header(item.name)
+        body(item)
 
 
 def render_cmd_blob(
@@ -460,19 +473,6 @@ def render_cmd_blob(
     require_cmd_success(result, context=context)
     renderer.stdout_blob(result.stdout)
     renderer.stderr_blob(result.stderr)
-
-
-def _for_selected_targets(
-    *,
-    selected: tuple[TargetConfig, ...],
-    renderer: Renderer,
-    body: Callable[[TargetConfig], None],
-) -> None:
-    show_headers = len(selected) > 1
-    for item in selected:
-        if show_headers:
-            renderer.target_header(item.name)
-        body(item)
 
 
 def emit_template(*, content: str, path: Path | None, overwrite: bool, renderer: Renderer) -> None:
@@ -496,47 +496,11 @@ def plan_mode(*, sql: bool, diff: bool) -> str:
     return "summary"
 
 
-def dispatch_plan_mode(
-    *,
-    mode: str,
-    summary: Callable[[], None],
-    sql: Callable[[], None],
-    diff: Callable[[], None],
-) -> None:
-    match mode:
-        case "summary":
-            summary()
-        case "sql":
-            sql()
-        case "diff":
-            diff()
-        case _:
-            raise AssertionError("invalid plan mode")
-
-
-def schema_plan_kwargs(
-    *,
-    base: str | None,
-    clean: bool,
-    test_url: str | None,
-    keep_scratch: bool,
-    dbmate_bin: Path | None,
-) -> dict[str, object]:
-    return {
-        "base_ref": base,
-        "clean": clean,
-        "test_base_url": test_url,
-        "keep_scratch": keep_scratch,
-        "dbmate_bin": dbmate_bin,
-    }
-
-
 __all__ = [
     "CliUsageError",
     "ConfigError",
     "db_api",
     "dbmate_api",
-    "dispatch_plan_mode",
     "emit_template",
     "find_repo_root",
     "handle_dbmate_passthrough",
@@ -547,8 +511,6 @@ __all__ = [
     "render_config_template",
     "require_cmd_success",
     "schema_api",
-    "schema_plan_kwargs",
     "select_targets",
-    "single_target",
     "write_text_file",
 ]

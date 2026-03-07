@@ -396,7 +396,7 @@ def test_plan_sql_does_not_require_compare_path(
     )
     monkeypatch.setattr(
         schema_mod,
-        "compare_replay_sql",
+        "replay_sql_fingerprints",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("compare should not run")),
     )
 

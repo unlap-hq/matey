@@ -251,7 +251,30 @@ def _resolve_targets(
 
         _require_env_name(url_env, source=f"{name}.url_env")
         _require_env_name(test_url_env, source=f"{name}.test_url_env")
-        dir_path = _normalize_rel_dir(root=root, raw=dir_value, source=f"{name}.dir")
+        try:
+            normalized_dir = normalize_relative_posix_path(
+                dir_value,
+                label=f"{name}.dir: dir",
+            )
+        except RelativePathError as error:
+            raise ConfigError(str(error)) from error
+
+        try:
+            dir_path = safe_descendant(
+                root=root,
+                candidate=root / Path(normalized_dir),
+                label=f"{name}.dir dir",
+                allow_missing_leaf=True,
+                expected_kind="dir",
+            )
+        except PathBoundaryError as error:
+            raise ConfigError(
+                describe_path_boundary_error(
+                    error,
+                    path=root / Path(normalized_dir),
+                    symlink_message=f"{name}.dir: dir uses symlinked path segment",
+                )
+            ) from error
 
         previous = seen_dirs.get(dir_path)
         if previous is not None:
@@ -295,30 +318,6 @@ def target_env_stem(target: str) -> str:
 
 def _target_default_dir(default_dir: str, target_name: str) -> str:
     return (PurePosixPath(default_dir) / target_name).as_posix()
-
-
-def _normalize_rel_dir(*, root: Path, raw: str, source: str) -> Path:
-    try:
-        normalized = normalize_relative_posix_path(raw, label=f"{source}: dir")
-    except RelativePathError as error:
-        raise ConfigError(str(error)) from error
-
-    try:
-        return safe_descendant(
-            root=root,
-            candidate=root / Path(normalized),
-            label=f"{source} dir",
-            allow_missing_leaf=True,
-            expected_kind="dir",
-        )
-    except PathBoundaryError as error:
-        raise ConfigError(
-            describe_path_boundary_error(
-                error,
-                path=root / Path(normalized),
-                symlink_message=f"{source}: dir uses symlinked path segment",
-            )
-        ) from error
 
 
 def _require_target_name(name: str, *, source: str) -> None:

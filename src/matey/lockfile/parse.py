@@ -266,20 +266,30 @@ def normalize_lock_step_paths(
     checkpoints_dir: str,
 ) -> tuple[tuple[str, str] | None, tuple[Diagnostic, ...]]:
     diagnostics: list[Diagnostic] = []
+    normalized_paths: dict[str, str | None] = {
+        "migration": None,
+        "checkpoint": None,
+    }
+    for kind, raw_path in (
+        ("migration", migration_file),
+        ("checkpoint", checkpoint_file),
+    ):
+        try:
+            normalized_paths[kind] = normalize_relative_posix_path(
+                raw_path,
+                label=f"lock {kind} path",
+            )
+        except RelativePathError as error:
+            diagnostics.append(
+                diag(
+                    DiagnosticCode.LOCKFILE_STEP_PATH_INVALID,
+                    raw_path,
+                    f"Invalid lock {kind} path: {error}",
+                )
+            )
 
-    normalized_migration_file, migration_diag = normalize_lock_path(
-        value=migration_file,
-        kind="migration",
-    )
-    if migration_diag is not None:
-        diagnostics.append(migration_diag)
-
-    normalized_checkpoint_file, checkpoint_diag = normalize_lock_path(
-        value=checkpoint_file,
-        kind="checkpoint",
-    )
-    if checkpoint_diag is not None:
-        diagnostics.append(checkpoint_diag)
+    normalized_migration_file = normalized_paths["migration"]
+    normalized_checkpoint_file = normalized_paths["checkpoint"]
 
     if normalized_migration_file is None or normalized_checkpoint_file is None:
         return None, tuple(diagnostics)
@@ -342,18 +352,6 @@ def check_duplicate_lock_step(
         seen_indices.add(step_index)
 
     return duplicate_entry, tuple(diagnostics)
-
-
-def normalize_lock_path(*, value: str, kind: str) -> tuple[str | None, Diagnostic | None]:
-    try:
-        normalized = normalize_relative_posix_path(value, label=f"lock {kind} path")
-    except RelativePathError as error:
-        return None, diag(
-            DiagnosticCode.LOCKFILE_STEP_PATH_INVALID,
-            value,
-            f"Invalid lock {kind} path: {error}",
-        )
-    return normalized, None
 
 
 def diag(code: DiagnosticCode, path: str, detail: str) -> Diagnostic:

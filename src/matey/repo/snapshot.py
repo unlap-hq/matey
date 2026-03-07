@@ -76,26 +76,44 @@ class Snapshot:
 
 
 def _read_optional_file(root: Path, path: Path) -> bytes | None:
-    safe_path = _safe_worktree_path(
-        root,
-        path,
-        allow_missing_leaf=True,
-        expected_kind="file",
-        symlink_message="Refusing to read symlinked file",
-    )
+    try:
+        safe_path = safe_descendant(
+            root=root,
+            candidate=path,
+            label=f"artifact file {path}",
+            allow_missing_leaf=True,
+            expected_kind="file",
+        )
+    except PathBoundaryError as error:
+        raise SnapshotError(
+            describe_path_boundary_error(
+                error,
+                path=path,
+                symlink_message="Refusing to read symlinked file",
+            )
+        ) from error
     if not safe_path.exists():
         return None
     return safe_path.read_bytes()
 
 
 def _read_sql_dir(root: Path, directory: Path, *, prefix: str) -> dict[str, bytes]:
-    safe_dir = _safe_worktree_path(
-        root,
-        directory,
-        allow_missing_leaf=True,
-        expected_kind="dir",
-        symlink_message="Refusing to traverse symlinked directory",
-    )
+    try:
+        safe_dir = safe_descendant(
+            root=root,
+            candidate=directory,
+            label=f"artifact dir {directory}",
+            allow_missing_leaf=True,
+            expected_kind="dir",
+        )
+    except PathBoundaryError as error:
+        raise SnapshotError(
+            describe_path_boundary_error(
+                error,
+                path=directory,
+                symlink_message="Refusing to traverse symlinked directory",
+            )
+        ) from error
     if not safe_dir.exists():
         return {}
 
@@ -104,54 +122,46 @@ def _read_sql_dir(root: Path, directory: Path, *, prefix: str) -> dict[str, byte
         root_path = Path(walk_root)
         for dirname in list(dirnames):
             child = root_path / dirname
-            _safe_worktree_path(
-                root,
-                child,
-                allow_missing_leaf=False,
-                expected_kind="dir",
-                symlink_message="Refusing to traverse symlinked directory",
-            )
+            try:
+                safe_descendant(
+                    root=root,
+                    candidate=child,
+                    label=f"artifact dir {child}",
+                    allow_missing_leaf=False,
+                    expected_kind="dir",
+                )
+            except PathBoundaryError as error:
+                raise SnapshotError(
+                    describe_path_boundary_error(
+                        error,
+                        path=child,
+                        symlink_message="Refusing to traverse symlinked directory",
+                    )
+                ) from error
         for filename in sorted(filenames):
             if not filename.endswith(".sql"):
                 continue
             file_path = root_path / filename
-            safe_file = _safe_worktree_path(
-                root,
-                file_path,
-                allow_missing_leaf=False,
-                expected_kind="file",
-                symlink_message="Refusing to read symlinked file",
-            )
+            try:
+                safe_file = safe_descendant(
+                    root=root,
+                    candidate=file_path,
+                    label=f"artifact file {file_path}",
+                    allow_missing_leaf=False,
+                    expected_kind="file",
+                )
+            except PathBoundaryError as error:
+                raise SnapshotError(
+                    describe_path_boundary_error(
+                        error,
+                        path=file_path,
+                        symlink_message="Refusing to read symlinked file",
+                    )
+                ) from error
             rel_path = safe_file.relative_to(safe_dir).as_posix()
             key = str(PurePosixPath(prefix) / rel_path)
             rows[key] = safe_file.read_bytes()
     return rows
-
-
-def _safe_worktree_path(
-    root: Path,
-    path: Path,
-    *,
-    allow_missing_leaf: bool,
-    expected_kind: str,
-    symlink_message: str,
-) -> Path:
-    try:
-        return safe_descendant(
-            root=root,
-            candidate=path,
-            label=f"artifact {expected_kind} {path}",
-            allow_missing_leaf=allow_missing_leaf,
-            expected_kind=expected_kind,
-        )
-    except PathBoundaryError as error:
-        raise SnapshotError(
-            describe_path_boundary_error(
-                error,
-                path=path,
-                symlink_message=symlink_message,
-            )
-        ) from error
 
 
 def _tree_at_path(root: pygit2.Tree, rel_path: str) -> pygit2.Tree | None:

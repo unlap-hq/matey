@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 from matey.config import TargetConfig
 from matey.lockfile import LockPolicy, LockState, build_lock_state
@@ -60,45 +60,15 @@ def plan(
     dbmate_bin: Path | None = None,
     policy: LockPolicy | None = None,
 ) -> PlanResult:
-    return _with_replay_plan(
+    return _run_plan_mode(
         target=target,
-        context="plan",
+        mode="summary",
         base_ref=base_ref,
         clean=clean,
         test_base_url=test_base_url,
         keep_scratch=keep_scratch,
         dbmate_bin=dbmate_bin,
         policy=policy,
-        action=lambda structural, replay_outcome: _plan_result(
-            target=target,
-            structural=structural,
-            replay_outcome=replay_outcome,
-        ),
-    )
-
-
-def _plan_result(
-    *,
-    target: TargetConfig,
-    structural: planning.StructuralPlan,
-    replay_outcome: replay.ReplayOutcome,
-) -> PlanResult:
-    matches, _left, _right = compare_replay_sql(
-        target=target,
-        structural=structural,
-        replay_outcome=replay_outcome,
-        context="plan",
-    )
-    return PlanResult(
-        target_name=target.name,
-        divergence_index=structural.divergence_index,
-        anchor_index=structural.anchor_index,
-        tail_count=len(structural.tail_steps),
-        matches=matches,
-        replay_scratch_url=replay_outcome.replay_scratch_url,
-        down_scratch_url=replay_outcome.down_scratch_url,
-        down_checked=replay_outcome.down_checked,
-        down_skipped=replay_outcome.down_skipped,
     )
 
 
@@ -112,16 +82,15 @@ def plan_sql(
     dbmate_bin: Path | None = None,
     policy: LockPolicy | None = None,
 ) -> str:
-    return _with_replay_plan(
+    return _run_plan_mode(
         target=target,
-        context="plan sql",
+        mode="sql",
         base_ref=base_ref,
         clean=clean,
         test_base_url=test_base_url,
         keep_scratch=keep_scratch,
         dbmate_bin=dbmate_bin,
         policy=policy,
-        action=lambda _structural, replay_outcome: replay_outcome.replay_schema_sql,
     )
 
 
@@ -135,40 +104,15 @@ def plan_diff(
     dbmate_bin: Path | None = None,
     policy: LockPolicy | None = None,
 ) -> str:
-    return _with_replay_plan(
+    return _run_plan_mode(
         target=target,
-        context="plan diff",
+        mode="diff",
         base_ref=base_ref,
         clean=clean,
         test_base_url=test_base_url,
         keep_scratch=keep_scratch,
         dbmate_bin=dbmate_bin,
         policy=policy,
-        action=lambda structural, replay_outcome: _plan_diff_result(
-            target=target,
-            structural=structural,
-            replay_outcome=replay_outcome,
-        ),
-    )
-
-
-def _plan_diff_result(
-    *,
-    target: TargetConfig,
-    structural: planning.StructuralPlan,
-    replay_outcome: replay.ReplayOutcome,
-) -> str:
-    left, right = replay_sql_fingerprints(
-        target=target,
-        structural=structural,
-        replay_outcome=replay_outcome,
-        context="plan diff",
-    )
-    return unified_sql_diff(
-        left_sql=left,
-        right_sql=right,
-        left_label="worktree/schema.sql",
-        right_label="replay/schema.sql",
     )
 
 
@@ -262,6 +206,78 @@ def _with_replay_plan(
         return action(structural, replay_outcome)
 
 
+def _run_plan_mode(
+    *,
+    target: TargetConfig,
+    mode: Literal["summary", "sql", "diff"],
+    base_ref: str | None,
+    clean: bool,
+    test_base_url: str | None,
+    keep_scratch: bool,
+    dbmate_bin: Path | None,
+    policy: LockPolicy | None,
+) -> PlanResult | str:
+    contexts: dict[str, str] = {
+        "summary": "plan",
+        "sql": "plan sql",
+        "diff": "plan diff",
+    }
+    return _with_replay_plan(
+        target=target,
+        context=contexts[mode],
+        base_ref=base_ref,
+        clean=clean,
+        test_base_url=test_base_url,
+        keep_scratch=keep_scratch,
+        dbmate_bin=dbmate_bin,
+        policy=policy,
+        action=lambda structural, replay_outcome: (
+            replay_outcome.replay_schema_sql
+            if mode == "sql"
+            else _plan_result_for_mode(
+                target=target,
+                mode=mode,
+                structural=structural,
+                replay_outcome=replay_outcome,
+            )
+        ),
+    )
+
+
+def _plan_result_for_mode(
+    *,
+    target: TargetConfig,
+    mode: Literal["summary", "diff"],
+    structural: planning.StructuralPlan,
+    replay_outcome: replay.ReplayOutcome,
+) -> PlanResult | str:
+    context = "plan" if mode == "summary" else "plan diff"
+    left, right = replay_sql_fingerprints(
+        target=target,
+        structural=structural,
+        replay_outcome=replay_outcome,
+        context=context,
+    )
+    if mode == "diff":
+        return unified_sql_diff(
+            left_sql=left,
+            right_sql=right,
+            left_label="worktree/schema.sql",
+            right_label="replay/schema.sql",
+        )
+    return PlanResult(
+        target_name=target.name,
+        divergence_index=structural.divergence_index,
+        anchor_index=structural.anchor_index,
+        tail_count=len(structural.tail_steps),
+        matches=left == right,
+        replay_scratch_url=replay_outcome.replay_scratch_url,
+        down_scratch_url=replay_outcome.down_scratch_url,
+        down_checked=replay_outcome.down_checked,
+        down_skipped=replay_outcome.down_skipped,
+    )
+
+
 def execute_replay_plan(
     *,
     target: TargetConfig,
@@ -290,22 +306,6 @@ def execute_replay_plan(
         dbmate_bin=dbmate_bin,
     )
     return structural, replay_outcome
-
-
-def compare_replay_sql(
-    *,
-    target: TargetConfig,
-    structural: planning.StructuralPlan,
-    replay_outcome: replay.ReplayOutcome,
-    context: str,
-) -> tuple[bool, str, str]:
-    left, right = replay_sql_fingerprints(
-        target=target,
-        structural=structural,
-        replay_outcome=replay_outcome,
-        context=context,
-    )
-    return left == right, left, right
 
 
 def replay_sql_fingerprints(

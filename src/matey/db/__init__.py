@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 from matey.config import TargetConfig
 from matey.dbmate import CmdResult, Dbmate
@@ -193,44 +193,11 @@ def plan(
     url: str | None = None,
     dbmate_bin: Path | None = None,
 ) -> PlanResult:
-    return _with_plan_runtime(
+    return _run_plan_mode(
         target=target,
+        mode="summary",
         url=url,
         dbmate_bin=dbmate_bin,
-        context="db plan",
-        action=lambda rt, live, target_index: _plan_result(
-            target=target,
-            rt=rt,
-            live=live,
-            target_index=target_index,
-        ),
-    )
-
-
-def _plan_result(
-    *,
-    target: TargetConfig,
-    rt: runtime.RuntimeContext,
-    live: runtime.LiveStatus,
-    target_index: int,
-) -> PlanResult:
-    if runtime.live_relation(state=rt.state, live=live) == "ahead":
-        return PlanResult(
-            target_name=target.name,
-            applied_index=live.applied_count,
-            target_index=target_index,
-            matches=False,
-        )
-    schema_match, _, _ = runtime.compare_expected_schema(
-        runtime=rt,
-        expected_index=target_index,
-        context="db plan",
-    )
-    return PlanResult(
-        target_name=target.name,
-        applied_index=live.applied_count,
-        target_index=target_index,
-        matches=(schema_match is not False),
     )
 
 
@@ -240,16 +207,11 @@ def plan_sql(
     url: str | None = None,
     dbmate_bin: Path | None = None,
 ) -> str:
-    return _with_plan_runtime(
+    return _run_plan_mode(
         target=target,
+        mode="sql",
         url=url,
         dbmate_bin=dbmate_bin,
-        context="db plan sql",
-        action=lambda rt, _live, target_index: runtime.expected_sql_for_index(
-            runtime=rt,
-            index=target_index,
-        )
-        or "",
     )
 
 
@@ -259,37 +221,11 @@ def plan_diff(
     url: str | None = None,
     dbmate_bin: Path | None = None,
 ) -> str:
-    return _with_plan_runtime(
+    return _run_plan_mode(
         target=target,
+        mode="diff",
         url=url,
         dbmate_bin=dbmate_bin,
-        context="db plan diff",
-        action=_plan_diff_result,
-    )
-
-
-def _plan_diff_result(
-    rt: runtime.RuntimeContext,
-    _live: runtime.LiveStatus,
-    target_index: int,
-) -> str:
-    expected_sql = runtime.expected_sql_for_index(runtime=rt, index=target_index) or ""
-    live_sql = runtime.dump_live_schema(rt.conn, context="db plan diff dump")
-    engine = runtime.engine_from_url(rt.conn.url)
-    try:
-        left = SqlProgram(live_sql, engine=engine).schema_fingerprint(
-            context_url=rt.conn.url
-        )
-        right = SqlProgram(expected_sql, engine=engine).schema_fingerprint(
-            context_url=rt.conn.url
-        )
-    except SqlError as error:
-        raise runtime.DbError(f"db plan diff failed: SQL analysis failed: {error}") from error
-    return unified_sql_diff(
-        left_sql=left,
-        right_sql=right,
-        left_label="live/schema.sql",
-        right_label="expected/worktree.sql",
     )
 
 
@@ -420,6 +356,90 @@ def _with_plan_runtime(
         context=context,
     ) as (rt, live, target_index):
         return action(rt, live, target_index)
+
+
+def _run_plan_mode(
+    *,
+    target: TargetConfig,
+    mode: Literal["summary", "sql", "diff"],
+    url: str | None,
+    dbmate_bin: Path | None,
+) -> PlanResult | str:
+    contexts: dict[str, str] = {
+        "summary": "db plan",
+        "sql": "db plan sql",
+        "diff": "db plan diff",
+    }
+    return _with_plan_runtime(
+        target=target,
+        url=url,
+        dbmate_bin=dbmate_bin,
+        context=contexts[mode],
+        action=lambda rt, live, target_index: (
+            runtime.expected_sql_for_index(runtime=rt, index=target_index) or ""
+            if mode == "sql"
+            else _plan_result_for_mode(
+                target=target,
+                mode=mode,
+                rt=rt,
+                live=live,
+                target_index=target_index,
+            )
+        ),
+    )
+
+
+def _plan_result_for_mode(
+    *,
+    target: TargetConfig,
+    mode: Literal["summary", "diff"],
+    rt: runtime.RuntimeContext,
+    live: runtime.LiveStatus,
+    target_index: int,
+) -> PlanResult | str:
+    if runtime.live_relation(state=rt.state, live=live) == "ahead":
+        if mode == "summary":
+            return PlanResult(
+                target_name=target.name,
+                applied_index=live.applied_count,
+                target_index=target_index,
+                matches=False,
+            )
+        left = ""
+        right = runtime.expected_sql_for_index(runtime=rt, index=target_index) or ""
+    else:
+        schema_match, expected_sql, live_sql = runtime.compare_expected_schema(
+            runtime=rt,
+            expected_index=target_index,
+            context="db plan" if mode == "summary" else "db plan diff",
+        )
+        if mode == "summary":
+            return PlanResult(
+                target_name=target.name,
+                applied_index=live.applied_count,
+                target_index=target_index,
+                matches=(schema_match is not False),
+            )
+        assert expected_sql is not None and live_sql is not None
+        left = live_sql
+        right = expected_sql
+
+    engine = runtime.engine_from_url(rt.conn.url)
+    try:
+        left_fingerprint = SqlProgram(left, engine=engine).schema_fingerprint(
+            context_url=rt.conn.url
+        )
+        right_fingerprint = SqlProgram(right, engine=engine).schema_fingerprint(
+            context_url=rt.conn.url
+        )
+    except SqlError as error:
+        raise runtime.DbError(f"db plan diff failed: SQL analysis failed: {error}") from error
+    return unified_sql_diff(
+        left_sql=left_fingerprint,
+        right_sql=right_fingerprint,
+        left_label="live/schema.sql",
+        right_label="expected/worktree.sql",
+    )
 
 
 __all__ = [
