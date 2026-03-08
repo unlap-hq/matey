@@ -34,8 +34,8 @@ def test_load_data_sets_parses_manifest_and_upsert_key(tmp_path: Path) -> None:
         """
 [core]
 files = [
-  { name = "roles", table = "roles", mode = "replace" },
-  { name = "permissions", table = "permissions", mode = "upsert", on = "id" },
+  { name = "roles", table = "roles", mode = "replace", order_by = ["id"] },
+  { name = "permissions", table = "permissions", mode = "upsert", on = ["id"], order_by = ["id"] },
 ]
 """.strip()
         + "\n",
@@ -45,7 +45,8 @@ files = [
 
     assert [data_set.name for data_set in sets] == ["core"]
     assert sets[0].files[0].path == target.data_dir / "roles.jsonl"
-    assert sets[0].files[1].on == "id"
+    assert sets[0].files[1].on == ("id",)
+    assert sets[0].files[0].order_by == ("id",)
 
 
 def test_select_data_set_uses_only_set_when_single(tmp_path: Path) -> None:
@@ -105,6 +106,24 @@ files = [
         load_data_sets(target)
 
 
+def test_load_data_sets_parses_composite_key_and_order_by(tmp_path: Path) -> None:
+    target = _target(tmp_path)
+    _write(
+        target.data_manifest,
+        """
+[core]
+files = [
+  { name = "memberships", table = "memberships", mode = "upsert", on = ["tenant_id", "slug"], order_by = ["tenant_id", "slug"] },
+]
+""".strip()
+        + "\n",
+    )
+
+    data_set = load_data_sets(target)[0]
+    assert data_set.files[0].on == ("tenant_id", "slug")
+    assert data_set.files[0].order_by == ("tenant_id", "slug")
+
+
 def test_jsonl_roundtrip_and_deterministic_order(tmp_path: Path) -> None:
     path = tmp_path / "rows.jsonl"
     rows = [
@@ -115,12 +134,9 @@ def test_jsonl_roundtrip_and_deterministic_order(tmp_path: Path) -> None:
     count = write_jsonl(path, rows)
 
     assert count == 2
-    assert read_jsonl(path) == [
-        {"id": 1, "name": "admin"},
-        {"id": 2, "name": "viewer"},
-    ]
+    assert read_jsonl(path) == rows
     lines = path.read_text(encoding="utf-8").splitlines()
-    assert json.loads(lines[0])["id"] == 1
+    assert json.loads(lines[0])["id"] == 2
 
 
 class _Backend:
@@ -151,7 +167,7 @@ def test_apply_rows_dispatches_all_modes(tmp_path: Path) -> None:
         table="permissions",
         mode="upsert",
         path=tmp_path / "permissions.jsonl",
-        on="id",
+        on=("id",),
     )
 
     _apply_rows(handle=handle, data_file=replace_file, rows=[{"id": 1}])
@@ -165,3 +181,43 @@ def test_apply_rows_dispatches_all_modes(tmp_path: Path) -> None:
         ("upsert", ("permissions", [{"id": 3}], "id", None)),
         ("truncate", ("roles", None)),
     ]
+
+
+def test_resolve_order_by_uses_upsert_key_by_default(tmp_path: Path) -> None:
+    from matey.data.io import resolve_order_by
+
+    data_file = DataFile(
+        name="permissions",
+        table="permissions",
+        mode="upsert",
+        path=tmp_path / "permissions.jsonl",
+        on=("id",),
+    )
+    assert resolve_order_by(data_file) == ("id",)
+
+
+def test_resolve_order_by_requires_explicit_order_for_non_upsert(tmp_path: Path) -> None:
+    from matey.data.io import resolve_order_by
+
+    data_file = DataFile(
+        name="roles",
+        table="roles",
+        mode="replace",
+        path=tmp_path / "roles.jsonl",
+    )
+    with pytest.raises(DataError, match="requires order_by"):
+        resolve_order_by(data_file)
+
+
+def test_apply_rows_rejects_composite_upsert_for_generic_backend(tmp_path: Path) -> None:
+    backend = _Backend()
+    handle = IbisTarget(kind="ibis", backend=backend, database=None)
+    upsert_file = DataFile(
+        name="permissions",
+        table="permissions",
+        mode="upsert",
+        path=tmp_path / "permissions.jsonl",
+        on=("tenant_id", "slug"),
+    )
+    with pytest.raises(DataError, match="composite upsert keys"):
+        _apply_rows(handle=handle, data_file=upsert_file, rows=[{"tenant_id": 1, "slug": "a"}])

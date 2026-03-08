@@ -12,6 +12,7 @@ from matey.scratch import engine_from_url as scratch_engine_from_url
 from .apply import _data_runtime
 from .io import load_data_sets, select_data_set, write_jsonl
 from .model import DataExportResult, DataFile, DataFileResult
+from .validate import validate_export_columns
 
 
 def export(
@@ -41,11 +42,13 @@ def _export_data_file(
     data_file: DataFile,
 ) -> DataFileResult:
     if engine is Engine.BIGQUERY_EMULATOR:
-        rows = _export_bigquery_emulator_rows(url=url, table_name=data_file.table)
+        rows = _export_bigquery_emulator_rows(url=url, data_file=data_file)
     else:
         handle = ibis_target(engine=engine, url=url)
         table = handle.backend.table(data_file.table, database=handle.database)  # type: ignore[attr-defined]
-        rows = handle.backend.execute(table).to_dict("records")  # type: ignore[attr-defined]
+        order_by = validate_export_columns(data_file=data_file, columns=table.schema().names)
+        expression = table.order_by([table[column] for column in order_by])
+        rows = handle.backend.execute(expression).to_dict("records")  # type: ignore[attr-defined]
     row_count = write_jsonl(data_file.path, rows)
     return DataFileResult(
         name=data_file.name,
@@ -55,12 +58,20 @@ def _export_data_file(
     )
 
 
-def _export_bigquery_emulator_rows(*, url: str, table_name: str) -> list[dict[str, object]]:
+def _export_bigquery_emulator_rows(*, url: str, data_file: DataFile) -> list[dict[str, object]]:
     hostport, project, _location, dataset = parse_bigquery_emulator_url(url)
     client = bigquery.Client(
         project=project,
         credentials=AnonymousCredentials(),
         client_options={"api_endpoint": f"http://{hostport}"},
     )
-    result = client.query(f"SELECT * FROM `{project}.{dataset}.{table_name}`").result()
+    table = client.get_table(f"{project}.{dataset}.{data_file.table}")
+    order_by = validate_export_columns(
+        data_file=data_file,
+        columns=tuple(field.name for field in table.schema),
+    )
+    rendered_order = ", ".join(f"`{column}`" for column in order_by)
+    result = client.query(
+        f"SELECT * FROM `{project}.{dataset}.{data_file.table}` ORDER BY {rendered_order}"
+    ).result()
     return [dict(row.items()) for row in result]

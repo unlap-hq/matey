@@ -73,7 +73,7 @@ def test_data_export_and_apply_roundtrip(
         """
 [core]
 files = [
-  { name = "roles", table = "roles", mode = "replace" },
+  { name = "roles", table = "roles", mode = "replace", order_by = ["id"] },
 ]
 """.strip()
         + "\n",

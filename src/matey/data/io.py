@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import tomllib
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
@@ -14,7 +14,7 @@ from matey.project import TargetConfig
 from .model import DataError, DataFile, DataSet
 
 _DATA_KEYS = frozenset({"files"})
-_DATA_FILE_KEYS = frozenset({"name", "table", "mode", "on"})
+_DATA_FILE_KEYS = frozenset({"name", "table", "mode", "on", "order_by"})
 _DATA_MODES = frozenset({"replace", "upsert", "insert"})
 
 
@@ -98,10 +98,7 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> int:
-    normalized_rows = sorted(
-        rows,
-        key=lambda row: json.dumps(row, sort_keys=True, default=_json_default),
-    )
+    normalized_rows = list(rows)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         for row in normalized_rows:
@@ -124,13 +121,19 @@ def _parse_data_file(
     table = raw.get("table")
     mode = raw.get("mode")
     on = raw.get("on")
+    order_by = raw.get("order_by")
     if not isinstance(name, str) or not isinstance(table, str) or not isinstance(mode, str):
         raise DataError(f"{manifest_path}: data file entries require string name/table/mode.")
     if mode not in _DATA_MODES:
         raise DataError(f"{manifest_path}: unsupported data mode {mode!r}.")
-    if on is not None and not isinstance(on, str):
-        raise DataError(f"{manifest_path}: data file {name!r} has non-string on key.")
-    if mode == "upsert" and not on:
+    normalized_on = _normalize_columns(on, manifest_path=manifest_path, name=name, key="on")
+    normalized_order_by = _normalize_columns(
+        order_by,
+        manifest_path=manifest_path,
+        name=name,
+        key="order_by",
+    )
+    if mode == "upsert" and not normalized_on:
         raise DataError(f"{manifest_path}: data file {name!r} with mode='upsert' requires on.")
 
     normalized = normalize_relative_posix_path(name, label="data file")
@@ -149,8 +152,43 @@ def _parse_data_file(
         table=table,
         mode=mode,  # type: ignore[arg-type]
         path=path,
-        on=on,
+        on=normalized_on,
+        order_by=normalized_order_by,
     )
+
+
+def resolve_order_by(data_file: DataFile) -> tuple[str, ...]:
+    if data_file.order_by:
+        return data_file.order_by
+    if data_file.on:
+        return data_file.on
+    raise DataError(
+        f"Data file {data_file.name!r} requires order_by for deterministic export."
+    )
+
+
+def _normalize_columns(
+    value: Any,
+    *,
+    manifest_path: Path,
+    name: str,
+    key: str,
+) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        columns = (value,)
+    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        if not value:
+            raise DataError(f"{manifest_path}: data file {name!r} has empty {key}.")
+        if not all(isinstance(item, str) and item for item in value):
+            raise DataError(f"{manifest_path}: data file {name!r} has non-string {key} entries.")
+        columns = tuple(value)
+    else:
+        raise DataError(
+            f"{manifest_path}: data file {name!r} has invalid {key}; expected string or array of strings."
+        )
+    return columns
 
 
 def _json_default(value: Any) -> str:

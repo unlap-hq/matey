@@ -18,7 +18,8 @@ class DataFile:
     table: str
     mode: DataMode
     path: Path
-    on: str | None = None
+    on: tuple[str, ...] | None = None
+    order_by: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)

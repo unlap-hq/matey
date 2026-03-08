@@ -12,6 +12,7 @@ from matey.scratch import engine_from_url as scratch_engine_from_url
 
 from .io import load_data_sets, read_jsonl, select_data_set
 from .model import DataApplyResult, DataError, DataFile, DataFileResult
+from .validate import validate_apply_rows
 
 
 def apply(
@@ -66,6 +67,8 @@ def _apply_data_file(
     data_file: DataFile,
 ) -> DataFileResult:
     rows = read_jsonl(data_file.path)
+    columns = _table_columns(handle=handle, data_file=data_file)
+    validate_apply_rows(data_file=data_file, columns=columns, rows=rows)
     _apply_rows(
         handle=handle,
         data_file=data_file,
@@ -105,7 +108,13 @@ def _apply_rows(
         return
     if data_file.mode == "upsert":
         if rows:
-            handle.backend.upsert(data_file.table, rows, on=data_file.on, database=handle.database)  # type: ignore[attr-defined]
+            if not data_file.on:
+                raise DataError(f"Data file {data_file.name!r} with mode='upsert' requires on.")
+            if len(data_file.on) != 1:
+                raise DataError(
+                    f"Data file {data_file.name!r} uses composite upsert keys, which this backend does not support."
+                )
+            handle.backend.upsert(data_file.table, rows, on=data_file.on[0], database=handle.database)  # type: ignore[attr-defined]
         return
     raise DataError(f"Unsupported data mode {data_file.mode!r} for {data_file.name}.")
 
@@ -124,29 +133,70 @@ def _apply_bigquery_emulator_rows(
     if data_file.mode == "replace":
         client.query(f"TRUNCATE TABLE `{table_ref}`").result()
         if rows:
-            errors = client.insert_rows_json(table_ref, rows)
-            if errors:
-                raise DataError(f"BigQuery emulator insert failed for {data_file.table}: {errors}")
+            _insert_bigquery_emulator_rows(client=client, table_ref=table_ref, rows=rows, table=data_file.table)
         return
     if data_file.mode == "insert":
         if rows:
-            errors = client.insert_rows_json(table_ref, rows)
-            if errors:
-                raise DataError(f"BigQuery emulator insert failed for {data_file.table}: {errors}")
+            _insert_bigquery_emulator_rows(client=client, table_ref=table_ref, rows=rows, table=data_file.table)
         return
     if data_file.mode == "upsert":
         if not data_file.on:
             raise DataError(f"Data file {data_file.name!r} with mode='upsert' requires on.")
         if rows:
-            values = ", ".join(json_value(row.get(data_file.on)) for row in rows)
-            client.query(f"DELETE FROM `{table_ref}` WHERE {data_file.on} IN ({values})").result()
-            errors = client.insert_rows_json(table_ref, rows)
-            if errors:
-                raise DataError(
-                    f"BigQuery emulator upsert insert failed for {data_file.table}: {errors}"
-                )
+            predicate = _bigquery_emulator_delete_predicate(data_file=data_file, rows=rows)
+            if predicate:
+                client.query(f"DELETE FROM `{table_ref}` WHERE {predicate}").result()
+            _insert_bigquery_emulator_rows(client=client, table_ref=table_ref, rows=rows, table=data_file.table)
         return
     raise DataError(f"Unsupported data mode {data_file.mode!r} for {data_file.name}.")
+
+
+def _table_columns(*, handle: IbisTarget, data_file: DataFile) -> tuple[str, ...]:
+    if handle.kind == "bigquery-emulator-client":
+        if handle.database is None:
+            raise DataError("BigQuery emulator data apply requires a project/dataset.")
+        project, dataset = handle.database
+        table = handle.backend.get_table(f"{project}.{dataset}.{data_file.table}")
+        return tuple(field.name for field in table.schema)
+    table = handle.backend.table(data_file.table, database=handle.database)  # type: ignore[attr-defined]
+    return tuple(table.schema().names)
+
+
+def _insert_bigquery_emulator_rows(
+    *,
+    client: bigquery.Client,
+    table_ref: str,
+    rows: list[dict[str, object]],
+    table: str,
+) -> None:
+    for batch in _chunk_rows(rows, size=500):
+        errors = client.insert_rows_json(table_ref, batch)
+        if errors:
+            raise DataError(f"BigQuery emulator insert failed for {table}: {errors}")
+
+
+def _chunk_rows(rows: list[dict[str, object]], *, size: int) -> Iterator[list[dict[str, object]]]:
+    for index in range(0, len(rows), size):
+        yield rows[index : index + size]
+
+
+def _bigquery_emulator_delete_predicate(
+    *,
+    data_file: DataFile,
+    rows: list[dict[str, object]],
+) -> str:
+    if not data_file.on:
+        return ""
+    key_columns = data_file.on
+    if len(key_columns) == 1:
+        key = key_columns[0]
+        values = ", ".join(json_value(row.get(key)) for row in rows)
+        return f"`{key}` IN ({values})"
+    clauses: list[str] = []
+    for row in rows:
+        parts = [f"`{column}` = {json_value(row.get(column))}" for column in key_columns]
+        clauses.append("(" + " AND ".join(parts) + ")")
+    return " OR ".join(clauses)
 
 
 def json_value(value: object) -> str:
