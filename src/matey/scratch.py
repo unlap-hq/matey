@@ -5,15 +5,23 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
+from matey.bqemu import (
+    DEFAULT_BIGQUERY_EMULATOR_IMAGE,
+    DEFAULT_BIGQUERY_EMULATOR_LOCATION,
+    DEFAULT_BIGQUERY_EMULATOR_PROJECT,
+    BigQueryEmulatorUrlError,
+    build_bigquery_emulator_url,
+    is_bigquery_location_like,
+    rewrite_bigquery_emulator_url,
+)
 from matey.sql import engine_from_url as sql_engine_from_url
 
-_BIGQUERY_MULTI_REGION = {"us", "eu"}
 _DEFAULT_POSTGRES_IMAGE = "postgres:16-alpine"
 _DEFAULT_MYSQL_IMAGE = "mysql:8.4"
 
@@ -24,6 +32,7 @@ class Engine(StrEnum):
     SQLITE = "sqlite"
     CLICKHOUSE = "clickhouse"
     BIGQUERY = "bigquery"
+    BIGQUERY_EMULATOR = "bigquery-emulator"
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +107,8 @@ class Scratch:
             raise ScratchConfigError(
                 "BigQuery scratch requires a non-empty test_base_url (--test-url or test_url_env)."
             )
+        if engine is Engine.BIGQUERY_EMULATOR:
+            return self._provision_bigquery_emulator(scratch_name=scratch_name)
 
         if engine is Engine.POSTGRES:
             from testcontainers.postgres import PostgresContainer
@@ -153,6 +164,50 @@ class Scratch:
 
         raise ScratchError(f"Unsupported scratch engine: {engine.value}")
 
+    def _provision_bigquery_emulator(
+        self,
+        *,
+        scratch_name: str,
+    ) -> tuple[ScratchLease, Callable[[], None]]:
+        from testcontainers.core.container import DockerContainer
+        from testcontainers.core.wait_strategies import HttpWaitStrategy
+
+        wait_path = (
+            f"/projects/{DEFAULT_BIGQUERY_EMULATOR_PROJECT}/datasets"
+            "?all=false&alt=json&pageToken=&prettyPrint=false"
+        )
+        container = (
+            DockerContainer(DEFAULT_BIGQUERY_EMULATOR_IMAGE)
+            .with_exposed_ports(9050)
+            .with_command(f"--project={DEFAULT_BIGQUERY_EMULATOR_PROJECT}")
+            .waiting_for(
+                HttpWaitStrategy(9050, wait_path).for_status_code_matching(
+                    lambda code: code < 500
+                )
+            )
+        )
+        try:
+            container.start()
+            host = container.get_container_host_ip()
+            port = int(container.get_exposed_port(9050))
+        except Exception as error:
+            with suppress(Exception):
+                container.stop()
+            raise ScratchError(f"Unable to provision BigQuery emulator scratch: {error}") from error
+
+        lease = ScratchLease(
+            engine=Engine.BIGQUERY_EMULATOR,
+            scratch_name=scratch_name,
+            url=build_bigquery_emulator_url(
+                hostport=f"{host}:{port}",
+                project=DEFAULT_BIGQUERY_EMULATOR_PROJECT,
+                location=DEFAULT_BIGQUERY_EMULATOR_LOCATION,
+                dataset=scratch_name,
+            ),
+            auto_provisioned=True,
+        )
+        return lease, container.stop
+
 
 def engine_from_url(url: str) -> Engine:
     match sql_engine_from_url(url):
@@ -166,6 +221,8 @@ def engine_from_url(url: str) -> Engine:
             return Engine.CLICKHOUSE
         case "bigquery":
             return Engine.BIGQUERY
+        case "bigquery-emulator":
+            return Engine.BIGQUERY_EMULATOR
         case _:
             raise ScratchError(f"Unsupported URL scheme for engine inference: {url!r}.")
 
@@ -177,6 +234,11 @@ def _build_scratch_url(*, engine: Engine, base_url: str, scratch_name: str) -> s
         return _sqlite_scratch_url(base_url=base_url, scratch_name=scratch_name)
     if engine is Engine.BIGQUERY:
         return _bigquery_scratch_url(base_url=base_url, scratch_name=scratch_name)
+    if engine is Engine.BIGQUERY_EMULATOR:
+        try:
+            return rewrite_bigquery_emulator_url(base_url=base_url, scratch_name=scratch_name)
+        except BigQueryEmulatorUrlError as error:
+            raise ScratchConfigError(str(error)) from error
     raise ScratchError(f"Unsupported scratch engine for URL build: {engine.value}")
 
 
@@ -236,7 +298,7 @@ def _bigquery_scratch_url(*, base_url: str, scratch_name: str) -> str:
     if len(segments) == 0:
         scratch_segments = [scratch_name]
     elif len(segments) == 1:
-        if _is_location_like(segments[0]):
+        if is_bigquery_location_like(segments[0]):
             raise ScratchConfigError(
                 "Ambiguous BigQuery scratch base URL. Use an explicit dataset "
                 "(bigquery://<project>/<dataset>) or explicit location+dataset "
@@ -255,13 +317,6 @@ def _bigquery_scratch_url(*, base_url: str, scratch_name: str) -> str:
             fragment=parsed.fragment,
         )
     )
-
-
-def _is_location_like(token: str) -> bool:
-    lowered = token.lower()
-    return lowered in _BIGQUERY_MULTI_REGION or "-" in lowered
-
-
 def _postgres_image_for_local_pg_client() -> str:
     major = _detect_client_major(
         binary_name="pg_dump",

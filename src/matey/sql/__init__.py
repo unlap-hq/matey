@@ -5,6 +5,7 @@ from .ast import (
     engine_from_url,
     has_executable_sql,
 )
+from .policy import BIGQUERY_FAMILY, is_bigquery_family
 from .program import (
     MigrationSqlError,
     SqlProgram,
@@ -20,6 +21,7 @@ from .source import (
 )
 
 __all__ = [
+    "BIGQUERY_FAMILY",
     "MigrationSqlError",
     "SqlError",
     "SqlProgram",
@@ -32,6 +34,7 @@ __all__ = [
     "ensure_newline",
     "first_migration_violation_message",
     "has_executable_sql",
+    "is_bigquery_family",
     "split_migration_sections",
     "unified_sql_diff",
 ]

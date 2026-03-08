@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from matey.bqemu import to_dbmate_bigquery_url
 from matey.dbmate import CmdResult, Dbmate, DbmateConfigError, DbmateError, passthrough
 
 
@@ -170,6 +171,24 @@ def test_wait_timeout_must_be_positive(tmp_path: Path) -> None:
 
     with pytest.raises(DbmateError, match="wait timeout_seconds must be greater than zero"):
         db.wait(0)
+
+
+def test_bigquery_emulator_url_translates_to_dbmate_bigquery_dsn() -> None:
+    assert to_dbmate_bigquery_url(
+        "bigquery-emulator://127.0.0.1:9050/matey/us/scratch_ds"
+    ) == (
+        "bigquery://matey/us/scratch_ds?"
+        "disable_auth=true&endpoint=http%3A%2F%2F127.0.0.1%3A9050"
+    )
+
+
+def test_bigquery_emulator_url_preserves_existing_query_params() -> None:
+    assert to_dbmate_bigquery_url(
+        "bigquery-emulator://127.0.0.1:9050/matey/scratch_ds?foo=bar"
+    ) == (
+        "bigquery://matey/scratch_ds?"
+        "foo=bar&disable_auth=true&endpoint=http%3A%2F%2F127.0.0.1%3A9050"
+    )
 
 
 def test_constructor_raises_for_missing_binary(tmp_path: Path) -> None:

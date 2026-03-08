@@ -14,7 +14,7 @@ from matey.scratch import Engine, Scratch, ScratchError
 
 
 def _integration_engines() -> list[Engine]:
-    engines = [Engine.SQLITE, Engine.POSTGRES, Engine.MYSQL, Engine.CLICKHOUSE]
+    engines = [Engine.SQLITE, Engine.POSTGRES, Engine.MYSQL, Engine.CLICKHOUSE, Engine.BIGQUERY_EMULATOR]
     if os.getenv("MATEY_BIGQUERY_TEST_URL", "").strip():
         engines.append(Engine.BIGQUERY)
     return engines

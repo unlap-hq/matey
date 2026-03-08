@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 TargetKind = Literal["none", "database", "bigquery"]
+BIGQUERY_FAMILY = frozenset({"bigquery", "bigquery-emulator"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +65,13 @@ _POLICIES: dict[str, EnginePolicy] = {
         checkpoint_retarget=True,
         target_kind="bigquery",
     ),
+    "bigquery-emulator": EnginePolicy(
+        name="bigquery-emulator",
+        dialect="bigquery",
+        guarded_writes=True,
+        checkpoint_retarget=True,
+        target_kind="bigquery",
+    ),
 }
 
 
@@ -73,6 +81,8 @@ def normalize_engine(engine: str | None) -> str:
     lowered = engine.lower()
     if lowered == "postgresql":
         return "postgres"
+    if lowered == "bigquery_emulator":
+        return "bigquery-emulator"
     return lowered
 
 
@@ -87,4 +97,15 @@ def policy_for_engine(engine: str | None) -> EnginePolicy:
     ))
 
 
-__all__ = ["EnginePolicy", "TargetKind", "normalize_engine", "policy_for_engine"]
+def is_bigquery_family(engine: str | None) -> bool:
+    return normalize_engine(engine) in BIGQUERY_FAMILY
+
+
+__all__ = [
+    "BIGQUERY_FAMILY",
+    "EnginePolicy",
+    "TargetKind",
+    "is_bigquery_family",
+    "normalize_engine",
+    "policy_for_engine",
+]

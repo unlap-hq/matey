@@ -5,6 +5,7 @@ import pytest
 from matey.sql import (
     SqlError,
     SqlProgram,
+    bigquery_target_from_url,
     has_executable_sql,
     split_migration_sections,
 )
@@ -144,6 +145,12 @@ SELECT * FROM `example-project.staging.users`;
     )
 
     assert normalized_left != normalized_right
+
+
+def test_bigquery_target_from_emulator_url_extracts_project_and_dataset() -> None:
+    assert bigquery_target_from_url(
+        "bigquery-emulator://127.0.0.1:9050/matey/us/scratch_ds"
+    ) == ("matey", "scratch_ds")
 
 
 def test_migration_sections_split_up_and_down() -> None:

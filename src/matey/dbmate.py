@@ -7,11 +7,23 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from plumbum import local
 
+from matey.bqemu import (
+    BigQueryEmulatorUrlError,
+    is_bigquery_emulator_url,
+    parse_bigquery_emulator_url,
+    to_dbmate_bigquery_url,
+)
 from matey.paths import PathBoundaryError, describe_path_boundary_error, ensure_non_symlink_path
 from matey.sql import SqlTextDecodeError, decode_sql_text
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from google.cloud.bigquery import SchemaField
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,7 +152,11 @@ class Dbmate:
         return DbConnection(dbmate=self, url=url)
 
     def _base_args(self, url: str) -> tuple[str, ...]:
-        return ("--url", url, "--migrations-dir", str(self._migrations_dir))
+        try:
+            dbmate_url = to_dbmate_bigquery_url(url)
+        except BigQueryEmulatorUrlError as error:
+            raise DbmateConfigError(str(error)) from error
+        return ("--url", dbmate_url, "--migrations-dir", str(self._migrations_dir))
 
     def _run_url_verb(
         self,
@@ -245,6 +261,8 @@ class DbConnection:
         )
 
     def dump(self) -> CmdResult:
+        if is_bigquery_emulator_url(self.url):
+            return _dump_bigquery_emulator(self)
         with self.dbmate._temp_schema_file() as schema_path:
             result = self.dbmate._run_url_verb(
                 url=self.url,
@@ -280,6 +298,120 @@ class DbConnection:
                 no_dump_schema=True,
                 global_args=("--schema-file", str(schema_path)),
             )
+def _dump_bigquery_emulator(conn: DbConnection) -> CmdResult:
+    try:
+        dbmate_url = to_dbmate_bigquery_url(conn.url)
+    except BigQueryEmulatorUrlError as error:
+        raise DbmateConfigError(str(error)) from error
+    argv = (
+        str(conn.dbmate.dbmate_bin),
+        "--url",
+        dbmate_url,
+        "--migrations-dir",
+        str(conn.dbmate.migrations_dir),
+        "dump",
+    )
+    try:
+        schema_sql = _bigquery_emulator_dump_sql(conn.url)
+    except Exception as error:
+        return CmdResult(argv=argv, exit_code=2, stdout="", stderr=f"Error: {error}")
+    return CmdResult(argv=argv, exit_code=0, stdout=schema_sql, stderr="")
+
+
+def _bigquery_emulator_dump_sql(url: str) -> str:
+    # Compatibility shim: dbmate's real BigQuery dump path does not work against
+    # the emulator, so this path emits a table-only schema dump.
+    from google.auth.credentials import AnonymousCredentials
+    from google.cloud import bigquery
+
+    hostport, project, _location, dataset = parse_bigquery_emulator_url(url)
+    client = bigquery.Client(
+        project=project,
+        credentials=AnonymousCredentials(),
+        client_options={"api_endpoint": f"http://{hostport}"},
+    )
+
+    lines: list[str] = []
+    table_items = sorted(client.list_tables(dataset), key=lambda item: item.table_id)
+    table_names = {item.table_id for item in table_items}
+    migrations_table = None
+    for item in table_items:
+        table = client.get_table(item.reference)
+        if table.table_type != "TABLE":
+            continue
+        if table.table_id == "schema_migrations":
+            migrations_table = table
+            continue
+        lines.append(_render_bigquery_emulator_table_ddl(table.table_id, table.schema))
+
+    versions: list[str] = []
+    if "schema_migrations" in table_names:
+        rows = client.query(
+            f"SELECT version FROM `{project}.{dataset}.schema_migrations` ORDER BY version ASC"
+        ).result()
+        versions = [str(row["version"]) for row in rows]
+
+    if versions and migrations_table is not None:
+        lines.append(
+            _render_bigquery_emulator_table_ddl("schema_migrations", migrations_table.schema)
+        )
+        values = ",\n    ".join(f"('{version}')" for version in versions)
+        lines.append(
+            "INSERT INTO schema_migrations (version) VALUES\n"
+            f"    {values};"
+        )
+
+    output = "\n\n".join(lines).strip()
+    return f"{output}\n" if output else ""
+
+
+def _render_bigquery_emulator_table_ddl(
+    table_name: str,
+    schema: Sequence[SchemaField],
+) -> str:
+    fields = ", ".join(
+        f"{field.name} {_render_bigquery_emulator_field_type(field)}"
+        + (" NOT NULL" if getattr(field, "mode", "").upper() == "REQUIRED" else "")
+        for field in schema
+    )
+    return f"CREATE TABLE {table_name} ({fields});"
+
+
+def _render_bigquery_emulator_field_type(field: SchemaField) -> str:
+    field_type = str(getattr(field, "field_type", "")).upper()
+    inner = _BIGQUERY_EMULATOR_TYPE_MAP.get(field_type, field_type)
+    if field_type in {"RECORD", "STRUCT"}:
+        subfields = ", ".join(
+            f"{subfield.name} {_render_bigquery_emulator_field_type(subfield)}"
+            + (" NOT NULL" if getattr(subfield, "mode", "").upper() == "REQUIRED" else "")
+            for subfield in getattr(field, "fields", ())
+        )
+        inner = f"STRUCT<{subfields}>"
+    if str(getattr(field, "mode", "")).upper() == "REPEATED":
+        return f"ARRAY<{inner}>"
+    return inner
+
+
+_BIGQUERY_EMULATOR_TYPE_MAP = {
+    "INTEGER": "INT64",
+    "INT64": "INT64",
+    "FLOAT": "FLOAT64",
+    "FLOAT64": "FLOAT64",
+    "BOOLEAN": "BOOL",
+    "BOOL": "BOOL",
+    "STRING": "STRING",
+    "BYTES": "BYTES",
+    "DATE": "DATE",
+    "DATETIME": "DATETIME",
+    "TIME": "TIME",
+    "TIMESTAMP": "TIMESTAMP",
+    "NUMERIC": "NUMERIC",
+    "BIGNUMERIC": "BIGNUMERIC",
+    "GEOGRAPHY": "GEOGRAPHY",
+    "JSON": "JSON",
+    "RECORD": "STRUCT",
+    "STRUCT": "STRUCT",
+}
 
 
 __all__ = [

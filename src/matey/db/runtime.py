@@ -19,10 +19,15 @@ from matey.sql import (
     decode_sql_text,
     engine_from_url,
     first_migration_violation_message,
+    is_bigquery_family,
 )
 from matey.tx import TxError, recover_artifacts, serialized_target
 
 _STATUS_LINE_PATTERN = re.compile(r"^\[(?P<mark>[ X])\]\s+(?P<file>.+?)\s*$")
+_BIGQUERY_MISSING_DB_PATTERNS = (
+    re.compile(r"\bnot found:\s*dataset\b", re.IGNORECASE),
+    re.compile(r"\bdataset .* not found\b", re.IGNORECASE),
+)
 _MISSING_DB_PATTERNS = {
     "postgres": (
         re.compile(r'database "[^"]+" does not exist', re.IGNORECASE),
@@ -39,10 +44,7 @@ _MISSING_DB_PATTERNS = {
         re.compile(r"\bdatabase [^\s]+ does not exist\b", re.IGNORECASE),
         re.compile(r"\bunknown database\b", re.IGNORECASE),
     ),
-    "bigquery": (
-        re.compile(r"\bnot found:\s*dataset\b", re.IGNORECASE),
-        re.compile(r"\bdataset .* not found\b", re.IGNORECASE),
-    ),
+    "bigquery": _BIGQUERY_MISSING_DB_PATTERNS,
 }
 
 
@@ -164,7 +166,11 @@ def is_missing_db_status_error(url: str, details: str) -> bool:
     if "connection refused" in lowered:
         return False
     engine = engine_from_url(url)
-    patterns = _MISSING_DB_PATTERNS.get(engine, ())
+    patterns = (
+        _BIGQUERY_MISSING_DB_PATTERNS
+        if is_bigquery_family(engine)
+        else _MISSING_DB_PATTERNS.get(engine, ())
+    )
     return any(pattern.search(lowered) is not None for pattern in patterns)
 
 
@@ -296,7 +302,7 @@ def ensure_migration_range_allowed(
 
 def migration_guard_engine(url: str) -> str | None:
     scheme = engine_from_url(url)
-    return scheme if scheme in {"bigquery", "mysql", "clickhouse"} else None
+    return scheme if is_bigquery_family(scheme) or scheme in {"mysql", "clickhouse"} else None
 
 
 def migration_payload(*, runtime: RuntimeContext, migration_file: str) -> bytes:
@@ -376,7 +382,7 @@ def expected_sql_for_index(*, runtime: RuntimeContext, index: int) -> str | None
 
 
 def is_bigquery_url(url: str) -> bool:
-    return engine_from_url(url) == "bigquery"
+    return is_bigquery_family(engine_from_url(url))
 
 
 def ensure_bigquery_dataset_exists(*, conn: DbConnection, context: str) -> None:

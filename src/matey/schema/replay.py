@@ -336,7 +336,7 @@ def require_ok(result: CmdResult, *, context: str) -> None:
 
 def validate_tail_migration_targets(structural: StructuralPlan) -> None:
     engine = structural.engine.value
-    if engine not in {"bigquery", "mysql", "clickhouse"}:
+    if engine not in {"bigquery", "bigquery-emulator", "mysql", "clickhouse"}:
         return
     try:
         message = first_migration_violation_message(

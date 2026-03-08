@@ -6,6 +6,13 @@ from types import ModuleType
 
 import pytest
 
+from matey.bqemu import (
+    DEFAULT_BIGQUERY_EMULATOR_IMAGE,
+    DEFAULT_BIGQUERY_EMULATOR_LOCATION,
+    DEFAULT_BIGQUERY_EMULATOR_PROJECT,
+    build_bigquery_emulator_url,
+    rewrite_bigquery_emulator_url,
+)
 from matey.scratch import Engine, Scratch, ScratchConfigError
 
 
@@ -112,6 +119,113 @@ def test_bigquery_without_base_url_fails() -> None:
         ),
     ):
         pass
+
+
+@pytest.mark.parametrize(
+    ("base_url", "expected"),
+    [
+        (
+            "bigquery-emulator://127.0.0.1:9050/matey",
+            "bigquery-emulator://127.0.0.1:9050/matey/scratch_ds",
+        ),
+        (
+            "bigquery-emulator://127.0.0.1:9050/matey/dataset",
+            "bigquery-emulator://127.0.0.1:9050/matey/scratch_ds",
+        ),
+        (
+            "bigquery-emulator://127.0.0.1:9050/matey/us/dataset",
+            "bigquery-emulator://127.0.0.1:9050/matey/us/scratch_ds",
+        ),
+    ],
+)
+def test_bigquery_emulator_base_url_rewrite(base_url: str, expected: str) -> None:
+    assert rewrite_bigquery_emulator_url(base_url=base_url, scratch_name="scratch_ds") == expected
+
+
+def test_bigquery_emulator_location_like_single_segment_is_ambiguous() -> None:
+    scratch = Scratch()
+    with pytest.raises(
+        ScratchConfigError, match="Ambiguous BigQuery emulator scratch base URL"
+    ), scratch.lease(
+        engine=Engine.BIGQUERY_EMULATOR,
+        scratch_name="scratch_ds",
+        test_base_url="bigquery-emulator://127.0.0.1:9050/matey/us",
+    ):
+        pass
+
+
+def test_bigquery_emulator_auto_provision(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = ModuleType("testcontainers.core.container")
+    wait_module = ModuleType("testcontainers.core.wait_strategies")
+    captured: dict[str, object] = {}
+
+    class _FakeHttpWaitStrategy:
+        def __init__(self, port: int, path: str = "/") -> None:
+            captured["wait_port"] = port
+            captured["wait_path"] = path
+
+        def for_status_code_matching(self, predicate: object) -> _FakeHttpWaitStrategy:
+            captured["wait_predicate"] = predicate
+            return self
+
+    class _FakeDockerContainer:
+        def __init__(self, image: str) -> None:
+            captured["image"] = image
+            self.started = False
+            self.stopped = False
+            self.wait_strategy = None
+
+        def with_exposed_ports(self, *ports: int) -> _FakeDockerContainer:
+            captured["ports"] = ports
+            return self
+
+        def with_command(self, command: str) -> _FakeDockerContainer:
+            captured["command"] = command
+            return self
+
+        def waiting_for(self, strategy: object) -> _FakeDockerContainer:
+            self.wait_strategy = strategy
+            captured["strategy"] = strategy
+            return self
+
+        def start(self) -> None:
+            self.started = True
+
+        def stop(self) -> None:
+            self.stopped = True
+
+        def get_container_host_ip(self) -> str:
+            return "127.0.0.1"
+
+        def get_exposed_port(self, port: int) -> str:
+            assert port == 9050
+            return "19050"
+
+    module.DockerContainer = _FakeDockerContainer
+    monkeypatch.setitem(sys.modules, "testcontainers.core.container", module)
+    wait_module.HttpWaitStrategy = _FakeHttpWaitStrategy
+    monkeypatch.setitem(sys.modules, "testcontainers.core.wait_strategies", wait_module)
+
+    scratch = Scratch()
+    with scratch.lease(
+        engine=Engine.BIGQUERY_EMULATOR,
+        scratch_name="scratch_bqemu",
+        test_base_url=None,
+    ) as lease:
+        assert lease.auto_provisioned is True
+        assert lease.url == build_bigquery_emulator_url(
+            hostport="127.0.0.1:19050",
+            project=DEFAULT_BIGQUERY_EMULATOR_PROJECT,
+            location=DEFAULT_BIGQUERY_EMULATOR_LOCATION,
+            dataset="scratch_bqemu",
+        )
+
+    assert captured["image"] == DEFAULT_BIGQUERY_EMULATOR_IMAGE
+    assert captured["ports"] == (9050,)
+    assert captured["command"] == f"--project={DEFAULT_BIGQUERY_EMULATOR_PROJECT}"
+    assert captured["wait_port"] == 9050
+    assert f"projects/{DEFAULT_BIGQUERY_EMULATOR_PROJECT}/datasets" in captured["wait_path"]
+    assert callable(captured["wait_predicate"])
 
 
 def test_bigquery_location_like_single_segment_is_ambiguous() -> None:

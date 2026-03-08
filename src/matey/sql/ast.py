@@ -8,6 +8,8 @@ from urllib.parse import urlsplit
 from sqlglot import errors as sqlglot_errors
 from sqlglot import exp, parse
 
+from matey.bqemu import parse_bigquery_emulator_url
+
 from .policy import EnginePolicy, normalize_engine, policy_for_engine
 from .source import SqlTextDecodeError, _source_anchor_statements
 
@@ -51,7 +53,10 @@ def engine_from_url(context_url: str | None) -> str:
 
 
 def bigquery_target_from_url(context_url: str | None) -> tuple[str, str] | None:
-    identity = _target_identity_from_url(context_url, policy_for_engine("bigquery"))
+    identity = _target_identity_from_url(
+        context_url,
+        policy_for_engine(engine_from_url(context_url) or "bigquery"),
+    )
     if identity is None or identity.catalog is None or identity.db is None:
         return None
     return identity.catalog, identity.db
@@ -251,14 +256,14 @@ def _canonical_statement(
             policy=policy,
             source_identity=statement_target,
         )
-    if policy.name != "bigquery":
+    if policy.target_kind != "bigquery":
         canonical = _unquote_simple_identifiers(canonical)
     return _render(canonical, policy)
 
 
 def _canonical_schema_creation(expr: exp.Expression, policy: EnginePolicy) -> str:
     qualifier = " IF NOT EXISTS" if bool(expr.args.get("exists")) else ""
-    if policy.name == "bigquery":
+    if policy.target_kind == "bigquery":
         return f"CREATE DATASET{qualifier} __dataset__"
     if policy.target_kind == "database":
         return f"CREATE DATABASE{qualifier} __db__"
@@ -471,10 +476,14 @@ def _target_identity_from_url(
     parsed = urlsplit(context_url)
     path = parsed.path.strip("/")
     if policy.target_kind == "bigquery":
-        if not parsed.netloc:
-            return None
+        if policy.name == "bigquery-emulator":
+            try:
+                _hostport, project, _location, dataset = parse_bigquery_emulator_url(context_url)
+            except ValueError:
+                return None
+            return _TargetIdentity(catalog=project, db=dataset)
         parts = [segment for segment in path.split("/") if segment]
-        if not parts:
+        if not parsed.netloc or not parts:
             return None
         return _TargetIdentity(catalog=parsed.netloc.strip(), db=parts[-1])
     if policy.target_kind == "database":
