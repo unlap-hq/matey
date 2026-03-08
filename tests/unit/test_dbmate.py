@@ -7,6 +7,7 @@ import pytest
 
 from matey.bqemu import to_dbmate_bigquery_url
 from matey.dbmate import CmdResult, Dbmate, DbmateConfigError, DbmateError, passthrough
+from matey.sql import SqlTextDecodeError
 
 
 def _make_dbmate(tmp_path: Path) -> Dbmate:
@@ -90,7 +91,7 @@ def test_dump_requires_schema_file_output(monkeypatch: pytest.MonkeyPatch, tmp_p
         db.dump()
 
 
-def test_dump_wraps_invalid_utf8_schema_file(
+def test_dump_propagates_invalid_utf8_schema_file(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -105,7 +106,7 @@ def test_dump_wraps_invalid_utf8_schema_file(
 
     monkeypatch.setattr(Dbmate, "_run", fake_run)
 
-    with pytest.raises(DbmateError, match="Unable to decode dbmate dump schema file as UTF-8"):
+    with pytest.raises(SqlTextDecodeError, match="Unable to decode dbmate dump schema file as UTF-8"):
         db.dump()
 
 

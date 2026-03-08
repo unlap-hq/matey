@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
-from matey.config import TargetConfig
 from matey.lockfile import LockFile, LockPolicy, LockStep, WorktreeStep, generated_sql_digest
 from matey.paths import (
     PathBoundaryError,
@@ -11,8 +10,9 @@ from matey.paths import (
     safe_descendant,
     safe_relative_descendant,
 )
+from matey.project import TargetConfig
 from matey.scratch import Engine
-from matey.sql import SqlTextDecodeError, decode_sql_text, ensure_newline
+from matey.sql import decode_sql_text, ensure_newline
 from matey.tx import TxError, commit_artifacts
 from matey.zero import zero_schema_sql
 
@@ -50,7 +50,7 @@ def build_desired_artifacts(
         checkpoint_sql = checkpoint_texts.get(step.checkpoint_file)
         if checkpoint_sql is None:
             raise SchemaError(f"Missing checkpoint SQL for {step.checkpoint_file}.")
-        checkpoint_path = target.dir / step.checkpoint_file
+        checkpoint_path = target.root / step.checkpoint_file
         artifacts[checkpoint_path] = ensure_newline(checkpoint_sql).encode("utf-8")
     return artifacts
 
@@ -85,7 +85,7 @@ def compute_artifact_delta(
     for path, payload in desired_artifacts.items():
         try:
             safe_path = safe_descendant(
-                root=target.dir,
+                root=target.root,
                 candidate=path,
                 label=f"artifact path {path}",
                 allow_missing_leaf=True,
@@ -97,7 +97,7 @@ def compute_artifact_delta(
             continue
         writes[safe_path] = payload
 
-    target_root = target.dir
+    target_root = target.root
     checkpoints_root = safe_descendant(
         root=target_root,
         candidate=target.checkpoints,
@@ -144,7 +144,7 @@ def apply_artifact_delta(
     deletes: tuple[Path, ...],
 ) -> tuple[str, ...]:
     try:
-        changed_paths = commit_artifacts(target.dir, writes=writes, deletes=deletes)
+        changed_paths = commit_artifacts(target.root, writes=writes, deletes=deletes)
     except TxError as error:
         raise SchemaError(f"apply: artifact commit failed: {error}") from error
     changed_files: list[str] = []
@@ -152,7 +152,7 @@ def apply_artifact_delta(
         try:
             changed_files.append(
                 safe_relative_descendant(
-                    root=target.dir,
+                    root=target.root,
                     candidate=path,
                     label=f"changed artifact {path}",
                     allow_missing_leaf=True,
@@ -174,13 +174,10 @@ def collect_checkpoint_texts(
         payload = structural.head_snapshot.checkpoints.get(step.checkpoint_file)
         if payload is None:
             raise SchemaError(f"Missing unchanged checkpoint {step.checkpoint_file}.")
-        try:
-            checkpoints[step.checkpoint_file] = decode_sql_text(
-                payload,
-                label=f"checkpoint {step.checkpoint_file}",
-            )
-        except SqlTextDecodeError as error:
-            raise SchemaError(str(error)) from error
+        checkpoints[step.checkpoint_file] = decode_sql_text(
+            payload,
+            label=f"checkpoint {step.checkpoint_file}",
+        )
 
     for step in structural.tail_steps:
         checkpoint_sql = replay.checkpoint_sql_by_file.get(step.checkpoint_file)

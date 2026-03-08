@@ -7,8 +7,8 @@ from pathlib import Path, PurePosixPath
 
 import pygit2
 
-from matey.config import TargetConfig
 from matey.paths import PathBoundaryError, describe_path_boundary_error, safe_descendant
+from matey.project import TargetConfig
 
 
 class SnapshotError(RuntimeError):
@@ -25,23 +25,20 @@ class Snapshot:
 
     @classmethod
     def from_worktree(cls, target: TargetConfig) -> Snapshot:
-        try:
-            target_root = safe_descendant(
-                root=target.dir,
-                candidate=target.dir,
-                label=f"target {target.name} directory",
-                allow_missing_leaf=True,
-                expected_kind="dir",
-            )
-            return cls(
-                target_name=target.name,
-                schema_sql=_read_optional_file(target_root, target.schema),
-                lock_toml=_read_optional_file(target_root, target.lockfile),
-                migrations=_read_sql_dir(target_root, target.migrations, prefix="migrations"),
-                checkpoints=_read_sql_dir(target_root, target.checkpoints, prefix="checkpoints"),
-            )
-        except PathBoundaryError as error:
-            raise SnapshotError(str(error)) from error
+        target_root = safe_descendant(
+            root=target.root,
+            candidate=target.root,
+            label=f"target {target.name} directory",
+            allow_missing_leaf=True,
+            expected_kind="dir",
+        )
+        return cls(
+            target_name=target.name,
+            schema_sql=_read_optional_file(target_root, target.schema),
+            lock_toml=_read_optional_file(target_root, target.lockfile),
+            migrations=_read_sql_dir(target_root, target.migrations, prefix="migrations"),
+            checkpoints=_read_sql_dir(target_root, target.checkpoints, prefix="checkpoints"),
+        )
 
     @classmethod
     def from_tree(

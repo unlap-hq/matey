@@ -7,10 +7,11 @@ from pathlib import Path
 import pytest
 
 import matey.db as db_mod
-from matey.config import TargetConfig
 from matey.dbmate import CmdResult, DbmateError
 from matey.lockfile import LockState, WorktreeStep
+from matey.project import TargetConfig
 from matey.repo import Snapshot
+from matey.sql import MigrationSqlError, SqlTextDecodeError
 
 db_runtime_mod = importlib.import_module("matey.db.runtime")
 
@@ -18,7 +19,7 @@ db_runtime_mod = importlib.import_module("matey.db.runtime")
 def _target(tmp_path: Path, name: str = "core") -> TargetConfig:
     return TargetConfig(
         name=name,
-        dir=(tmp_path / "db" / name).resolve(),
+        root=(tmp_path / "db" / name).resolve(),
         url_env=f"{name.upper()}_DATABASE_URL",
         test_url_env=f"{name.upper()}_TEST_DATABASE_URL",
     )
@@ -480,14 +481,14 @@ def test_ensure_prefix_rejects_duplicate_basenames_in_applied_prefix(tmp_path: P
         db_runtime_mod.ensure_prefix(state=state, live=live)
 
 
-def test_pending_up_allowed_wraps_invalid_utf8_as_db_error(tmp_path: Path) -> None:
+def test_pending_up_allowed_propagates_invalid_utf8_migration_error(tmp_path: Path) -> None:
     conn = _FakeConn(url="mysql://root:root@127.0.0.1:3306/testdb")
     step = _step(1, "001_init.sql")
     ctx = _ctx(tmp_path, conn=conn, steps=(step,))
     ctx.snapshot.migrations[step.migration_file] = b"\xff\xfe\x00"
 
     with pytest.raises(
-        db_mod.DbError,
+        MigrationSqlError,
         match=r"Unable to decode migration migrations/001_init\.sql as UTF-8",
     ):
         db_runtime_mod.ensure_pending_up_allowed(
@@ -497,7 +498,7 @@ def test_pending_up_allowed_wraps_invalid_utf8_as_db_error(tmp_path: Path) -> No
         )
 
 
-def test_expected_sql_for_index_wraps_invalid_utf8_schema_sql(tmp_path: Path) -> None:
+def test_expected_sql_for_index_propagates_invalid_utf8_schema_sql(tmp_path: Path) -> None:
     conn = _FakeConn()
     step = _step(1, "001_init.sql")
     target = _target(tmp_path)
@@ -521,7 +522,7 @@ def test_expected_sql_for_index_wraps_invalid_utf8_schema_sql(tmp_path: Path) ->
         conn=conn,
     )
 
-    with pytest.raises(db_mod.DbError, match=r"Unable to decode worktree schema\.sql as UTF-8"):
+    with pytest.raises(SqlTextDecodeError, match=r"Unable to decode worktree schema\.sql as UTF-8"):
         db_runtime_mod.expected_sql_for_index(runtime=ctx, index=1)
 
 
@@ -812,7 +813,7 @@ def test_new_rejects_symlinked_migrations_dir(tmp_path: Path) -> None:
     target = _target(tmp_path)
     outside = tmp_path / "outside"
     outside.mkdir()
-    target.dir.mkdir(parents=True, exist_ok=True)
+    target.root.mkdir(parents=True, exist_ok=True)
     target.migrations.symlink_to(outside, target_is_directory=True)
 
     with pytest.raises(db_mod.DbError, match="symlinked file or directory"):

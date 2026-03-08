@@ -41,6 +41,12 @@ def normalize_relative_posix_path(path: str, *, label: str) -> str:
     return normalized
 
 
+def normalize_target_path_ref(path: str, *, label: str = "target path") -> str:
+    if path in ("", "."):
+        return "."
+    return normalize_relative_posix_path(path, label=label)
+
+
 def ensure_non_symlink_path(
     path: Path,
     *,
@@ -169,6 +175,7 @@ __all__ = [
     "describe_path_boundary_error",
     "ensure_non_symlink_path",
     "normalize_relative_posix_path",
+    "normalize_target_path_ref",
     "safe_descendant",
     "safe_relative_descendant",
 ]

@@ -6,8 +6,9 @@ from pathlib import Path
 import pygit2
 import pytest
 
-from matey.config import TargetConfig
-from matey.lint import lint_paths, lint_target
+from matey.lint.semantic import lint_target
+from matey.lint.sqlfluff import lint_paths
+from matey.project import TargetConfig
 
 cli = import_module("matey.cli.app")
 
@@ -20,7 +21,7 @@ def _init_repo(path: Path) -> None:
 def _target(tmp_path: Path) -> TargetConfig:
     return TargetConfig(
         name="core",
-        dir=(tmp_path / "db" / "core").resolve(),
+        root=(tmp_path / "db" / "core").resolve(),
         engine="postgres",
         url_env="DATABASE_URL",
         test_url_env="TEST_DATABASE_URL",
@@ -141,7 +142,7 @@ def test_sqlfluff_lint_reports_style_violation(tmp_path: Path) -> None:
     findings = lint_paths(
         target_name=target.name,
         paths=(path,),
-        target_root=target.dir,
+        target_root=target.root,
         engine="postgres",
     )
 
@@ -156,7 +157,7 @@ def test_sqlfluff_lint_reports_parse_violation(tmp_path: Path) -> None:
     findings = lint_paths(
         target_name=target.name,
         paths=(path,),
-        target_root=target.dir,
+        target_root=target.root,
         engine="postgres",
     )
 

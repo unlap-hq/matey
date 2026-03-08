@@ -226,7 +226,13 @@ def absolute_target_path(target_root: Path, rel_path: str) -> Path:
             allow_missing_leaf=True,
         )
     except PathBoundaryError as error:
-        raise TxError(str(error)) from error
+        raise TxError(
+            describe_path_boundary_error(
+                error,
+                path=candidate,
+                symlink_message=f"manifest path uses symlinked target path: {candidate}",
+            )
+        ) from error
 
 
 def is_reserved_tx_path(parts: tuple[str, ...]) -> bool:
@@ -237,7 +243,7 @@ def _validate_tx_relative_path(rel_path: str, *, source: str) -> str:
     try:
         normalized = normalize_relative_posix_path(rel_path, label=source)
     except RelativePathError as error:
-        raise TxError(str(error)) from error
+        raise TxError(f"{source}: {error}") from error
     pure = PurePosixPath(normalized)
     if is_reserved_tx_path(pure.parts):
         raise TxError(f"{source} is reserved for tx journal internals: {rel_path}")

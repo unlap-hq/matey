@@ -6,9 +6,9 @@ from pathlib import Path
 from sqlglot import exp, parse
 from sqlglot.errors import ParseError
 
-from matey.config import TargetConfig
 from matey.lockfile import DiagnosticCode, build_lock_state
 from matey.lockfile.parse import migration_version
+from matey.project import TargetConfig
 from matey.repo import Snapshot, SnapshotError
 from matey.sql import (
     SqlError,
@@ -21,7 +21,7 @@ from matey.sql import (
 from matey.sql.policy import normalize_engine
 from matey.sql.source import _DOWN_MARKER, _UP_MARKER
 
-from .model import LintFinding, LintResult
+from . import LintFinding, LintResult
 
 
 def lint_target(
@@ -38,7 +38,7 @@ def lint_target(
             findings=(
                 LintFinding(
                     target_name=target.name,
-                    path=target.dir.as_posix(),
+                    path=target.root.as_posix(),
                     code="L201",
                     level="error",
                     message=str(error),
@@ -56,7 +56,7 @@ def lint_target(
             findings.append(
                 LintFinding(
                     target_name=target.name,
-                    path=target.lockfile.relative_to(target.dir).as_posix(),
+                    path=target.lockfile.relative_to(target.root).as_posix(),
                     code="L209",
                     level="error",
                     message=(
@@ -69,7 +69,7 @@ def lint_target(
         findings.append(
             LintFinding(
                 target_name=target.name,
-                path=target.lockfile.relative_to(target.dir).as_posix(),
+                path=target.lockfile.relative_to(target.root).as_posix(),
                 code="L200",
                 level="error",
                 message="Target is uninitialized and engine is unknown. Pass --engine or initialize the target first.",
@@ -146,7 +146,7 @@ def _artifact_state_findings(
             findings.append(
                 LintFinding(
                     target_name=target.name,
-                    path=target.checkpoints.relative_to(target.dir).as_posix(),
+                    path=target.checkpoints.relative_to(target.root).as_posix(),
                     code="L205",
                     level="warning",
                     message="Target has checkpoint files but no initialized lock state.",
@@ -156,7 +156,7 @@ def _artifact_state_findings(
             findings.append(
                 LintFinding(
                     target_name=target.name,
-                    path=target.schema.relative_to(target.dir).as_posix(),
+                    path=target.schema.relative_to(target.root).as_posix(),
                     code="L206",
                     level="error",
                     message="Target has schema.sql but no schema.lock.toml.",
@@ -166,7 +166,7 @@ def _artifact_state_findings(
             findings.append(
                 LintFinding(
                     target_name=target.name,
-                    path=target.migrations.relative_to(target.dir).as_posix(),
+                    path=target.migrations.relative_to(target.root).as_posix(),
                     code="L208",
                     level="error",
                     message="Target has migrations but no initialized lock state and no engine override.",

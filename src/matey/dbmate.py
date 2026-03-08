@@ -12,13 +12,12 @@ from typing import TYPE_CHECKING
 from plumbum import local
 
 from matey.bqemu import (
-    BigQueryEmulatorUrlError,
     is_bigquery_emulator_url,
     parse_bigquery_emulator_url,
     to_dbmate_bigquery_url,
 )
 from matey.paths import PathBoundaryError, describe_path_boundary_error, ensure_non_symlink_path
-from matey.sql import SqlTextDecodeError, decode_sql_text
+from matey.sql import decode_sql_text
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -152,10 +151,7 @@ class Dbmate:
         return DbConnection(dbmate=self, url=url)
 
     def _base_args(self, url: str) -> tuple[str, ...]:
-        try:
-            dbmate_url = to_dbmate_bigquery_url(url)
-        except BigQueryEmulatorUrlError as error:
-            raise DbmateConfigError(str(error)) from error
+        dbmate_url = to_dbmate_bigquery_url(url)
         return ("--url", dbmate_url, "--migrations-dir", str(self._migrations_dir))
 
     def _run_url_verb(
@@ -276,13 +272,10 @@ class DbConnection:
                 raise DbmateError(
                     "dbmate dump completed without producing a schema file."
                 )
-            try:
-                dump_text = decode_sql_text(
-                    schema_path.read_bytes(),
-                    label="dbmate dump schema file",
-                )
-            except SqlTextDecodeError as error:
-                raise DbmateError(str(error)) from error
+            dump_text = decode_sql_text(
+                schema_path.read_bytes(),
+                label="dbmate dump schema file",
+            )
             return CmdResult(
                 argv=result.argv,
                 exit_code=result.exit_code,
@@ -299,10 +292,7 @@ class DbConnection:
                 global_args=("--schema-file", str(schema_path)),
             )
 def _dump_bigquery_emulator(conn: DbConnection) -> CmdResult:
-    try:
-        dbmate_url = to_dbmate_bigquery_url(conn.url)
-    except BigQueryEmulatorUrlError as error:
-        raise DbmateConfigError(str(error)) from error
+    dbmate_url = to_dbmate_bigquery_url(conn.url)
     argv = (
         str(conn.dbmate.dbmate_bin),
         "--url",

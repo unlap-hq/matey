@@ -8,7 +8,7 @@ from sqlfluff.core.config import FluffConfig
 from matey.sql import is_bigquery_family
 from matey.sql.policy import normalize_engine
 
-from .model import LintFinding
+from . import LintFinding
 
 
 def lint_paths(

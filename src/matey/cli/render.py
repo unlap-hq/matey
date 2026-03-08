@@ -90,6 +90,8 @@ class Renderer:
         self.console.print(f"Replay scratch: {result.replay_scratch_url}")
         if result.down_scratch_url:
             self.console.print(f"Down-check scratch: {result.down_scratch_url}")
+        if result.codegen_path:
+            self.console.print(f"Codegen: {result.codegen_path}")
         if result.changed_files:
             self.console.print(
                 self._table(

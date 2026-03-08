@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeVar
 
-from matey.config import TargetConfig
 from matey.dbmate import CmdResult, Dbmate
 from matey.paths import PathBoundaryError, describe_path_boundary_error, safe_descendant
+from matey.project import TargetConfig
 from matey.sql import SqlError, SqlProgram, ensure_newline, unified_sql_diff
 
 from . import runtime
@@ -61,7 +61,7 @@ def new(
         raise runtime.DbError("Migration name is required.")
     try:
         migrations_dir = safe_descendant(
-            root=target.dir,
+            root=target.root,
             candidate=target.migrations,
             label=f"migrations directory for target {target.name}",
             allow_missing_leaf=True,
@@ -94,7 +94,7 @@ def bootstrap(
             )
 
         before = read_bootstrap_status(rt)
-        if runtime.is_bigquery_url(rt.conn.url):
+        if runtime.is_bigquery_family(runtime.engine_from_url(rt.conn.url)):
             runtime.require_success(
                 rt.conn.create(),
                 context="db bootstrap create-if-needed",
@@ -360,11 +360,8 @@ def require_head_baseline(rt: runtime.RuntimeContext, command: str) -> None:
 
 
 def ensure_migrate_preflight(rt: runtime.RuntimeContext, command: str) -> None:
-    if runtime.is_bigquery_url(rt.conn.url):
-        runtime.ensure_bigquery_dataset_exists(
-            conn=rt.conn,
-            context=f"db {command} pre-status",
-        )
+    if runtime.is_bigquery_family(runtime.engine_from_url(rt.conn.url)):
+        _ = runtime.dump_live_schema(rt.conn, context=f"db {command} pre-status")
 
 
 def read_bootstrap_status(rt: runtime.RuntimeContext) -> runtime.LiveStatus:

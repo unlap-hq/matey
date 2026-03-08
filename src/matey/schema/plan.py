@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from matey.config import TargetConfig
 from matey.lockfile import (
     DiagnosticCode,
     Divergence,
@@ -15,10 +14,11 @@ from matey.lockfile import (
     divergence_between_states,
     lock_worktree_divergence,
 )
+from matey.project import TargetConfig
 from matey.repo import GitRepo, Snapshot
-from matey.scratch import Engine
+from matey.scratch import Engine, ScratchError
 from matey.scratch import engine_from_url as scratch_engine_from_url
-from matey.sql import SqlTextDecodeError, decode_sql_text
+from matey.sql import decode_sql_text
 
 _HEAD_FATAL_DIAGNOSTICS = frozenset(
     {
@@ -93,9 +93,9 @@ def build_structural_plan(
     elif base_ref is None:
         divergence = lock_worktree_divergence(head_state)
     else:
-        git_repo = GitRepo.open(target.dir)
+        git_repo = GitRepo.open(target.root)
         merge_base = git_repo.resolve_merge_base(base_ref)
-        target_rel_dir = target.dir.resolve().relative_to(git_repo.repo_root).as_posix()
+        target_rel_dir = target.root.resolve().relative_to(git_repo.repo_root).as_posix()
         base_snapshot = Snapshot.from_tree(
             target_name=target.name,
             target_rel_dir=target_rel_dir,
@@ -172,13 +172,10 @@ def select_anchor_sql(
         raise SchemaError(
             f"Missing anchor checkpoint {anchor_step.checkpoint_file!r} in {source_label} snapshot."
         )
-    try:
-        return decode_sql_text(
-            anchor_bytes,
-            label=f"anchor checkpoint {anchor_step.checkpoint_file}",
-        )
-    except SqlTextDecodeError as error:
-        raise SchemaError(str(error)) from error
+    return decode_sql_text(
+        anchor_bytes,
+        label=f"anchor checkpoint {anchor_step.checkpoint_file}",
+    )
 
 
 def resolve_replay_context(
@@ -202,8 +199,8 @@ def resolve_replay_context(
         if candidate is None:
             continue
         try:
-            inferred_engine = engine_from_url(candidate)
-        except SchemaError as error:
+            inferred_engine = scratch_engine_from_url(candidate)
+        except (SchemaError, ScratchError) as error:
             invalid_candidates.append(f"{source}: {error}")
             continue
         resolved_test_base_url = candidate
@@ -211,8 +208,8 @@ def resolve_replay_context(
 
     if inferred_engine is None and url_from_env is not None:
         try:
-            inferred_engine = engine_from_url(url_from_env)
-        except SchemaError as error:
+            inferred_engine = scratch_engine_from_url(url_from_env)
+        except (SchemaError, ScratchError) as error:
             invalid_candidates.append(f"{target.url_env}: {error}")
 
     if inferred_engine is None:
@@ -252,15 +249,6 @@ def resolved_lock_engine(lock: LockFile | None) -> Engine | None:
         raise SchemaError(
             f"Invalid lockfile engine {lock.engine!r}. Regenerate schema artifacts."
         ) from error
-
-
-def engine_from_url(url: str) -> Engine:
-    try:
-        return scratch_engine_from_url(url)
-    except Exception as error:
-        raise SchemaError(str(error)) from error
-
-
 def require_clean_state(state: LockState, *, label: str) -> None:
     if state.is_clean:
         return
@@ -297,7 +285,6 @@ __all__ = [
     "SchemaError",
     "StructuralPlan",
     "build_structural_plan",
-    "engine_from_url",
     "head_state_errors",
     "require_clean_state",
     "require_head_state_usable",

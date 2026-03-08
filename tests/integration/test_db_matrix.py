@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from matey.config import TargetConfig
 from matey.db import (
     DbError,
     bootstrap,
@@ -18,6 +17,7 @@ from matey.db import (
     up,
 )
 from matey.dbmate import Dbmate
+from matey.project import TargetConfig
 from matey.schema import apply
 from matey.schema import init_target as init_schema_target
 from matey.scratch import Engine

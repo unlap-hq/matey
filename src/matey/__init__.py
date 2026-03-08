@@ -4,7 +4,7 @@ from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 from types import ModuleType
 
-from .config import Config, ConfigError, TargetConfig
+from .project import ConfigError, TargetConfig, Workspace
 
 _LAZY_MODULES = {
     "cli",
@@ -33,8 +33,8 @@ def __getattr__(name: str) -> ModuleType:
 
 
 __all__ = [
-    "Config",
     "ConfigError",
     "TargetConfig",
+    "Workspace",
     "__version__",
 ]

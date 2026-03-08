@@ -7,36 +7,38 @@ import pytest
 from matey.cli.template import (
     TemplateProvider,
     default_ci_template_path,
-    default_target_config_values,
     render_ci_template,
-    render_target_config,
-    render_workspace_config,
-    update_target_config_text,
-    update_workspace_text,
     write_text_file,
 )
-from matey.config import CodegenConfig
+from matey.project import (
+    CodegenConfig,
+    ConfigEditor,
+    default_target_config_values,
+)
 
 
 def test_render_workspace_config_default() -> None:
-    rendered = render_workspace_config(())
+    rendered = ConfigEditor("workspace").render_workspace(target_paths=())
     assert rendered == "targets = []\n"
 
 
 def test_render_workspace_config_targets() -> None:
-    rendered = render_workspace_config(("db/core", "services/analytics/db"))
+    rendered = ConfigEditor("workspace").render_workspace(target_paths=("db/core", "services/analytics/db"))
     assert '"db/core"' in rendered
     assert '"services/analytics/db"' in rendered
 
 
 def test_update_workspace_text_adds_target() -> None:
-    rendered = update_workspace_text(existing_text="targets = [\"db/core\"]\n", target_path="db/analytics")
+    rendered = ConfigEditor("workspace").update_workspace(
+        existing_text="targets = [\"db/core\"]\n",
+        target_path="db/analytics",
+    )
     assert '"db/core"' in rendered
     assert '"db/analytics"' in rendered
 
 
 def test_render_target_config_default() -> None:
-    rendered = render_target_config(
+    rendered = ConfigEditor("workspace").render_target(
         engine="postgres",
         url_env="DATABASE_URL",
         test_url_env="TEST_DATABASE_URL",
@@ -47,7 +49,7 @@ def test_render_target_config_default() -> None:
 
 
 def test_render_target_config_with_codegen() -> None:
-    rendered = render_target_config(
+    rendered = ConfigEditor("workspace").render_target(
         engine="postgres",
         url_env="DATABASE_URL",
         test_url_env="TEST_DATABASE_URL",
@@ -59,7 +61,7 @@ def test_render_target_config_with_codegen() -> None:
 
 
 def test_update_target_config_preserves_unknown_keys() -> None:
-    rendered = update_target_config_text(
+    rendered = ConfigEditor("workspace").update_target(
         existing_text='engine = "sqlite"\nurl_env = "OLD_URL"\ntest_url_env = "OLD_TEST_URL"\ncustom = "keep"\n',
         engine="postgres",
         url_env="DATABASE_URL",

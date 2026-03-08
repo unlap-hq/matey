@@ -5,7 +5,6 @@ from collections.abc import Mapping
 from matey.repo import Snapshot
 
 from .model import Diagnostic, DiagnosticCode, LockFile, LockPolicy, LockStep, WorktreeStep
-from .parse import diag
 
 
 def validate_state(
@@ -62,7 +61,7 @@ def validate_lock_header(*, lock: LockFile | None, policy: LockPolicy) -> tuple[
             f"checkpoints_dir={lock.checkpoints_dir!r}, expected {policy.checkpoints_dir!r}.",
         ),
     )
-    return tuple(diag(code, "schema.lock.toml", detail) for failed, code, detail in checks if failed)
+    return tuple(Diagnostic(code, "schema.lock.toml", detail) for failed, code, detail in checks if failed)
 
 
 def validate_target_coherence(
@@ -71,7 +70,7 @@ def validate_target_coherence(
     if lock is None or lock.target == input_files.target_name:
         return ()
     return (
-        diag(
+        Diagnostic(
             DiagnosticCode.COHERENCE_TARGET_MISMATCH,
             "schema.lock.toml",
             f"lock target {lock.target!r} does not match input target {input_files.target_name!r}.",
@@ -86,7 +85,7 @@ def validate_schema(
         return ()
     if schema_digest is None:
         return (
-            diag(
+            Diagnostic(
                 DiagnosticCode.INPUT_SCHEMA_MISSING,
                 policy.schema_file,
                 "schema.sql is missing from input.",
@@ -94,7 +93,7 @@ def validate_schema(
         )
     if schema_digest != lock.head_schema_digest:
         return (
-            diag(
+            Diagnostic(
                 DiagnosticCode.COHERENCE_SCHEMA_DIGEST_MISMATCH,
                 policy.schema_file,
                 "schema.sql digest differs from lock head_schema_digest.",
@@ -105,7 +104,7 @@ def validate_schema(
 
 def validate_orphans(orphans: tuple[str, ...]) -> tuple[Diagnostic, ...]:
     return tuple(
-        diag(
+        Diagnostic(
             DiagnosticCode.INPUT_ORPHAN_CHECKPOINT,
             path,
             "Checkpoint does not map to any migration in this input.",
@@ -138,7 +137,7 @@ def validate_lock_structure(
     for expected_index, lock_step in enumerate(lock.steps, start=1):
         if lock_step.index != expected_index:
             rows.append(
-                diag(
+                Diagnostic(
                     DiagnosticCode.LOCKFILE_STEP_INDEX_INVALID,
                     lock_step.migration_file,
                     f"lock step index {lock_step.index} is not sequential at position {expected_index}.",
@@ -147,7 +146,7 @@ def validate_lock_structure(
 
     if lock.head_index != len(lock.steps):
         rows.append(
-            diag(
+            Diagnostic(
                 DiagnosticCode.COHERENCE_HEAD_INDEX_MISMATCH,
                 "schema.lock.toml",
                 f"head_index={lock.head_index} while lock has {len(lock.steps)} steps.",
@@ -155,7 +154,7 @@ def validate_lock_structure(
         )
     if lock.head_index != len(steps):
         rows.append(
-            diag(
+            Diagnostic(
                 DiagnosticCode.COHERENCE_HEAD_INDEX_MISMATCH,
                 "schema.lock.toml",
                 f"head_index={lock.head_index} while input has {len(steps)} migrations.",
@@ -167,7 +166,7 @@ def validate_lock_structure(
     )
     if lock.head_chain_hash != expected_head_chain:
         rows.append(
-            diag(
+            Diagnostic(
                 DiagnosticCode.COHERENCE_HEAD_CHAIN_MISMATCH,
                 "schema.lock.toml",
                 "head_chain_hash differs from deterministic recomputation.",
@@ -186,7 +185,7 @@ def validate_step_coherence(
         lock_step = lock_by_file.get(step.migration_file)
         if lock_step is None:
             rows.append(
-                diag(
+                Diagnostic(
                     DiagnosticCode.COHERENCE_NEW_IN_INPUT,
                     step.migration_file,
                     "Migration exists in input but not in lockfile.",
@@ -196,7 +195,7 @@ def validate_step_coherence(
 
         if lock_step.index != step.index:
             rows.append(
-                diag(
+                Diagnostic(
                     DiagnosticCode.COHERENCE_STEP_INDEX_MISMATCH,
                     step.migration_file,
                     f"lock step index {lock_step.index} does not match migration index {step.index}.",
@@ -204,7 +203,7 @@ def validate_step_coherence(
             )
         if lock_step.version != step.version:
             rows.append(
-                diag(
+                Diagnostic(
                     DiagnosticCode.COHERENCE_STEP_VERSION_MISMATCH,
                     step.migration_file,
                     f"lock step version {lock_step.version!r} does not match {step.version!r}.",
@@ -212,7 +211,7 @@ def validate_step_coherence(
             )
         if lock_step.migration_digest != step.migration_digest:
             rows.append(
-                diag(
+                Diagnostic(
                     DiagnosticCode.COHERENCE_MIGRATION_DIGEST_MISMATCH,
                     step.migration_file,
                     "Migration digest differs from lock step.",
@@ -220,7 +219,7 @@ def validate_step_coherence(
             )
         if lock_step.checkpoint_file != step.checkpoint_file:
             rows.append(
-                diag(
+                Diagnostic(
                     DiagnosticCode.COHERENCE_CHECKPOINT_MISMATCH,
                     step.checkpoint_file,
                     "Checkpoint mapping differs from lock step.",
@@ -229,7 +228,7 @@ def validate_step_coherence(
 
         if step.checkpoint_digest is None:
             rows.append(
-                diag(
+                Diagnostic(
                     DiagnosticCode.COHERENCE_CHECKPOINT_MISSING,
                     step.checkpoint_file,
                     "Expected checkpoint file is missing.",
@@ -238,7 +237,7 @@ def validate_step_coherence(
         else:
             if step.checkpoint_digest != lock_step.checkpoint_digest:
                 rows.append(
-                    diag(
+                    Diagnostic(
                         DiagnosticCode.COHERENCE_CHECKPOINT_MISMATCH,
                         step.checkpoint_file,
                         "Checkpoint digest differs from lock step.",
@@ -246,7 +245,7 @@ def validate_step_coherence(
                 )
             if step.checkpoint_digest != lock_step.schema_digest:
                 rows.append(
-                    diag(
+                    Diagnostic(
                         DiagnosticCode.COHERENCE_STEP_SCHEMA_MISMATCH,
                         step.checkpoint_file,
                         "Lock step schema_digest differs from deterministic checkpoint digest.",
@@ -255,7 +254,7 @@ def validate_step_coherence(
 
         if lock_step.chain_hash != step.chain_hash:
             rows.append(
-                diag(
+                Diagnostic(
                     DiagnosticCode.COHERENCE_CHAIN_HASH_MISMATCH,
                     step.migration_file,
                     "Chain hash differs from deterministic recomputation.",
@@ -270,7 +269,7 @@ def validate_missing_from_input(
     step_by_file: Mapping[str, WorktreeStep],
 ) -> tuple[Diagnostic, ...]:
     return tuple(
-        diag(
+        Diagnostic(
             DiagnosticCode.COHERENCE_MISSING_FROM_INPUT,
             lock_step.migration_file,
             "Lock references a migration that is absent from input.",

@@ -107,7 +107,7 @@ def test_init_target_routes_path(monkeypatch, tmp_path: Path) -> None:
     def _fake_prepare_init_target(target, *, engine, force, policy=None):
         del policy
         captured["target"] = target.name
-        captured["dir"] = target.dir
+        captured["dir"] = target.root
         captured["engine"] = engine
         captured["force"] = force
         return cli.init.schema_api.InitPlan(
@@ -260,9 +260,9 @@ def test_load_config_resolves_workspace_file_from_config_location(monkeypatch, t
     outside.mkdir()
     monkeypatch.chdir(outside)
 
-    config = cli.common.load_config(repo_root)
+    workspace = cli.common.Workspace.discover(start=outside.resolve(), workspace=repo_root)
 
-    assert tuple(config.targets.keys()) == ("db/core",)
+    assert workspace.targets == ("db/core",)
 
 
 def test_load_config_preserves_pyproject_workspace_fallback(monkeypatch, tmp_path: Path) -> None:
@@ -275,9 +275,9 @@ def test_load_config_preserves_pyproject_workspace_fallback(monkeypatch, tmp_pat
     outside.mkdir()
     monkeypatch.chdir(outside)
 
-    config = cli.common.load_config(repo_root)
+    workspace = cli.common.Workspace.discover(start=outside.resolve(), workspace=repo_root)
 
-    assert tuple(config.targets.keys()) == ("db/core",)
+    assert workspace.targets == ("db/core",)
 
 
 def test_load_config_prefers_local_workspace_over_git_root(monkeypatch, tmp_path: Path) -> None:
@@ -290,9 +290,9 @@ def test_load_config_prefers_local_workspace_over_git_root(monkeypatch, tmp_path
     _write_target_config(nested, "db/local")
     monkeypatch.chdir(nested)
 
-    config = cli.common.load_config(None)
+    workspace = cli.common.Workspace.discover(start=nested.resolve(), workspace=None)
 
-    assert tuple(config.targets.keys()) == ("db/local",)
+    assert workspace.targets == ("db/local",)
 
 
 def test_load_config_rejects_workspace_file_path(tmp_path: Path) -> None:
@@ -302,7 +302,10 @@ def test_load_config_rejects_workspace_file_path(tmp_path: Path) -> None:
     _write(workspace_path, 'targets = []\n')
 
     with pytest.raises(cli.common.CliUsageError, match="--workspace must point to a directory"):
-        cli.common.load_config(workspace_path)
+        try:
+            cli.common.Workspace.discover(start=repo_root.resolve(), workspace=workspace_path)
+        except ValueError as error:
+            raise cli.common.CliUsageError(str(error)) from error
 
 
 def test_db_new_routes_to_engine(monkeypatch, tmp_path: Path) -> None:

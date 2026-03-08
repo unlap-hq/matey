@@ -3,7 +3,7 @@ from __future__ import annotations
 from cyclopts import App
 
 import matey.db as db_api
-from matey.config import TargetConfig
+from matey.project import TargetConfig
 
 from ..render import Renderer
 from . import common

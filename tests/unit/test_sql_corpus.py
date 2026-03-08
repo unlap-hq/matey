@@ -219,7 +219,7 @@ def test_anchor_statements_sqlite_comment_mention_of_trigger_is_allowed() -> Non
 
 def test_source_anchor_statements_alignment_mismatch_raises() -> None:
     with pytest.raises(sql_source_mod.SqlTextDecodeError, match="could not be aligned safely"):
-        sql_source_mod._source_anchor_statements(
+        sql_source_mod.aligned_source_statements(
             "CREATE TABLE a(id INTEGER);",
             expected_count=2,
             label="sqlite",
@@ -227,7 +227,7 @@ def test_source_anchor_statements_alignment_mismatch_raises() -> None:
 
 
 def test_source_anchor_statements_handles_plain_string_backslashes_before_closing_quote() -> None:
-    statements = sql_source_mod._source_anchor_statements(
+    statements = sql_source_mod.aligned_source_statements(
         "SELECT 'a\\\\';\nSELECT 1;",
         expected_count=2,
         label="postgres",

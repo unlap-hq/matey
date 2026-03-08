@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from matey.config import TargetConfig
+from matey.project import CodegenConfig, TargetConfig
 from matey.schema import apply, plan, plan_diff, plan_sql, status
 
 from .conftest import IntegrationRuntime
@@ -96,3 +97,26 @@ def test_schema_matrix_plan_apply_cycle(runtime: IntegrationRuntime, target: Tar
     )
     assert final_plan.tail_count == 0
     assert final_plan.matches is True
+
+
+def test_schema_apply_codegen_matrix(runtime: IntegrationRuntime, target: TargetConfig) -> None:
+    target = replace(
+        target,
+        codegen=CodegenConfig(enabled=True, generator="tables", options=None),
+    )
+    _write(
+        target.migrations / "001_codegen.sql",
+        migration_sql(engine=runtime.engine, table="it_codegen_one"),
+    )
+
+    result = apply(
+        target,
+        test_base_url=runtime.test_base_url,
+        dbmate_bin=runtime.dbmate_bin,
+    )
+
+    assert result.codegen_path == "models.py"
+    assert target.models.exists()
+    models_text = target.models.read_text(encoding="utf-8")
+    assert "it_codegen_one" in models_text
+    assert "schema_migrations" not in models_text

@@ -7,9 +7,13 @@ from importlib.metadata import PackageNotFoundError, version
 from cyclopts import App
 from cyclopts.exceptions import CycloptsError
 
+from matey.bqemu import BigQueryEmulatorUrlError
 from matey.dbmate import DbmateError
+from matey.paths import PathBoundaryError, RelativePathError
 from matey.repo import GitRepoError, SnapshotError
+from matey.schema.codegen import CodegenError
 from matey.scratch import ScratchError
+from matey.sql import MigrationSqlError, SqlTextDecodeError
 from matey.tx import TxError
 
 from .commands import common, db, init, lint, schema
@@ -74,9 +78,15 @@ _USER_ERRORS = (
     common.ConfigError,
     DbmateError,
     GitRepoError,
+    BigQueryEmulatorUrlError,
+    PathBoundaryError,
+    RelativePathError,
+    MigrationSqlError,
     SnapshotError,
     ScratchError,
+    SqlTextDecodeError,
     TxError,
+    CodegenError,
     CycloptsError,
 )
 
@@ -108,8 +118,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def maybe_run_dbmate_passthrough(args: list[str]) -> int | None:
-    # Intercept raw top-level `matey dbmate ...` so `matey dbmate --help`
-    # preserves real dbmate help semantics instead of Cyclopts help.
     if not args or args[0] != "dbmate":
         return None
     return common.handle_dbmate_passthrough(

@@ -11,7 +11,7 @@ from sqlglot import exp, parse
 from matey.bqemu import parse_bigquery_emulator_url
 
 from .policy import EnginePolicy, normalize_engine, policy_for_engine
-from .source import SqlTextDecodeError, _source_anchor_statements
+from .source import SqlTextDecodeError, aligned_source_statements
 
 _MYSQL_CONDITIONAL_COMMENT_PATTERN = re.compile(r"/\*![0-9]{5}\s+(.*?)\*/", re.IGNORECASE)
 _MYSQL_EMPTY_CONDITIONAL_PATTERN = re.compile(r"/\*![0-9]{5}\s*\*/", re.IGNORECASE)
@@ -180,7 +180,7 @@ def _validated_source_anchor_statements(text: str, policy: EnginePolicy) -> tupl
         # instead of re-rendering SQL through sqlglot, because re-rendering can
         # introduce harmless but noisy normalization and, in edge cases, backend-
         # specific behavior drift.
-        source_statements = _source_anchor_statements(
+        source_statements = aligned_source_statements(
             _prepare_sql_text(text, policy),
             expected_count=len(expressions),
             label=policy.name or "unknown",

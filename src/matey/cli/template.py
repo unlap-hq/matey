@@ -4,18 +4,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
-import tomlkit
-from tomlkit.items import Table
-
-from matey.config import (
-    TARGET_CONFIG_FILE,
-    WORKSPACE_CONFIG_FILE,
-    CodegenConfig,
-    normalize_target_path_ref,
-    target_env_stem,
-)
-from matey.paths import RelativePathError
-
 TemplateProvider = Literal["github", "gitlab", "buildkite"]
 
 
@@ -77,70 +65,17 @@ _CI_TEMPLATE_PATHS: dict[TemplateProvider, Path] = {
 }
 
 
-def render_workspace_config(target_paths: tuple[str, ...], *, pyproject: bool = False) -> str:
-    doc = tomlkit.document()
-    section = _workspace_section(doc, pyproject=pyproject, create=True)
-    section["targets"] = sorted(_normalized_target_paths(target_paths))
-    return tomlkit.dumps(doc)
-
-
-def update_workspace_text(*, existing_text: str, target_path: str | None, pyproject: bool = False) -> str:
-    parsed = tomlkit.parse(existing_text)
-    section = _workspace_section(parsed, pyproject=pyproject, create=True)
-    targets = section.get("targets")
-    if not isinstance(targets, list):
-        targets = []
-    normalized = _normalize_target_path(target_path) if target_path is not None else None
-    values = [str(item) for item in targets]
-    if normalized is not None and normalized not in values:
-        values.append(normalized)
-    section["targets"] = sorted(values)
-    return tomlkit.dumps(parsed)
-
-
-def render_target_config(
-    *,
-    engine: str,
-    url_env: str,
-    test_url_env: str,
-    codegen: CodegenConfig | None = None,
-) -> str:
-    doc = tomlkit.document()
-    doc["engine"] = engine
-    doc["url_env"] = url_env
-    doc["test_url_env"] = test_url_env
-    _set_codegen(doc, codegen)
-    return tomlkit.dumps(doc)
-
-
-def update_target_config_text(
-    *,
-    existing_text: str,
-    engine: str,
-    url_env: str,
-    test_url_env: str,
-    codegen: CodegenConfig | None = None,
-) -> str:
-    parsed = tomlkit.parse(existing_text)
-    parsed["engine"] = engine
-    parsed["url_env"] = url_env
-    parsed["test_url_env"] = test_url_env
-    _set_codegen(parsed, codegen)
-    return tomlkit.dumps(parsed)
-
-
 def default_ci_template_path(provider: TemplateProvider) -> Path:
-    try:
-        return _CI_TEMPLATE_PATHS[provider]
-    except KeyError as error:
-        raise ValueError(f"Unsupported CI provider: {provider!r}") from error
+    path = _CI_TEMPLATE_PATHS.get(provider)
+    if path is None:
+        raise ValueError(f"Unsupported CI provider: {provider!r}")
+    return path
 
 
 def render_ci_template(provider: TemplateProvider) -> str:
-    try:
-        render = _CI_TEMPLATES[provider]
-    except KeyError as error:
-        raise ValueError(f"Unsupported CI provider: {provider!r}") from error
+    render = _CI_TEMPLATES.get(provider)
+    if render is None:
+        raise ValueError(f"Unsupported CI provider: {provider!r}")
     return render()
 
 
@@ -151,78 +86,9 @@ def write_text_file(path: Path, content: str, *, overwrite: bool) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def default_target_config_values(path: str) -> tuple[str, str]:
-    stem = target_env_stem(path)
-    if stem == "DEFAULT":
-        return "DATABASE_URL", "TEST_DATABASE_URL"
-    return f"{stem}_DATABASE_URL", f"{stem}_TEST_DATABASE_URL"
-
-
-def workspace_default_path(repo_root: Path) -> Path:
-    return repo_root / WORKSPACE_CONFIG_FILE
-
-
-def target_config_path(target_root: Path) -> Path:
-    return target_root / TARGET_CONFIG_FILE
-
-
-def _set_codegen(doc: Table, codegen: CodegenConfig | None) -> None:
-    if codegen is None:
-        return
-    table = doc.get("codegen")
-    if not isinstance(table, Table):
-        table = tomlkit.table()
-        doc["codegen"] = table
-    table["enabled"] = codegen.enabled
-    table["generator"] = codegen.generator
-    if codegen.options is None:
-        if "options" in table:
-            del table["options"]
-    else:
-        table["options"] = codegen.options
-
-
-def _workspace_section(doc: Table, *, pyproject: bool, create: bool) -> Table:
-    if not pyproject:
-        return doc
-    tool = doc.get("tool")
-    if not isinstance(tool, Table):
-        if not create:
-            raise ValueError("pyproject.toml is missing [tool] table.")
-        tool = tomlkit.table()
-        doc["tool"] = tool
-    matey = tool.get("matey")
-    if not isinstance(matey, Table):
-        if not create:
-            raise ValueError("pyproject.toml is missing [tool.matey] table.")
-        matey = tomlkit.table()
-        tool["matey"] = matey
-    return matey
-
-
-def _normalize_target_path(path: str | None) -> str | None:
-    if path is None:
-        return None
-    try:
-        return normalize_target_path_ref(path, label="target path")
-    except RelativePathError as error:
-        raise ValueError(str(error)) from error
-
-
-def _normalized_target_paths(target_paths: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(sorted(filter(None, (_normalize_target_path(path) for path in target_paths))))
-
-
 __all__ = [
     "TemplateProvider",
     "default_ci_template_path",
-    "default_target_config_values",
     "render_ci_template",
-    "render_target_config",
-    "render_workspace_config",
-    "target_config_path",
-    "update_target_config_text",
-    "update_workspace_text",
-    "workspace_default_path",
     "write_text_file",
 ]

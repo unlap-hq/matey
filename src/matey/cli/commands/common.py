@@ -7,9 +7,8 @@ from typing import Annotated
 from cyclopts import Parameter
 
 import matey.dbmate as dbmate_api
-from matey.config import Config, ConfigError, TargetConfig
 from matey.dbmate import CmdResult
-from matey.repo import GitRepo, NotGitRepositoryError
+from matey.project import ConfigError, TargetConfig, Workspace
 
 from ..render import Renderer
 
@@ -73,89 +72,6 @@ DiffOpt = Annotated[
     ),
 ]
 EngineOpt = Annotated[str | None, Parameter(name="--engine", help="Target engine for zero-state init. Required for fresh targets unless an existing lockfile supplies one.")]
-
-
-def select_targets(
-    *,
-    workspace_path: Path | None,
-    path: str | None,
-    all_targets: bool,
-    require_single: bool,
-) -> tuple[TargetConfig, ...]:
-    if require_single and all_targets:
-        raise CliUsageError("This command requires exactly one target; do not pass --all.")
-    config = load_config(workspace_path)
-    selected = config.select(path=path, all_targets=all_targets)
-    if require_single and len(selected) != 1:
-        raise CliUsageError("This command requires exactly one resolved target.")
-    return selected
-
-
-def load_config(workspace_path: Path | None) -> Config:
-    repo_root = resolve_workspace_root(workspace_path)
-    return Config.load(repo_root, config_path=None)
-
-
-def resolve_workspace_root(workspace_path: Path | None, *, allow_create_fallback: bool = False) -> Path:
-    if workspace_path is not None:
-        resolved_workspace = (
-            workspace_path.resolve()
-            if workspace_path.is_absolute()
-            else (Path.cwd() / workspace_path).resolve()
-        )
-        if not resolved_workspace.is_dir():
-            raise CliUsageError("--workspace must point to a directory.")
-        return resolved_workspace
-
-    cwd = Path.cwd().resolve()
-    if _has_workspace_config(cwd):
-        return cwd
-
-    repo_root = find_repo_root_or_none(cwd)
-    if repo_root is not None:
-        if _has_workspace_config(repo_root):
-            return repo_root
-        return repo_root
-
-    if allow_create_fallback:
-        return cwd
-
-    raise CliUsageError(
-        "Path is not inside a git repository and no local workspace config was found. "
-        "Run from a repo root/subdirectory or pass --workspace."
-    )
-
-
-def find_repo_root(start: Path) -> Path:
-    repo_root = find_repo_root_or_none(start)
-    if repo_root is not None:
-        return repo_root
-    raise CliUsageError(
-        "Path is not inside a git repository. Run from a repo root/subdirectory or pass --workspace."
-    )
-
-
-def find_repo_root_or_none(start: Path) -> Path | None:
-    try:
-        return GitRepo.open(start).repo_root
-    except NotGitRepositoryError:
-        return None
-
-
-def _has_workspace_config(root: Path) -> bool:
-    if (root / "matey.toml").exists():
-        return True
-    pyproject = root / "pyproject.toml"
-    if not pyproject.exists():
-        return False
-    try:
-        import tomllib
-
-        parsed = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    except Exception:
-        return False
-    tool = parsed.get("tool")
-    return isinstance(tool, dict) and isinstance(tool.get("matey"), dict)
 
 
 def require_cmd_success(result: CmdResult, *, context: str) -> None:
@@ -235,8 +151,12 @@ def run_targets(
     require_single: bool,
     body: Callable[[TargetConfig], None],
 ) -> None:
-    selected = select_targets(
-        workspace_path=workspace_path,
+    workspace = Workspace.discover(
+        start=Path.cwd().resolve(),
+        workspace=workspace_path,
+        allow_create_fallback=False,
+    )
+    selected = workspace.select(
         path=path,
         all_targets=all_targets,
         require_single=require_single,
@@ -282,18 +202,14 @@ __all__ = [
     "PathOpt",
     "SqlOpt",
     "StepsOpt",
+    "TargetConfig",
     "TestUrlOpt",
     "UrlOpt",
     "WorkspaceOpt",
     "dbmate_api",
-    "find_repo_root",
-    "find_repo_root_or_none",
     "handle_dbmate_passthrough",
-    "load_config",
     "plan_mode",
     "render_cmd_blob",
     "require_cmd_success",
-    "resolve_workspace_root",
     "run_targets",
-    "select_targets",
 ]

@@ -43,7 +43,7 @@ def parse_lockfile(lock_toml: bytes | None) -> tuple[LockFile | None, tuple[Diag
         parsed = LockFile.from_toml(lock_toml.decode("utf-8"))
     except _LOCKFILE_PARSE_ERRORS as error:
         return None, (
-            diag(
+            Diagnostic(
                 DiagnosticCode.LOCKFILE_PARSE_ERROR,
                 "schema.lock.toml",
                 f"Unable to parse lockfile: {error}",
@@ -152,7 +152,7 @@ def build_worktree_steps(
             )
         except SqlTextDecodeError as error:
             diagnostics.append(
-                diag(
+                Diagnostic(
                     DiagnosticCode.INPUT_PATH_INVALID,
                     checkpoint_file,
                     str(error),
@@ -180,12 +180,6 @@ def build_worktree_steps(
     expected_checkpoints = {step.checkpoint_file for step in steps}
     orphans = tuple(path for path, _ in checkpoint_rows if path not in expected_checkpoints)
     return tuple(steps), orphans, tuple(diagnostics)
-
-
-def schema_digest(schema_sql: str | None, *, policy: LockPolicy) -> str | None:
-    return generated_sql_digest(schema_sql, policy=policy)
-
-
 def checkpoint_for_migration(*, migration_file: str, policy: LockPolicy) -> str:
     migration_path = PurePosixPath(migration_file)
     relative_path = migration_path.relative_to(PurePosixPath(policy.migrations_dir))
@@ -215,7 +209,7 @@ def collect_sql_rows(
             path = normalize_relative_posix_path(raw_path, label=f"{kind} path")
         except RelativePathError as error:
             diagnostics.append(
-                diag(
+                Diagnostic(
                     DiagnosticCode.INPUT_PATH_INVALID,
                     raw_path,
                     f"Invalid {kind} path: {error}",
@@ -225,7 +219,7 @@ def collect_sql_rows(
 
         if not path.startswith(required_prefix):
             diagnostics.append(
-                diag(
+                Diagnostic(
                     DiagnosticCode.INPUT_PATH_INVALID,
                     path,
                     f"{kind} path must be under {required_prefix!r}; got {path!r}.",
@@ -235,7 +229,7 @@ def collect_sql_rows(
 
         if not path.endswith(".sql"):
             diagnostics.append(
-                diag(
+                Diagnostic(
                     DiagnosticCode.INPUT_PATH_INVALID,
                     path,
                     f"{kind} path must end with .sql.",
@@ -245,7 +239,7 @@ def collect_sql_rows(
 
         if path in rows:
             diagnostics.append(
-                diag(
+                Diagnostic(
                     DiagnosticCode.INPUT_PATH_DUPLICATE,
                     path,
                     f"Duplicate normalized {kind} path.",
@@ -281,7 +275,7 @@ def normalize_lock_step_paths(
             )
         except RelativePathError as error:
             diagnostics.append(
-                diag(
+                Diagnostic(
                     DiagnosticCode.LOCKFILE_STEP_PATH_INVALID,
                     raw_path,
                     f"Invalid lock {kind} path: {error}",
@@ -296,7 +290,7 @@ def normalize_lock_step_paths(
 
     if not normalized_migration_file.startswith(f"{migrations_dir}/"):
         diagnostics.append(
-            diag(
+            Diagnostic(
                 DiagnosticCode.LOCKFILE_STEP_PATH_MISMATCH,
                 normalized_migration_file,
                 f"Lock step migration path is outside migrations_dir={migrations_dir!r}.",
@@ -305,7 +299,7 @@ def normalize_lock_step_paths(
 
     if not normalized_checkpoint_file.startswith(f"{checkpoints_dir}/"):
         diagnostics.append(
-            diag(
+            Diagnostic(
                 DiagnosticCode.LOCKFILE_STEP_PATH_MISMATCH,
                 normalized_checkpoint_file,
                 f"Lock step checkpoint path is outside checkpoints_dir={checkpoints_dir!r}.",
@@ -329,7 +323,7 @@ def check_duplicate_lock_step(
 
     if migration_file in seen_files:
         diagnostics.append(
-            diag(
+            Diagnostic(
                 DiagnosticCode.LOCKFILE_DUPLICATE_MIGRATION,
                 migration_file,
                 "Lockfile contains duplicate migration_file entries.",
@@ -341,7 +335,7 @@ def check_duplicate_lock_step(
 
     if step_index in seen_indices:
         diagnostics.append(
-            diag(
+            Diagnostic(
                 DiagnosticCode.LOCKFILE_DUPLICATE_STEP_INDEX,
                 migration_file,
                 f"Lockfile contains duplicate step index {step_index}.",
@@ -352,15 +346,8 @@ def check_duplicate_lock_step(
         seen_indices.add(step_index)
 
     return duplicate_entry, tuple(diagnostics)
-
-
-def diag(code: DiagnosticCode, path: str, detail: str) -> Diagnostic:
-    return Diagnostic(code=code, path=path, detail=detail)
-
-
 __all__ = [
     "build_worktree_steps",
     "checkpoint_for_migration",
     "parse_lockfile",
-    "schema_digest",
 ]

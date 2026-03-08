@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 
 import pygit2
@@ -10,9 +11,9 @@ import pytest
 import matey.schema as schema_mod
 import matey.scratch as scratch_mod
 import matey.sql as sql_mod
-from matey.config import TargetConfig
 from matey.dbmate import CmdResult, DbmateError
 from matey.lockfile import LockFile, LockPolicy, LockState
+from matey.project import CodegenConfig, TargetConfig
 from matey.repo import Snapshot
 from matey.schema import (
     InitResult,
@@ -24,7 +25,9 @@ from matey.schema import (
     plan_sql,
     status,
 )
+from matey.schema.codegen import CodegenResult
 from matey.scratch import Engine
+from matey.sql import MigrationSqlError
 
 schema_plan_mod = importlib.import_module("matey.schema.plan")
 schema_replay_mod = importlib.import_module("matey.schema.replay")
@@ -37,7 +40,7 @@ def _cmd(*argv: str, exit_code: int = 0, stdout: str = "", stderr: str = "") -> 
 def _target(tmp_path: Path, name: str = "core") -> TargetConfig:
     return TargetConfig(
         name=name,
-        dir=(tmp_path / "db" / name).resolve(),
+        root=(tmp_path / "db" / name).resolve(),
         url_env=f"{name.upper()}_DATABASE_URL",
         test_url_env=f"{name.upper()}_TEST_DATABASE_URL",
     )
@@ -309,13 +312,13 @@ def test_plan_rejects_qualified_writes_in_executable_down_section(
 
 def test_plan_wraps_invalid_utf8_migration_as_schema_error(tmp_path: Path) -> None:
     target = _target(tmp_path)
-    target.dir.mkdir(parents=True, exist_ok=True)
+    target.root.mkdir(parents=True, exist_ok=True)
     bad_path = target.migrations / "001_init.sql"
     bad_path.parent.mkdir(parents=True, exist_ok=True)
     bad_path.write_bytes(b"\xff\xfe\x00")
 
     with pytest.raises(
-        SchemaError,
+        MigrationSqlError,
         match=r"Unable to decode migration migrations/001_init\.sql as UTF-8",
     ):
         plan(target, test_base_url="mysql://user:pass@127.0.0.1:3306/target_db")
@@ -506,6 +509,43 @@ def test_apply_writes_schema_lock_and_tail_checkpoints(
     assert lock_state.is_clean is True
 
 
+def test_apply_writes_models_when_codegen_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target = replace(
+        _target(tmp_path),
+        codegen=CodegenConfig(enabled=True, generator="tables", options=None),
+    )
+    _write(target.migrations / "001_init.sql", "-- migrate:up\nCREATE TABLE a(id INTEGER);\n")
+    monkeypatch.setattr(
+        schema_replay_mod,
+        "run_replay_checks",
+        lambda *args, **kwargs: (
+            _check_outcome(
+                schema_sql="CREATE TABLE a(id INTEGER);\n",
+                checkpoint_map={"checkpoints/001_init.sql": "CREATE TABLE a(id INTEGER);\n"},
+            ),
+            kwargs["after_replay"](None, "sqlite3:/tmp/schema-apply-codegen.sqlite3"),
+        ),
+    )
+    monkeypatch.setattr(
+        schema_mod,
+        "generate_sqlalchemy_models",
+        lambda **kwargs: CodegenResult(
+            path=target.models,
+            content=b"generated models\n",
+        ),
+    )
+
+    result = apply(target, test_base_url="sqlite3:/tmp/schema-apply-codegen.sqlite3")
+
+    assert result.wrote is True
+    assert "models.py" in result.changed_files
+    assert result.codegen_path == "models.py"
+    assert target.models.read_text(encoding="utf-8") == "generated models\n"
+
+
 def test_apply_is_noop_when_tail_is_empty(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -604,8 +644,8 @@ def test_status_recovers_pending_tx(monkeypatch: pytest.MonkeyPatch, tmp_path: P
 
     _ = status(target)
 
-    assert lock_calls == [target.dir]
-    assert calls == [target.dir]
+    assert lock_calls == [target.root]
+    assert calls == [target.root]
 
 
 def test_plan_recovers_pending_tx(
@@ -638,8 +678,8 @@ def test_plan_recovers_pending_tx(
 
     _ = plan(target, test_base_url="sqlite3:/tmp/schema-recover-plan.sqlite3")
 
-    assert lock_calls == [target.dir]
-    assert calls == [target.dir]
+    assert lock_calls == [target.root]
+    assert calls == [target.root]
 
 
 def test_apply_recovers_pending_tx(
@@ -672,8 +712,8 @@ def test_apply_recovers_pending_tx(
 
     _ = apply(target, test_base_url="sqlite3:/tmp/schema-recover-apply.sqlite3")
 
-    assert lock_calls == [target.dir]
-    assert calls == [target.dir]
+    assert lock_calls == [target.root]
+    assert calls == [target.root]
 
 
 def test_apply_commits_inside_target_serialization(
@@ -706,7 +746,7 @@ def test_apply_commits_inside_target_serialization(
     result = apply(target, test_base_url="sqlite3:/tmp/schema-commit-assume-locked.sqlite3")
 
     assert result.wrote is True
-    assert commit_calls == [(target.dir, 3, 0)]
+    assert commit_calls == [(target.root, 3, 0)]
 
 
 def test_resolve_replay_context_skips_invalid_url_candidate(

@@ -8,8 +8,8 @@ from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 import pytest
 
-from matey.config import TargetConfig
 from matey.dbmate import Dbmate, default_dbmate_binary
+from matey.project import TargetConfig
 from matey.scratch import Engine, Scratch, ScratchError
 
 
@@ -118,7 +118,7 @@ def runtime(request: pytest.FixtureRequest, dbmate_bin: Path, tmp_path_factory: 
 def target(tmp_path: Path) -> TargetConfig:
     return TargetConfig(
         name="core",
-        dir=(tmp_path / "db" / "core").resolve(),
+        root=(tmp_path / "db" / "core").resolve(),
         url_env="MATEY_INTEGRATION_DATABASE_URL",
         test_url_env="MATEY_INTEGRATION_TEST_DATABASE_URL",
     )

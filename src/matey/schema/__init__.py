@@ -5,20 +5,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeVar
 
-from matey.config import TargetConfig
 from matey.lockfile import LockPolicy, LockState, build_lock_state
 from matey.paths import PathBoundaryError, describe_path_boundary_error, safe_descendant
-from matey.repo import Snapshot, SnapshotError
+from matey.project import TargetConfig
+from matey.repo import Snapshot
 from matey.scratch import Engine
-from matey.sql import SqlError, SqlProgram, SqlTextDecodeError, decode_sql_text, unified_sql_diff
+from matey.sql import SqlError, SqlProgram, decode_sql_text, unified_sql_diff
 from matey.sql.policy import normalize_engine
-from matey.tx import TxError, recover_artifacts, serialized_target
+from matey.tx import recover_artifacts, serialized_target
 
 from . import artifacts, replay
 from . import plan as planning
+from .codegen import CodegenResult, generate_sqlalchemy_models
 from .plan import SchemaError
 
 T = TypeVar("T")
+U = TypeVar("U")
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +43,7 @@ class ApplyResult:
     changed_files: tuple[str, ...]
     replay_scratch_url: str
     down_scratch_url: str | None
+    codegen_path: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,12 +64,9 @@ class InitPlan:
 
 
 def status(target: TargetConfig, *, policy: LockPolicy | None = None) -> LockState:
-    with serialized_target(target.dir):
-        _recover_target_artifacts(target, context="status")
-        try:
-            snapshot = Snapshot.from_worktree(target)
-        except SnapshotError as error:
-            raise SchemaError(str(error)) from error
+    with serialized_target(target.root):
+        recover_artifacts(target.root)
+        snapshot = Snapshot.from_worktree(target)
         return build_lock_state(snapshot, policy=policy)
 
 
@@ -155,10 +155,20 @@ def apply(
         keep_scratch=keep_scratch,
         dbmate_bin=dbmate_bin,
         policy=policy,
-        action=lambda structural, replay_outcome: _apply_result(
+        after_replay=(
+            (lambda structural, _conn, replay_scratch_url: generate_sqlalchemy_models(
+                target=target,
+                engine=structural.engine,
+                url=replay_scratch_url,
+            ))
+            if target.codegen is not None and target.codegen.enabled
+            else None
+        ),
+        action=lambda structural, replay_outcome, codegen_output: _apply_result(
             target=target,
             structural=structural,
             replay_outcome=replay_outcome,
+            codegen_output=codegen_output,
         ),
     )
 
@@ -186,8 +196,8 @@ def prepare_init_target(
     force: bool = False,
     policy: LockPolicy | None = None,
 ) -> InitPlan:
-    with serialized_target(target.dir):
-        _recover_target_artifacts(target, context="init target")
+    with serialized_target(target.root):
+        recover_artifacts(target.root)
         effective_policy = policy or LockPolicy()
         resolved_engine = _resolve_init_engine(
             target=target,
@@ -282,11 +292,19 @@ def _apply_result(
     target: TargetConfig,
     structural: planning.StructuralPlan,
     replay_outcome: replay.ReplayOutcome,
+    codegen_output: CodegenResult | None,
 ) -> ApplyResult:
     desired_artifacts = artifacts.build_desired_artifacts(
         structural=structural,
         replay=replay_outcome,
     )
+    codegen_path: str | None = None
+    if codegen_output is not None:
+        desired_artifacts[codegen_output.path] = codegen_output.content
+        try:
+            codegen_path = codegen_output.path.relative_to(target.root).as_posix()
+        except ValueError:
+            codegen_path = codegen_output.path.as_posix()
     writes, deletes = artifacts.compute_artifact_delta(
         target=structural.target,
         desired_artifacts=desired_artifacts,
@@ -298,6 +316,7 @@ def _apply_result(
             changed_files=(),
             replay_scratch_url=replay_outcome.replay_scratch_url,
             down_scratch_url=replay_outcome.down_scratch_url,
+            codegen_path=codegen_path,
         )
 
     changed_files = artifacts.apply_artifact_delta(
@@ -311,6 +330,7 @@ def _apply_result(
         changed_files=changed_files,
         replay_scratch_url=replay_outcome.replay_scratch_url,
         down_scratch_url=replay_outcome.down_scratch_url,
+        codegen_path=codegen_path,
     )
 
 
@@ -324,10 +344,11 @@ def _with_replay_plan(
     keep_scratch: bool,
     dbmate_bin: Path | None,
     policy: LockPolicy | None,
-    action: Callable[[planning.StructuralPlan, replay.ReplayOutcome], T],
+    after_replay: Callable[[planning.StructuralPlan, replay.DbConnection, str], U | None] | None = None,
+    action: Callable[[planning.StructuralPlan, replay.ReplayOutcome, U | None], T],
 ) -> T:
-    with serialized_target(target.dir):
-        structural, replay_outcome = execute_replay_plan(
+    with serialized_target(target.root):
+        structural, replay_outcome, replay_extra = execute_replay_plan(
             target=target,
             context=context,
             base_ref=base_ref,
@@ -336,8 +357,9 @@ def _with_replay_plan(
             keep_scratch=keep_scratch,
             dbmate_bin=dbmate_bin,
             policy=policy,
+            after_replay=after_replay,
         )
-        return action(structural, replay_outcome)
+        return action(structural, replay_outcome, replay_extra)
 
 
 def _run_plan_mode(
@@ -365,7 +387,7 @@ def _run_plan_mode(
         keep_scratch=keep_scratch,
         dbmate_bin=dbmate_bin,
         policy=policy,
-        action=lambda structural, replay_outcome: (
+        action=lambda structural, replay_outcome, _replay_extra: (
             replay_outcome.replay_schema_sql
             if mode == "sql"
             else _plan_result_for_mode(
@@ -422,26 +444,33 @@ def execute_replay_plan(
     keep_scratch: bool,
     dbmate_bin: Path | None,
     policy: LockPolicy | None,
-) -> tuple[planning.StructuralPlan, replay.ReplayOutcome]:
-    _recover_target_artifacts(target, context=context)
-    try:
-        structural = planning.build_structural_plan(
-            target=target,
-            base_ref=base_ref,
-            clean=clean,
-            test_base_url=test_base_url,
-            policy=policy,
-        )
-    except SnapshotError as error:
-        raise SchemaError(str(error)) from error
-    replay_outcome = replay.run_replay_checks(
-        structural,
-        keep_scratch=keep_scratch,
-        dbmate_bin=dbmate_bin,
+    after_replay: Callable[[planning.StructuralPlan, replay.DbConnection, str], U | None] | None = None,
+) -> tuple[planning.StructuralPlan, replay.ReplayOutcome, U | None]:
+    del context
+    recover_artifacts(target.root)
+    structural = planning.build_structural_plan(
+        target=target,
+        base_ref=base_ref,
+        clean=clean,
+        test_base_url=test_base_url,
+        policy=policy,
     )
-    return structural, replay_outcome
-
-
+    kwargs = {
+        "keep_scratch": keep_scratch,
+        "dbmate_bin": dbmate_bin,
+    }
+    if after_replay is not None:
+        kwargs["after_replay"] = lambda conn, replay_scratch_url: after_replay(
+            structural,
+            conn,
+            replay_scratch_url,
+        )
+    replay_result = replay.run_replay_checks(structural, **kwargs)
+    if isinstance(replay_result, tuple):
+        replay_outcome, replay_extra = replay_result
+    else:
+        replay_outcome, replay_extra = replay_result, None
+    return structural, replay_outcome, replay_extra
 def replay_sql_fingerprints(
     *,
     target: TargetConfig,
@@ -449,8 +478,9 @@ def replay_sql_fingerprints(
     replay_outcome: replay.ReplayOutcome,
     context: str,
 ) -> tuple[str, str]:
-    worktree_sql = _decode_optional_schema(
-        structural.head_snapshot.schema_sql,
+    payload = structural.head_snapshot.schema_sql
+    worktree_sql = "" if payload is None else decode_sql_text(
+        payload,
         label=f"{target.name} worktree schema.sql",
     )
     try:
@@ -464,22 +494,6 @@ def replay_sql_fingerprints(
     except SqlError as error:
         raise SchemaError(f"{context}: SQL analysis failed: {error}") from error
     return left, right
-
-
-def _recover_target_artifacts(target: TargetConfig, *, context: str) -> None:
-    try:
-        recover_artifacts(target.dir)
-    except TxError as error:
-        raise SchemaError(f"{context}: artifact recovery failed: {error}") from error
-
-
-def _decode_optional_schema(payload: bytes | None, *, label: str) -> str:
-    if payload is None:
-        return ""
-    try:
-        return decode_sql_text(payload, label=label)
-    except SqlTextDecodeError as error:
-        raise SchemaError(str(error)) from error
 
 
 def _resolve_init_engine(
@@ -496,10 +510,7 @@ def _resolve_init_engine(
         except ValueError as error:
             raise SchemaError(f"Unsupported engine {requested!r} for init target.") from error
 
-    try:
-        snapshot = Snapshot.from_worktree(target)
-    except SnapshotError as error:
-        raise SchemaError(str(error)) from error
+    snapshot = Snapshot.from_worktree(target)
     state = build_lock_state(snapshot, policy=policy)
     if state.lock is None:
         raise SchemaError(
@@ -519,10 +530,10 @@ def _safe_target_dir(
     path: Path | None = None,
     label: str | None = None,
 ) -> Path:
-    candidate = target.dir if path is None else path
+    candidate = target.root if path is None else path
     try:
         return safe_descendant(
-            root=target.dir,
+            root=target.root,
             candidate=candidate,
             label=label or f"target {target.name} directory",
             allow_missing_leaf=True,

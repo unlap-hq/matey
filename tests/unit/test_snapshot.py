@@ -5,7 +5,7 @@ from pathlib import Path
 import pygit2
 import pytest
 
-from matey.config import TargetConfig
+from matey.project import TargetConfig
 from matey.repo import Snapshot, SnapshotError
 
 
@@ -37,7 +37,7 @@ def test_snapshot_from_worktree_reads_expected_files(tmp_path: Path) -> None:
 
     target = TargetConfig(
         name="core",
-        dir=target_dir.resolve(),
+        root=target_dir.resolve(),
         url_env="CORE_DATABASE_URL",
         test_url_env="CORE_TEST_DATABASE_URL",
     )
@@ -62,7 +62,7 @@ def test_snapshot_from_worktree_rejects_symlinked_schema_file(tmp_path: Path) ->
 
     target = TargetConfig(
         name="core",
-        dir=target_dir.resolve(),
+        root=target_dir.resolve(),
         url_env="CORE_DATABASE_URL",
         test_url_env="CORE_TEST_DATABASE_URL",
     )
@@ -78,7 +78,7 @@ def test_snapshot_from_worktree_rejects_broken_symlinked_schema_file(tmp_path: P
 
     target = TargetConfig(
         name="core",
-        dir=target_dir.resolve(),
+        root=target_dir.resolve(),
         url_env="CORE_DATABASE_URL",
         test_url_env="CORE_TEST_DATABASE_URL",
     )
@@ -97,7 +97,7 @@ def test_snapshot_from_worktree_rejects_symlinked_migration_file(tmp_path: Path)
 
     target = TargetConfig(
         name="core",
-        dir=target_dir.resolve(),
+        root=target_dir.resolve(),
         url_env="CORE_DATABASE_URL",
         test_url_env="CORE_TEST_DATABASE_URL",
     )
@@ -113,7 +113,7 @@ def test_snapshot_from_worktree_rejects_broken_symlinked_migrations_dir(tmp_path
 
     target = TargetConfig(
         name="core",
-        dir=target_dir.resolve(),
+        root=target_dir.resolve(),
         url_env="CORE_DATABASE_URL",
         test_url_env="CORE_TEST_DATABASE_URL",
     )

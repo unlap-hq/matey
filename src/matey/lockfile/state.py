@@ -3,8 +3,16 @@ from __future__ import annotations
 from matey.repo import Snapshot
 from matey.sql import SqlTextDecodeError, decode_sql_text
 
-from .model import DiagnosticCode, Divergence, LockPolicy, LockState, Step
-from .parse import build_worktree_steps, diag, parse_lockfile, schema_digest
+from .model import (
+    Diagnostic,
+    DiagnosticCode,
+    Divergence,
+    LockPolicy,
+    LockState,
+    Step,
+    generated_sql_digest,
+)
+from .parse import build_worktree_steps, parse_lockfile
 from .validate import validate_state
 
 
@@ -22,7 +30,7 @@ def build_lock_state(
     )
     schema_diagnostics = ()
     try:
-        current_schema_digest = schema_digest(
+        current_schema_digest = generated_sql_digest(
             decode_sql_text(input_files.schema_sql, label=effective_policy.schema_file)
             if input_files.schema_sql is not None
             else None,
@@ -31,7 +39,7 @@ def build_lock_state(
     except SqlTextDecodeError as error:
         current_schema_digest = None
         schema_diagnostics = (
-            diag(DiagnosticCode.INPUT_PATH_INVALID, effective_policy.schema_file, str(error)),
+            Diagnostic(DiagnosticCode.INPUT_PATH_INVALID, effective_policy.schema_file, str(error)),
         )
     diagnostics = (
         lock_diagnostics

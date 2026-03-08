@@ -6,13 +6,13 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeVar
 from urllib.parse import urlsplit
 
 from matey.dbmate import CmdResult, DbConnection, Dbmate, DbmateError
 from matey.lockfile import WorktreeStep
 from matey.scratch import Engine, ScratchLease
 from matey.sql import (
-    MigrationSqlError,
     SqlError,
     SqlProgram,
     ensure_newline,
@@ -20,6 +20,8 @@ from matey.sql import (
 )
 
 from .plan import SchemaError, StructuralPlan
+
+T = TypeVar("T")
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,10 +39,12 @@ def run_replay_checks(
     *,
     keep_scratch: bool,
     dbmate_bin: Path | None,
-) -> ReplayOutcome:
+    after_replay: Callable[[DbConnection, str], T] | None = None,
+) -> tuple[ReplayOutcome, T | None]:
     validate_tail_migration_targets(structural)
     with tempfile.TemporaryDirectory(prefix="matey-schema-tail-") as temp_root:
         tail_dir = write_tail_slice(structural, Path(temp_root))
+        replay_extra: T | None = None
         with lease_bootstrapped_connection(
             structural=structural,
             keep_scratch=keep_scratch,
@@ -55,19 +59,24 @@ def run_replay_checks(
                     context="replay tail migrations",
                 )
             replay_schema_sql = dump_schema(replay_conn, context="replay")
+            if after_replay is not None:
+                replay_extra = after_replay(replay_conn, replay_scratch_url)
 
         checkpoint_sql_by_file, down_checked, down_skipped, down_scratch_url = run_down_roundtrip(
             structural,
             keep_scratch=keep_scratch,
             dbmate_bin=dbmate_bin,
         )
-        return ReplayOutcome(
-            replay_scratch_url=replay_scratch_url,
-            down_scratch_url=down_scratch_url,
-            replay_schema_sql=replay_schema_sql,
-            checkpoint_sql_by_file=checkpoint_sql_by_file,
-            down_checked=down_checked,
-            down_skipped=down_skipped,
+        return (
+            ReplayOutcome(
+                replay_scratch_url=replay_scratch_url,
+                down_scratch_url=down_scratch_url,
+                replay_schema_sql=replay_schema_sql,
+                checkpoint_sql_by_file=checkpoint_sql_by_file,
+                down_checked=down_checked,
+                down_skipped=down_skipped,
+            ),
+            replay_extra,
         )
 
 
@@ -338,17 +347,14 @@ def validate_tail_migration_targets(structural: StructuralPlan) -> None:
     engine = structural.engine.value
     if engine not in {"bigquery", "bigquery-emulator", "mysql", "clickhouse"}:
         return
-    try:
-        message = first_migration_violation_message(
-            entries=(
-                (step.migration_file, migration_payload(structural, step))
-                for step in structural.tail_steps
-            ),
-            engine=engine,
-            section="migration",
-        )
-    except MigrationSqlError as error:
-        raise SchemaError(str(error)) from error
+    message = first_migration_violation_message(
+        entries=(
+            (step.migration_file, migration_payload(structural, step))
+            for step in structural.tail_steps
+        ),
+        engine=engine,
+        section="migration",
+    )
     if message is not None:
         raise SchemaError(message)
 

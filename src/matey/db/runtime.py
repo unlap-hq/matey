@@ -7,22 +7,20 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from matey.config import TargetConfig
 from matey.dbmate import CmdResult, DbConnection, Dbmate, DbmateError
 from matey.lockfile import LockState, WorktreeStep, build_lock_state
-from matey.repo import Snapshot, SnapshotError
+from matey.project import TargetConfig
+from matey.repo import Snapshot
 from matey.scratch import engine_from_url as scratch_engine_from_url
 from matey.sql import (
-    MigrationSqlError,
     SqlError,
     SqlProgram,
-    SqlTextDecodeError,
     decode_sql_text,
     engine_from_url,
     first_migration_violation_message,
     is_bigquery_family,
 )
-from matey.tx import TxError, recover_artifacts, serialized_target
+from matey.tx import recover_artifacts, serialized_target
 from matey.zero import zero_schema_sql
 
 _STATUS_LINE_PATTERN = re.compile(r"^\[(?P<mark>[ X])\]\s+(?P<file>.+?)\s*$")
@@ -81,12 +79,9 @@ def open_runtime(
     url: str | None,
     dbmate_bin: Path | None,
 ) -> Iterator[RuntimeContext]:
-    with serialized_target(target.dir):
+    with serialized_target(target.root):
         recover_target(target)
-        try:
-            snapshot = Snapshot.from_worktree(target)
-        except SnapshotError as error:
-            raise DbError(str(error)) from error
+        snapshot = Snapshot.from_worktree(target)
         state = build_lock_state(snapshot)
         if not state.is_clean:
             raise DbError(format_lock_diagnostics(state))
@@ -97,10 +92,7 @@ def open_runtime(
 
 
 def recover_target(target: TargetConfig) -> None:
-    try:
-        recover_artifacts(target.dir)
-    except TxError as error:
-        raise DbError(f"db: artifact recovery failed: {error}") from error
+    recover_artifacts(target.root)
 
 
 def resolve_live_url(*, target: TargetConfig, url: str | None) -> str:
@@ -283,21 +275,18 @@ def ensure_migration_range_allowed(
     section: str,
     context: str,
 ) -> None:
-    try:
-        message = first_migration_violation_message(
-            entries=(
-                (
-                    step.migration_file,
-                    migration_payload(runtime=runtime, migration_file=step.migration_file),
-                )
-                for step in steps
-            ),
-            engine=engine,
-            section=section,
-            context=context,
-        )
-    except MigrationSqlError as error:
-        raise DbError(str(error)) from error
+    message = first_migration_violation_message(
+        entries=(
+            (
+                step.migration_file,
+                migration_payload(runtime=runtime, migration_file=step.migration_file),
+            )
+            for step in steps
+        ),
+        engine=engine,
+        section=section,
+        context=context,
+    )
     if message is not None:
         raise DbError(message)
 
@@ -366,10 +355,7 @@ def expected_sql_for_index(*, runtime: RuntimeContext, index: int) -> str | None
     if index == target_index:
         if runtime.snapshot.schema_sql is None:
             raise DbError("Worktree schema.sql is missing.")
-        try:
-            return decode_sql_text(runtime.snapshot.schema_sql, label="worktree schema.sql")
-        except SqlTextDecodeError as error:
-            raise DbError(str(error)) from error
+        return decode_sql_text(runtime.snapshot.schema_sql, label="worktree schema.sql")
 
     step = runtime.state.worktree_steps[index - 1]
     checkpoint_sql = runtime.snapshot.checkpoints.get(step.checkpoint_file)
@@ -377,20 +363,7 @@ def expected_sql_for_index(*, runtime: RuntimeContext, index: int) -> str | None
         raise DbError(
             f"Missing checkpoint for expected index {index}: {step.checkpoint_file}."
         )
-    try:
-        return decode_sql_text(checkpoint_sql, label=f"checkpoint {step.checkpoint_file}")
-    except SqlTextDecodeError as error:
-        raise DbError(str(error)) from error
-
-
-def is_bigquery_url(url: str) -> bool:
-    return is_bigquery_family(engine_from_url(url))
-
-
-def ensure_bigquery_dataset_exists(*, conn: DbConnection, context: str) -> None:
-    _ = dump_live_schema(conn, context=context)
-
-
+    return decode_sql_text(checkpoint_sql, label=f"checkpoint {step.checkpoint_file}")
 def dump_live_schema(conn: DbConnection, *, context: str) -> str:
     try:
         dump_result = conn.dump()
@@ -429,7 +402,6 @@ __all__ = [
     "RuntimeContext",
     "StatusError",
     "compare_expected_schema",
-    "ensure_bigquery_dataset_exists",
     "ensure_live_not_ahead",
     "ensure_pending_up_allowed",
     "ensure_prefix",
@@ -438,7 +410,6 @@ __all__ = [
     "format_command_error",
     "format_lock_diagnostics",
     "inspect_live",
-    "is_bigquery_url",
     "is_missing_db_status_error",
     "live_relation",
     "live_status_path_mode",

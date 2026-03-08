@@ -208,23 +208,6 @@ def aligned_source_statements(
             f"{label} anchor statements could not be aligned safely with source text."
         )
     return statements
-
-
-def _source_anchor_statements(
-    # Postgres/sqlite replay intentionally preserves validated source text
-    # instead of re-rendering SQL through sqlglot.
-    prepared_text: str,
-    *,
-    expected_count: int,
-    label: str,
-) -> tuple[str, ...]:
-    return aligned_source_statements(
-        prepared_text,
-        expected_count=expected_count,
-        label=label,
-    )
-
-
 def _is_migration_directive_line(line: str, *, marker: re.Pattern[str]) -> bool:
     return marker.fullmatch(line.rstrip("\r\n")) is not None
 

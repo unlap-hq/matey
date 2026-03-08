@@ -9,9 +9,9 @@ from pathlib import Path
 import pygit2
 import pytest
 
-from matey.config import TargetConfig
 from matey.dbmate import default_dbmate_binary
 from matey.lockfile import LockPolicy
+from matey.project import TargetConfig
 from matey.schema import SchemaError, apply, plan, status
 
 pytestmark = pytest.mark.integration
@@ -29,7 +29,7 @@ def _require_dbmate_binary() -> None:
 def _target(tmp_path: Path, name: str = "core") -> TargetConfig:
     return TargetConfig(
         name=name,
-        dir=(tmp_path / "db" / name).resolve(),
+        root=(tmp_path / "db" / name).resolve(),
         url_env=f"{name.upper()}_DATABASE_URL",
         test_url_env=f"{name.upper()}_TEST_DATABASE_URL",
     )
@@ -108,11 +108,11 @@ def _spawn_apply_worker(
     code = (
         "import json, sys\n"
         "from pathlib import Path\n"
-        "from matey.config import TargetConfig\n"
+        "from matey.project import TargetConfig\n"
         "from matey.schema import apply\n"
         "target = TargetConfig(\n"
         "    name=sys.argv[1],\n"
-        "    dir=Path(sys.argv[2]),\n"
+        "    root=Path(sys.argv[2]),\n"
         "    url_env=sys.argv[3],\n"
         "    test_url_env=sys.argv[4],\n"
         ")\n"
@@ -130,7 +130,7 @@ def _spawn_apply_worker(
             "-c",
             code,
             target.name,
-            str(target.dir),
+            str(target.root),
             target.url_env,
             target.test_url_env,
             test_base_url,
@@ -322,7 +322,7 @@ def test_live_status_recovers_pending_tx_before_read(tmp_path: Path) -> None:
     _write(target.schema, "CREATE TABLE stale(id INTEGER);\n")
 
     # Simulate interrupted apply journal.
-    tx_root = target.dir / ".matey" / "tx" / "manual-applying"
+    tx_root = target.root / ".matey" / "tx" / "manual-applying"
     tx_root.mkdir(parents=True, exist_ok=True)
     (tx_root / "state").write_text("applying\n", encoding="utf-8")
     (tx_root / "manifest.json").write_text(
@@ -357,7 +357,7 @@ DROP TABLE one;
     good_lock = target.lockfile.read_text(encoding="utf-8")
     _write(target.lockfile, "not a lockfile\n")
 
-    tx_root = target.dir / ".matey" / "tx" / "manual-applying"
+    tx_root = target.root / ".matey" / "tx" / "manual-applying"
     tx_root.mkdir(parents=True, exist_ok=True)
     (tx_root / "state").write_text("applying\n", encoding="utf-8")
     (tx_root / "manifest.json").write_text(
@@ -371,7 +371,7 @@ DROP TABLE one;
 
     assert result.tail_count == 0
     assert target.lockfile.read_text(encoding="utf-8") == good_lock
-    assert not (target.dir / ".matey" / "tx").exists()
+    assert not (target.root / ".matey" / "tx").exists()
 
 
 def test_live_apply_recovers_pending_tx_before_lock_parse(tmp_path: Path) -> None:
@@ -390,7 +390,7 @@ DROP TABLE one;
     good_lock = target.lockfile.read_text(encoding="utf-8")
     _write(target.lockfile, "not a lockfile\n")
 
-    tx_root = target.dir / ".matey" / "tx" / "manual-applying"
+    tx_root = target.root / ".matey" / "tx" / "manual-applying"
     tx_root.mkdir(parents=True, exist_ok=True)
     (tx_root / "state").write_text("applying\n", encoding="utf-8")
     (tx_root / "manifest.json").write_text(
@@ -404,7 +404,7 @@ DROP TABLE one;
 
     assert result.wrote is False
     assert target.lockfile.read_text(encoding="utf-8") == good_lock
-    assert not (target.dir / ".matey" / "tx").exists()
+    assert not (target.root / ".matey" / "tx").exists()
 
 
 def test_live_concurrent_apply_is_serialized(tmp_path: Path) -> None:
@@ -437,4 +437,4 @@ DROP TABLE one;
     assert outcomes.count(True) == 1
     assert outcomes.count(False) == 1
     assert status(target).is_clean is True
-    assert not (target.dir / ".matey" / "tx").exists()
+    assert not (target.root / ".matey" / "tx").exists()
