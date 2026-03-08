@@ -19,18 +19,60 @@ class CliUsageError(RuntimeError):
 
 
 TargetOpt = Annotated[str | None, Parameter(name="--target", help="Select target name.")]
-AllOpt = Annotated[bool, Parameter(name="--all", help="Run command for all configured targets.")]
+AllOpt = Annotated[
+    bool,
+    Parameter(
+        name="--all",
+        negative=(),
+        help="Run command for all configured targets.",
+    ),
+]
 ConfigOpt = Annotated[Path | None, Parameter(name="--config", help="Path to matey.toml config.")]
 DbmateBinOpt = Annotated[Path | None, Parameter(name="--dbmate-bin", help="Path to dbmate binary.")]
 UrlOpt = Annotated[str | None, Parameter(name="--url", help="Override selected target live database URL.")]
 StepsOpt = Annotated[int, Parameter(name="--steps", help="Number of migrations to rollback.")]
 BaseOpt = Annotated[str | None, Parameter(name="--base", help="Base ref for base-aware planning.")]
 TestUrlOpt = Annotated[str | None, Parameter(name="--test-url", help="Scratch test base URL override.")]
-CleanOpt = Annotated[bool, Parameter(name="--clean", help="Replay full migration chain from empty.")]
-KeepScratchOpt = Annotated[bool, Parameter(name="--keep-scratch", help="Keep scratch database after command.")]
-OverwriteOpt = Annotated[bool, Parameter(name="--overwrite", help="Allow overwriting existing file when writing.")]
-SqlOpt = Annotated[bool, Parameter(name="--sql", help="Print expected SQL output.")]
-DiffOpt = Annotated[bool, Parameter(name="--diff", help="Print unified diff output.")]
+CleanOpt = Annotated[
+    bool,
+    Parameter(
+        name="--clean",
+        negative=(),
+        help="Replay full migration chain from empty.",
+    ),
+]
+KeepScratchOpt = Annotated[
+    bool,
+    Parameter(
+        name="--keep-scratch",
+        negative=(),
+        help="Keep scratch database after command.",
+    ),
+]
+OverwriteOpt = Annotated[
+    bool,
+    Parameter(
+        name="--overwrite",
+        negative=(),
+        help="Allow overwriting existing file when writing.",
+    ),
+]
+SqlOpt = Annotated[
+    bool,
+    Parameter(
+        name="--sql",
+        negative=(),
+        help="Print expected SQL output.",
+    ),
+]
+DiffOpt = Annotated[
+    bool,
+    Parameter(
+        name="--diff",
+        negative=(),
+        help="Print unified diff output.",
+    ),
+]
 EngineOpt = Annotated[str | None, Parameter(name="--engine", help="Target engine for zero-state init. Required for fresh targets unless an existing lockfile supplies one.")]
 
 

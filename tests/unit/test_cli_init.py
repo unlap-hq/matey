@@ -6,10 +6,10 @@ from pathlib import Path
 cli = import_module("matey.cli.app")
 
 
-def test_init_no_target_writes_config(tmp_path: Path, monkeypatch) -> None:
+def test_init_config_only_writes_config(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
 
-    rc = cli.main(["init", "--no-target"])
+    rc = cli.main(["init", "--config-only"])
 
     assert rc == 0
     content = (tmp_path / "matey.toml").read_text(encoding="utf-8")
@@ -20,7 +20,7 @@ def test_init_no_target_writes_config(tmp_path: Path, monkeypatch) -> None:
 def test_init_with_ci_writes_default_ci_path(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
 
-    rc = cli.main(["init", "--no-target", "--ci", "github"])
+    rc = cli.main(["init", "--config-only", "--ci", "github"])
 
     assert rc == 0
     ci_path = tmp_path / ".github" / "workflows" / "matey-schema.yml"
@@ -51,7 +51,7 @@ def test_init_preserves_existing_config_comments_with_tomlkit(tmp_path: Path, mo
         encoding="utf-8",
     )
 
-    rc = cli.main(["init", "--no-target", "--url-env", "NEW_DATABASE_URL"])
+    rc = cli.main(["init", "--config-only", "--url-env", "NEW_DATABASE_URL"])
 
     assert rc == 0
     content = (tmp_path / "matey.toml").read_text(encoding="utf-8")
@@ -69,7 +69,7 @@ def test_init_named_target_omits_implicit_dir(tmp_path: Path, monkeypatch) -> No
             "core",
             "--engine",
             "sqlite",
-            "--no-target",
+            "--config-only",
         ]
     )
 

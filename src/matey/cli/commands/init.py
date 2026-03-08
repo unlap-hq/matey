@@ -26,9 +26,16 @@ TestUrlEnvInitOpt = Annotated[
 ]
 CiOpt = Annotated[
     TemplateProvider | None,
-    Parameter(name="--ci", help="Write a CI scaffold for the selected provider."),
+    Parameter(name="--ci", help="Write a CI template for the selected provider."),
 ]
-NoTargetOpt = Annotated[bool, Parameter(name="--no-target", help="Create/update config only; skip zero-state target initialization.")]
+ConfigOnlyOpt = Annotated[
+    bool,
+    Parameter(
+        name="--config-only",
+        negative=(),
+        help="Create/update config only; skip zero-state target initialization.",
+    ),
+]
 TargetOpt = Annotated[str | None, Parameter(name="--target", help="Initialize or add a named target; omit for the root/default target.")]
 
 
@@ -42,7 +49,7 @@ def register_init_command(*, root_app: App, renderer: Renderer) -> None:
         url_env: UrlEnvInitOpt = None,
         test_url_env: TestUrlEnvInitOpt = None,
         ci: CiOpt = None,
-        no_target: NoTargetOpt = False,
+        config_only: ConfigOnlyOpt = False,
         overwrite: OverwriteOpt = False,
     ) -> None:
         """Initialize matey config, zero-state target artifacts, and optional CI."""
@@ -60,7 +67,7 @@ def register_init_command(*, root_app: App, renderer: Renderer) -> None:
             test_url_env=test_url_env,
         )
         init_plan = None
-        if not no_target:
+        if not config_only:
             selected_target = (
                 config_obj.default_target
                 if target is None
