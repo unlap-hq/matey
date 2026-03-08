@@ -25,15 +25,19 @@ def test_lint_reports_semantic_and_style_issues(tmp_path: Path, monkeypatch, cap
     _init_repo(tmp_path)
     _write(
         tmp_path / "matey.toml",
-        'dir = "db"\nurl_env = "DATABASE_URL"\ntest_url_env = "TEST_DATABASE_URL"\n',
+        'targets = ["db/core"]\n',
     )
     _write(
-        tmp_path / "db" / "migrations" / "001_init.sql",
+        tmp_path / "db" / "core" / "config.toml",
+        'engine = "mysql"\nurl_env = "DATABASE_URL"\ntest_url_env = "TEST_DATABASE_URL"\n',
+    )
+    _write(
+        tmp_path / "db" / "core" / "migrations" / "001_init.sql",
         'CREATE TABLE other_db.events (id BIGINT);\n',
     )
     monkeypatch.chdir(tmp_path)
 
-    rc = cli.main(["lint", "--engine", "mysql"])
+    rc = cli.main(["lint"])
     out = capsys.readouterr().out
 
     assert rc == 1
@@ -46,13 +50,17 @@ def test_lint_reports_style_and_lock_issues(tmp_path: Path, monkeypatch, capsys)
     _init_repo(tmp_path)
     _write(
         tmp_path / "matey.toml",
-        'dir = "db"\nurl_env = "DATABASE_URL"\ntest_url_env = "TEST_DATABASE_URL"\n',
+        'targets = ["db/core"]\n',
     )
-    _write(tmp_path / "db" / "schema.lock.toml", "not toml\n")
-    _write(tmp_path / "db" / "migrations" / "001_init.sql", "select  1  from foo\n")
+    _write(
+        tmp_path / "db" / "core" / "config.toml",
+        'engine = "postgres"\nurl_env = "DATABASE_URL"\ntest_url_env = "TEST_DATABASE_URL"\n',
+    )
+    _write(tmp_path / "db" / "core" / "schema.lock.toml", "not toml\n")
+    _write(tmp_path / "db" / "core" / "migrations" / "001_init.sql", "select  1  from foo\n")
     monkeypatch.chdir(tmp_path)
 
-    rc = cli.main(["lint", "--engine", "postgres"])
+    rc = cli.main(["lint"])
     out = capsys.readouterr().out
 
     assert rc == 1

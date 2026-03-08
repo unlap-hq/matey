@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from sqlfluff.core import Linter
+from sqlfluff.core.config import FluffConfig
 
 from matey.sql import is_bigquery_family
 from matey.sql.policy import normalize_engine
@@ -20,11 +21,18 @@ def lint_paths(
     if not paths:
         return ()
     dialect = _sqlfluff_dialect(engine)
-    linter = Linter(dialect=dialect)
-    result = linter.lint_paths(tuple(str(path) for path in paths), processes=1)
     findings: list[LintFinding] = []
-    for record in result.as_records():
-        filepath = Path(record["filepath"])
+    config = FluffConfig.from_kwargs(
+        dialect=dialect,
+        require_dialect=dialect is not None,
+    )
+    linter = Linter(config=config)
+    for filepath in paths:
+        linted = linter.lint_string(
+            filepath.read_text(encoding="utf-8"),
+            fname=str(filepath),
+            config=config,
+        )
         try:
             display_path = filepath.relative_to(target_root).as_posix()
         except ValueError:
@@ -33,12 +41,12 @@ def lint_paths(
             LintFinding(
                 target_name=target_name,
                 path=display_path,
-                code=f"SF.{violation['code']}",
-                level="warning" if violation.get("warning") else "error",
-                message=violation["description"],
-                line=violation.get("start_line_no"),
+                code=f"SF.{violation.rule_code()}",
+                level="warning" if getattr(violation, "warning", False) else "error",
+                message=violation.desc(),
+                line=violation.line_no,
             )
-            for violation in record["violations"]
+            for violation in linted.get_violations()
         )
     return tuple(findings)
 

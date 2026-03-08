@@ -10,7 +10,7 @@ from matey.lint import LintResult
 from matey.lint import lint_paths as lint_style_paths
 from matey.lint import lint_target as lint_semantic_target
 
-from .common import AllOpt, CliUsageError, ConfigOpt, TargetOpt, select_targets
+from .common import AllOpt, CliUsageError, PathOpt, WorkspaceOpt, select_targets
 
 EngineOpt = Annotated[
     str | None,
@@ -37,21 +37,21 @@ NoSemanticOpt = Annotated[
 def register_lint_command(*, root_app: App) -> None:
     @root_app.command(name="lint", sort_key=20)
     def lint_command(
-        target: TargetOpt = None,
+        workspace: WorkspaceOpt = None,
+        path: PathOpt = None,
         all_targets: AllOpt = False,
-        config: ConfigOpt = None,
         engine: EngineOpt = None,
-        format: FormatOpt = "text",
-        no_style: NoStyleOpt = False,
         no_semantic: NoSemanticOpt = False,
+        no_style: NoStyleOpt = False,
+        format: FormatOpt = "text",
     ) -> None:
         """Run matey semantic lint plus sqlfluff style lint on migration files."""
         if no_style and no_semantic:
             raise CliUsageError("Lint must run at least one of semantic or style checks.")
 
         targets = select_targets(
-            config_path=config,
-            target=target,
+            workspace_path=workspace,
+            path=path,
             all_targets=all_targets,
             require_single=False,
         )
@@ -89,7 +89,7 @@ def _lint_one_target(
                 target_name=target.name,
                 paths=paths,
                 target_root=target.dir,
-                engine=engine,
+                engine=engine or target.engine,
             )
         )
     return LintResult(

@@ -21,6 +21,7 @@ def _target(tmp_path: Path) -> TargetConfig:
     return TargetConfig(
         name="core",
         dir=(tmp_path / "db" / "core").resolve(),
+        engine="postgres",
         url_env="DATABASE_URL",
         test_url_env="TEST_DATABASE_URL",
     )
@@ -79,7 +80,6 @@ def test_semantic_lint_reports_artifact_state_findings_without_lock(tmp_path: Pa
 
     assert "L205" in codes
     assert "L206" in codes
-    assert "L200" in codes
 
 
 def test_semantic_lint_reports_lock_engine_mismatch(tmp_path: Path) -> None:
@@ -167,12 +167,16 @@ def test_cli_lint_json_and_exit_code(tmp_path: Path, monkeypatch: pytest.MonkeyP
     _init_repo(tmp_path)
     _write(
         tmp_path / "matey.toml",
-        'dir = "db"\nurl_env = "DATABASE_URL"\ntest_url_env = "TEST_DATABASE_URL"\n',
+        'targets = ["db/core"]\n',
     )
-    _write(tmp_path / "db" / "migrations" / "001_init.sql", "select  1  from foo\n")
+    _write(
+        tmp_path / "db" / "core" / "config.toml",
+        'engine = "postgres"\nurl_env = "DATABASE_URL"\ntest_url_env = "TEST_DATABASE_URL"\n',
+    )
+    _write(tmp_path / "db" / "core" / "migrations" / "001_init.sql", "select  1  from foo\n")
     monkeypatch.chdir(tmp_path)
 
-    rc = cli.main(["lint", "--engine", "postgres", "--format", "json"])
+    rc = cli.main(["lint", "--format", "json"])
     out = capsys.readouterr().out
 
     assert rc == 1

@@ -6,21 +6,48 @@ from pathlib import Path
 cli = import_module("matey.cli.app")
 
 
-def test_init_config_only_writes_config(tmp_path: Path, monkeypatch) -> None:
+def test_init_defaults_to_current_directory_target(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
 
-    rc = cli.main(["init", "--config-only"])
+    rc = cli.main(
+        [
+            "init",
+            "--engine",
+            "sqlite",
+            "--url-env",
+            "DATABASE_URL",
+            "--test-url-env",
+            "TEST_DATABASE_URL",
+        ]
+    )
 
     assert rc == 0
+    assert (tmp_path / "matey.toml").exists()
+    assert (tmp_path / "config.toml").exists()
+    assert (tmp_path / "schema.sql").exists()
+    assert (tmp_path / "schema.lock.toml").exists()
+    assert (tmp_path / "migrations").is_dir()
+    assert (tmp_path / "checkpoints").is_dir()
     content = (tmp_path / "matey.toml").read_text(encoding="utf-8")
-    assert 'dir = "db"' in content
-    assert 'url_env = "DATABASE_URL"' in content
+    assert 'targets = ["."]' in content
 
 
 def test_init_with_ci_writes_default_ci_path(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
 
-    rc = cli.main(["init", "--config-only", "--ci", "github"])
+    rc = cli.main(
+        [
+            "init",
+            "--engine",
+            "sqlite",
+            "--url-env",
+            "DATABASE_URL",
+            "--test-url-env",
+            "TEST_DATABASE_URL",
+            "--ci",
+            "github",
+        ]
+    )
 
     assert rc == 0
     ci_path = tmp_path / ".github" / "workflows" / "matey-schema.yml"
@@ -28,52 +55,76 @@ def test_init_with_ci_writes_default_ci_path(tmp_path: Path, monkeypatch) -> Non
     assert "${{ github.base_ref }}" in ci_path.read_text(encoding="utf-8")
 
 
-def test_init_target_creates_zero_state_target(tmp_path: Path, monkeypatch) -> None:
+def test_init_target_creates_workspace_target_and_zero_state(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
 
-    rc = cli.main(["init", "--engine", "sqlite"])
+    rc = cli.main([
+        "init",
+        "--path",
+        "db/core",
+        "--engine",
+        "sqlite",
+        "--url-env",
+        "CORE_DATABASE_URL",
+        "--test-url-env",
+        "CORE_TEST_DATABASE_URL",
+    ])
 
     assert rc == 0
     assert (tmp_path / "matey.toml").exists()
-    assert (tmp_path / "db" / "schema.sql").exists()
-    assert (tmp_path / "db" / "schema.lock.toml").exists()
-    assert (tmp_path / "db" / "migrations").is_dir()
-    assert (tmp_path / "db" / "checkpoints").is_dir()
+    assert (tmp_path / "db" / "core" / "config.toml").exists()
+    assert (tmp_path / "db" / "core" / "schema.sql").exists()
+    assert (tmp_path / "db" / "core" / "schema.lock.toml").exists()
+    assert (tmp_path / "db" / "core" / "migrations").is_dir()
+    assert (tmp_path / "db" / "core" / "checkpoints").is_dir()
 
 
-def test_init_preserves_existing_config_comments_with_tomlkit(tmp_path: Path, monkeypatch) -> None:
+def test_init_preserves_existing_workspace_comments_with_tomlkit(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "matey.toml").write_text(
-        '# keep me\n'
-        'dir = "db"\n'
-        'url_env = "DATABASE_URL"\n'
-        'test_url_env = "TEST_DATABASE_URL"\n',
-        encoding="utf-8",
-    )
-
-    rc = cli.main(["init", "--config-only", "--url-env", "NEW_DATABASE_URL"])
-
-    assert rc == 0
-    content = (tmp_path / "matey.toml").read_text(encoding="utf-8")
-    assert "# keep me" in content
-    assert 'url_env = "NEW_DATABASE_URL"' in content
-
-
-def test_init_named_target_omits_implicit_dir(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
+    (tmp_path / "matey.toml").write_text('# keep me\ntargets = ["db/core"]\n', encoding='utf-8')
 
     rc = cli.main(
         [
             "init",
-            "--target",
-            "core",
+            "--path",
+            "db/analytics",
             "--engine",
             "sqlite",
-            "--config-only",
+            "--url-env",
+            "ANALYTICS_DATABASE_URL",
+            "--test-url-env",
+            "ANALYTICS_TEST_DATABASE_URL",
         ]
     )
 
     assert rc == 0
     content = (tmp_path / "matey.toml").read_text(encoding="utf-8")
-    assert "[core]" in content
-    assert 'dir = "db/core"' not in content
+    assert "# keep me" in content
+    assert '"db/core"' in content
+    assert '"db/analytics"' in content
+
+
+def test_init_updates_target_local_config(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    target_root = tmp_path / "db" / "core"
+    target_root.mkdir(parents=True)
+    (target_root / "config.toml").write_text(
+        'engine = "sqlite"\nurl_env = "OLD_URL"\ntest_url_env = "OLD_TEST_URL"\n# keep me\n',
+        encoding='utf-8',
+    )
+
+    rc = cli.main([
+        "init",
+        "--path",
+        "db/core",
+        "--url-env",
+        "CORE_DATABASE_URL",
+        "--test-url-env",
+        "CORE_TEST_DATABASE_URL",
+    ])
+
+    assert rc == 0
+    content = (target_root / "config.toml").read_text(encoding="utf-8")
+    assert 'engine = "sqlite"' in content
+    assert 'url_env = "CORE_DATABASE_URL"' in content
+    assert '# keep me' in content

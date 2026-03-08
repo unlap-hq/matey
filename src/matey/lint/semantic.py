@@ -49,7 +49,7 @@ def lint_target(
     state = build_lock_state(snapshot)
     findings.extend(_lock_findings(target=target, state=state, snapshot=snapshot))
 
-    resolved_engine = normalize_engine(state.lock.engine if state.lock is not None else engine)
+    resolved_engine = normalize_engine(state.lock.engine if state.lock is not None else (engine or target.engine))
     if state.lock is not None and engine is not None:
         provided_engine = normalize_engine(engine)
         if provided_engine and provided_engine != state.lock.engine:

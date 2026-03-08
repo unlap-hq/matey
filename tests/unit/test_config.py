@@ -4,7 +4,16 @@ from pathlib import Path
 
 import pytest
 
-from matey.config import Config, ConfigError
+from matey.config import (
+    TARGET_CONFIG_FILE,
+    WORKSPACE_CONFIG_FILE,
+    CodegenConfig,
+    Config,
+    ConfigError,
+    load_target,
+    load_workspace,
+    target_env_stem,
+)
 
 
 def _write(path: Path, content: str) -> None:
@@ -12,218 +21,120 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def test_load_implicit_default_target_from_top_level(tmp_path: Path) -> None:
-    _write(
-        tmp_path / "matey.toml",
-        """
-dir = "db"
-url_env = "MATEY_URL"
-test_url_env = "MATEY_TEST_URL"
-""".strip(),
-    )
+def test_load_workspace_from_dedicated_file(tmp_path: Path) -> None:
+    _write(tmp_path / WORKSPACE_CONFIG_FILE, 'targets = ["db/core"]\n')
 
-    config = Config.load(tmp_path)
-    targets = config.targets
-    assert tuple(targets.keys()) == ()
-    default = config.default_target
-    assert default.dir == (tmp_path / "db").resolve()
-    assert default.url_env == "MATEY_URL"
-    assert default.test_url_env == "MATEY_TEST_URL"
-    assert default.schema == (tmp_path / "db" / "schema.sql").resolve()
+    workspace = load_workspace(tmp_path)
+
+    assert workspace.source_kind == "workspace"
+    assert workspace.targets == ((tmp_path / "db" / "core").resolve(),)
 
 
-def test_target_dir_defaults_to_defaults_dir_plus_target_name(tmp_path: Path) -> None:
-    _write(
-        tmp_path / "matey.toml",
-        """
-dir = "db"
-url_env = "MATEY_URL"
-test_url_env = "MATEY_TEST_URL"
-
-[core]
-url_env = "CORE_URL"
-test_url_env = "CORE_TEST_URL"
-""".strip(),
-    )
-
-    config = Config.load(tmp_path)
-    core = config.targets["core"]
-    assert core.dir == (tmp_path / "db" / "core").resolve()
-
-
-def test_matey_toml_overrides_pyproject_tool_matey(tmp_path: Path) -> None:
+def test_load_workspace_falls_back_to_pyproject(tmp_path: Path) -> None:
     _write(
         tmp_path / "pyproject.toml",
-        """
-[tool.matey]
-dir = "db_py"
-url_env = "PY_URL"
-test_url_env = "PY_TEST_URL"
-""".strip(),
+        '[tool.matey]\ntargets = ["db/core"]\n',
     )
+
+    workspace = load_workspace(tmp_path)
+
+    assert workspace.source_kind == "pyproject"
+    assert workspace.targets == ((tmp_path / "db" / "core").resolve(),)
+
+
+def test_workspace_file_wins_over_pyproject(tmp_path: Path) -> None:
+    _write(tmp_path / WORKSPACE_CONFIG_FILE, 'targets = ["db/core"]\n')
     _write(
-        tmp_path / "matey.toml",
-        """
-dir = "db_file"
-url_env = "FILE_URL"
-test_url_env = "FILE_TEST_URL"
-""".strip(),
+        tmp_path / "pyproject.toml",
+        '[tool.matey]\ntargets = ["db/analytics"]\n',
     )
 
-    config = Config.load(tmp_path)
-    default = config.default_target
-    assert default.dir == (tmp_path / "db_file").resolve()
-    assert default.url_env == "FILE_URL"
-    assert default.test_url_env == "FILE_TEST_URL"
+    workspace = load_workspace(tmp_path)
+
+    assert workspace.targets == ((tmp_path / "db" / "core").resolve(),)
 
 
-def test_legacy_defaults_shape_is_rejected(tmp_path: Path) -> None:
+def test_load_target_local_config(tmp_path: Path) -> None:
     _write(
-        tmp_path / "matey.toml",
-        """
-[defaults]
-dir = "db"
-""".strip(),
+        tmp_path / "db" / "core" / TARGET_CONFIG_FILE,
+        'engine = "postgres"\nurl_env = "CORE_DATABASE_URL"\ntest_url_env = "CORE_TEST_DATABASE_URL"\n\n[codegen]\nenabled = true\ngenerator = "tables"\n',
     )
 
-    with pytest.raises(ConfigError):
-        Config.load(tmp_path)
+    target = load_target(path="db/core", repo_root=tmp_path)
+
+    assert target.name == "db/core"
+    assert target.dir == (tmp_path / "db" / "core").resolve()
+    assert target.engine == "postgres"
+    assert target.url_env == "CORE_DATABASE_URL"
+    assert target.test_url_env == "CORE_TEST_DATABASE_URL"
+    assert target.codegen == CodegenConfig(enabled=True, generator="tables", options=None)
 
 
-def test_unknown_key_is_rejected(tmp_path: Path) -> None:
+def test_load_target_rejects_invalid_env_name(tmp_path: Path) -> None:
     _write(
-        tmp_path / "matey.toml",
-        """
-dir = "db"
-url_env = "MATEY_URL"
-test_url_env = "MATEY_TEST_URL"
-surprise = "x"
-""".strip(),
+        tmp_path / "db" / "core" / TARGET_CONFIG_FILE,
+        'engine = "postgres"\nurl_env = "bad-name"\ntest_url_env = "CORE_TEST_DATABASE_URL"\n',
     )
 
-    with pytest.raises(ConfigError):
-        Config.load(tmp_path)
+    with pytest.raises(ConfigError, match="invalid environment variable name"):
+        load_target(path="db/core", repo_root=tmp_path)
 
 
-def test_invalid_target_name_is_rejected(tmp_path: Path) -> None:
-    _write(
-        tmp_path / "matey.toml",
-        """
-dir = "db"
-url_env = "MATEY_URL"
-test_url_env = "MATEY_TEST_URL"
-
-["bad.name"]
-url_env = "X"
-test_url_env = "Y"
-""".strip(),
-    )
-
-    with pytest.raises(ConfigError):
-        Config.load(tmp_path)
-
-
-def test_absolute_dir_is_rejected(tmp_path: Path) -> None:
-    _write(
-        tmp_path / "matey.toml",
-        """
-dir = "/abs/path"
-url_env = "MATEY_URL"
-test_url_env = "MATEY_TEST_URL"
-""".strip(),
-    )
-
-    with pytest.raises(ConfigError):
-        Config.load(tmp_path)
-
-
-def test_duplicate_resolved_target_dirs_are_rejected(tmp_path: Path) -> None:
-    _write(
-        tmp_path / "matey.toml",
-        """
-dir = "db"
-url_env = "MATEY_URL"
-test_url_env = "MATEY_TEST_URL"
-
-[core]
-dir = "db/shared"
-url_env = "CORE_URL"
-test_url_env = "CORE_TEST_URL"
-
-[analytics]
-dir = "db/shared"
-url_env = "AN_URL"
-test_url_env = "AN_TEST_URL"
-""".strip(),
-    )
-
-    with pytest.raises(ConfigError):
-        Config.load(tmp_path)
-
-
-def test_default_and_named_target_dirs_cannot_collide(tmp_path: Path) -> None:
-    _write(
-        tmp_path / "matey.toml",
-        """
-dir = "db/shared"
-url_env = "MATEY_URL"
-test_url_env = "MATEY_TEST_URL"
-
-[core]
-dir = "db/shared"
-url_env = "CORE_URL"
-test_url_env = "CORE_TEST_URL"
-""".strip(),
-    )
-
-    with pytest.raises(ConfigError):
-        Config.load(tmp_path)
-
-
-def test_symlinked_target_dir_is_rejected(tmp_path: Path) -> None:
+def test_load_target_rejects_symlinked_target_root(tmp_path: Path) -> None:
     real = tmp_path / "realdb"
     real.mkdir()
     (tmp_path / "db-link").symlink_to(real, target_is_directory=True)
     _write(
-        tmp_path / "matey.toml",
-        """
-dir = "db-link"
-url_env = "MATEY_URL"
-test_url_env = "MATEY_TEST_URL"
-""".strip(),
+        real / TARGET_CONFIG_FILE,
+        'engine = "postgres"\nurl_env = "DATABASE_URL"\ntest_url_env = "TEST_DATABASE_URL"\n',
     )
 
     with pytest.raises(ConfigError, match="symlinked path segment"):
-        Config.load(tmp_path)
+        load_target(path="db-link", repo_root=tmp_path)
 
 
-def test_select_rules(tmp_path: Path) -> None:
+def test_config_load_and_select_path_native(tmp_path: Path) -> None:
+    _write(tmp_path / WORKSPACE_CONFIG_FILE, 'targets = ["db/core", "db/analytics"]\n')
     _write(
-        tmp_path / "matey.toml",
-        """
-dir = "db"
-url_env = "MATEY_URL"
-test_url_env = "MATEY_TEST_URL"
-
-[core]
-url_env = "CORE_URL"
-test_url_env = "CORE_TEST_URL"
-
-[analytics]
-url_env = "AN_URL"
-test_url_env = "AN_TEST_URL"
-""".strip(),
+        tmp_path / "db" / "core" / TARGET_CONFIG_FILE,
+        'engine = "postgres"\nurl_env = "CORE_DATABASE_URL"\ntest_url_env = "CORE_TEST_DATABASE_URL"\n',
+    )
+    _write(
+        tmp_path / "db" / "analytics" / TARGET_CONFIG_FILE,
+        'engine = "mysql"\nurl_env = "ANALYTICS_DATABASE_URL"\ntest_url_env = "ANALYTICS_TEST_DATABASE_URL"\n',
     )
 
     config = Config.load(tmp_path)
-    assert tuple(target.name for target in config.select(target="core")) == ("core",)
-    assert tuple(target.name for target in config.select(target="default")) == ("default",)
-    assert tuple(target.name for target in config.select(all_targets=True)) == ("default", "analytics", "core")
 
-    with pytest.raises(ConfigError):
+    assert tuple(config.targets.keys()) == ("db/analytics", "db/core")
+    assert tuple(target.name for target in config.select(path="db/core")) == ("db/core",)
+    assert tuple(target.name for target in config.select(all_targets=True)) == ("db/analytics", "db/core")
+    with pytest.raises(ConfigError, match="Multiple targets configured"):
         config.select()
-    with pytest.raises(ConfigError):
-        config.select(target="core", all_targets=True)
+
+
+def test_config_select_direct_path_not_in_workspace(tmp_path: Path) -> None:
+    _write(tmp_path / WORKSPACE_CONFIG_FILE, 'targets = ["db/core"]\n')
+    _write(
+        tmp_path / "db" / "core" / TARGET_CONFIG_FILE,
+        'engine = "postgres"\nurl_env = "CORE_DATABASE_URL"\ntest_url_env = "CORE_TEST_DATABASE_URL"\n',
+    )
+    _write(
+        tmp_path / "other" / TARGET_CONFIG_FILE,
+        'engine = "sqlite"\nurl_env = "OTHER_DATABASE_URL"\ntest_url_env = "OTHER_TEST_DATABASE_URL"\n',
+    )
+
+    config = Config.load(tmp_path)
+
+    with pytest.raises(ConfigError, match="is not configured in workspace"):
+        config.select(path="other")
+
+
+def test_config_select_all_requires_workspace_targets(tmp_path: Path) -> None:
+    config = Config.load(tmp_path)
+
+    with pytest.raises(ConfigError, match="No targets configured in workspace"):
+        config.select(all_targets=True)
 
 
 def test_explicit_missing_config_path_errors(tmp_path: Path) -> None:
@@ -232,32 +143,30 @@ def test_explicit_missing_config_path_errors(tmp_path: Path) -> None:
 
 
 def test_config_read_io_error_is_wrapped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    config_path = tmp_path / "matey.toml"
-    _write(
-        config_path,
-        """
-dir = "db"
-url_env = "DATABASE_URL"
-test_url_env = "TEST_DATABASE_URL"
-""".strip(),
-    )
+    workspace_path = tmp_path / WORKSPACE_CONFIG_FILE
+    _write(workspace_path, 'targets = []\n')
 
     original = Path.read_text
 
     def _boom(self: Path, *args: object, **kwargs: object) -> str:
-        if self == config_path:
+        if self == workspace_path:
             raise OSError("permission denied")
         return original(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", _boom)
 
     with pytest.raises(ConfigError, match="Unable to read"):
-        Config.load(tmp_path)
+        load_workspace(tmp_path)
 
 
 def test_config_invalid_utf8_is_wrapped(tmp_path: Path) -> None:
-    config_path = tmp_path / "matey.toml"
-    config_path.write_bytes(b"\xff\xfe\x00")
+    workspace_path = tmp_path / WORKSPACE_CONFIG_FILE
+    workspace_path.write_bytes(b"\xff\xfe\x00")
 
-    with pytest.raises(ConfigError, match=r"Unable to decode .* as UTF-8"):
-        Config.load(tmp_path)
+    with pytest.raises(ConfigError, match="Unable to decode"):
+        load_workspace(tmp_path)
+
+
+def test_target_env_stem_from_path() -> None:
+    assert target_env_stem("db/core") == "DB_CORE"
+    assert target_env_stem(".") == "DEFAULT"

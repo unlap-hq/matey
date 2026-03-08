@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal
 
 from matey.paths import (
     PathBoundaryError,
@@ -15,22 +14,21 @@ from matey.paths import (
     safe_descendant,
 )
 
-_DEFAULTS = {
-    "dir": "db",
-    "url_env": "DATABASE_URL",
-    "test_url_env": "TEST_DATABASE_URL",
-}
-DEFAULT_CONFIG_VALUES = MappingProxyType(dict(_DEFAULTS))
-_SCALAR_KEYS = frozenset(_DEFAULTS.keys())
-_TARGET_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
-_ENV_NAME_PATTERN = re.compile(r"^[A-Z_][A-Z0-9_]*$")
-
-DefaultsMap = dict[str, str]
-TargetsMap = dict[str, dict[str, str]]
+WORKSPACE_CONFIG_FILE = "matey.toml"
+TARGET_CONFIG_FILE = "config.toml"
+_TARGET_REQUIRED_KEYS = frozenset({"engine", "url_env", "test_url_env"})
+_ENV_NAME_PATTERN = __import__("re").compile(r"^[A-Z_][A-Z0-9_]*$")
 
 
 class ConfigError(ValueError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class CodegenConfig:
+    enabled: bool
+    generator: str
+    options: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +37,8 @@ class TargetConfig:
     dir: Path
     url_env: str
     test_url_env: str
+    engine: str = ""
+    codegen: CodegenConfig | None = None
 
     @property
     def schema(self) -> Path:
@@ -56,20 +56,32 @@ class TargetConfig:
     def lockfile(self) -> Path:
         return self.dir / "schema.lock.toml"
 
+    @property
+    def config_path(self) -> Path:
+        return self.dir / TARGET_CONFIG_FILE
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceConfig:
+    repo_root: Path
+    targets: tuple[Path, ...]
+    source_path: Path | None
+    source_kind: Literal["workspace", "pyproject", "none"]
+
 
 class Config:
-    def __init__(self, targets: dict[str, TargetConfig], *, default_target: TargetConfig) -> None:
-        ordered = dict(sorted(targets.items(), key=lambda item: item[0]))
-        self._targets = MappingProxyType(ordered)
-        self._default_target = default_target
+    def __init__(self, workspace: WorkspaceConfig, targets: tuple[TargetConfig, ...]) -> None:
+        ordered = tuple(sorted(targets, key=lambda item: item.name))
+        self._workspace = workspace
+        self._targets = MappingProxyType({target.name: target for target in ordered})
+
+    @property
+    def workspace(self) -> WorkspaceConfig:
+        return self._workspace
 
     @property
     def targets(self) -> MappingProxyType[str, TargetConfig]:
         return self._targets
-
-    @property
-    def default_target(self) -> TargetConfig:
-        return self._default_target
 
     @classmethod
     def load(
@@ -78,64 +90,212 @@ class Config:
         config_path: Path | None = None,
         config_root: Path | None = None,
     ) -> Config:
-        py_defaults, py_targets = _load_pyproject_source(repo_root)
-        file_defaults, file_targets = _load_matey_source(repo_root, config_path)
-        defaults, targets = _merge_sources(
-            defaults_a=py_defaults,
-            targets_a=py_targets,
-            defaults_b=file_defaults,
-            targets_b=file_targets,
-        )
-        return cls.from_sources(
-            repo_root=(config_root if config_root is not None else repo_root).resolve(),
-            defaults=defaults,
-            targets=targets,
-        )
-
-    @classmethod
-    def from_sources(
-        cls,
-        *,
-        repo_root: Path,
-        defaults: DefaultsMap,
-        targets: TargetsMap,
-    ) -> Config:
-        resolved_targets, default_target = _resolve_targets(
-            repo_root=repo_root,
-            defaults=defaults,
-            targets=targets,
-        )
-        return cls(resolved_targets, default_target=default_target)
+        del config_root
+        workspace = load_workspace(repo_root.resolve(), config_path=config_path)
+        targets = load_targets_from_workspace(workspace)
+        return cls(workspace, targets)
 
     def select(
         self,
         *,
-        target: str | None = None,
+        path: str | None = None,
         all_targets: bool = False,
     ) -> tuple[TargetConfig, ...]:
-        if target is not None and all_targets:
-            raise ConfigError("Cannot combine --target with --all.")
+        if path is not None and all_targets:
+            raise ConfigError("Cannot combine --path with --all.")
 
-        if target is not None:
-            if target == "default":
-                return (self._default_target,)
-            selected = self._targets.get(target)
-            if selected is None:
-                available = ", ".join(("default", *self._targets.keys()))
-                raise ConfigError(f"Unknown target {target!r}. Available targets: {available}")
-            return (selected,)
+        if path is not None:
+            normalized = normalize_target_path_ref(path)
+            target = self._targets.get(normalized)
+            if target is None:
+                available = ", ".join(self._targets.keys()) or "(none)"
+                raise ConfigError(
+                    f"Target path {normalized!r} is not configured in workspace. "
+                    f"Available paths: {available}"
+                )
+            return (target,)
 
         if all_targets:
-            return (self._default_target, *self._targets.values())
+            if not self._targets:
+                raise ConfigError("No targets configured in workspace. Add one with `matey init --path ...`.")
+            return tuple(self._targets.values())
 
+        if len(self._targets) == 1:
+            return tuple(self._targets.values())
         if not self._targets:
-            return (self._default_target,)
-
-        available = ", ".join(("default", *self._targets.keys()))
+            raise ConfigError("No targets configured. Pass --path or initialize a target first.")
+        available = ", ".join(self._targets.keys())
         raise ConfigError(
-            "Multiple targets configured; choose one with --target or use --all. "
-            f"Available targets: {available}"
+            "Multiple targets configured; choose one with --path or use --all. "
+            f"Available paths: {available}"
         )
+
+
+def load_workspace(repo_root: Path, config_path: Path | None = None) -> WorkspaceConfig:
+    root = repo_root.resolve()
+    if config_path is not None:
+        resolved = config_path if config_path.is_absolute() else (root / config_path)
+        resolved = resolved.resolve()
+        if not resolved.exists():
+            raise ConfigError(f"Config file not found: {resolved}")
+        if resolved.name == "pyproject.toml":
+            return _load_workspace_from_pyproject(root, resolved)
+        return _load_workspace_from_file(root, resolved)
+
+    workspace_path = root / WORKSPACE_CONFIG_FILE
+    if workspace_path.exists():
+        return _load_workspace_from_file(root, workspace_path)
+
+    pyproject_path = root / "pyproject.toml"
+    if pyproject_path.exists():
+        pyproject_workspace = _load_workspace_from_pyproject(root, pyproject_path, allow_missing=True)
+        if pyproject_workspace is not None:
+            return pyproject_workspace
+
+    return WorkspaceConfig(repo_root=root, targets=(), source_path=None, source_kind="none")
+
+
+def load_target(*, path: str | Path, repo_root: Path) -> TargetConfig:
+    root = repo_root.resolve()
+    target_root = _resolve_target_path(root=root, path=path, label="target path", allow_missing_leaf=False)
+    config_path = target_root / TARGET_CONFIG_FILE
+    if not config_path.exists():
+        raise ConfigError(f"Target config not found: {config_path}")
+    doc = _load_toml(config_path, label=str(config_path))
+    return _target_from_doc(repo_root=root, target_root=target_root, doc=doc, source=str(config_path))
+
+
+def load_targets_from_workspace(workspace: WorkspaceConfig) -> tuple[TargetConfig, ...]:
+    return tuple(load_target(path=path, repo_root=workspace.repo_root) for path in workspace.targets)
+
+
+def _load_workspace_from_file(repo_root: Path, path: Path) -> WorkspaceConfig:
+    doc = _load_toml(path, label=str(path))
+    targets = _extract_workspace_targets(doc, repo_root=repo_root, source=str(path))
+    return WorkspaceConfig(repo_root=repo_root, targets=targets, source_path=path, source_kind="workspace")
+
+
+def _load_workspace_from_pyproject(repo_root: Path, path: Path, allow_missing: bool = False) -> WorkspaceConfig | None:
+    doc = _load_toml(path, label=str(path))
+    tool = doc.get("tool")
+    if tool is None:
+        if allow_missing:
+            return None
+        raise ConfigError("Invalid pyproject.toml: missing [tool.matey] section.")
+    if not isinstance(tool, dict):
+        raise ConfigError("Invalid pyproject.toml: [tool] must be a table.")
+    section = tool.get("matey")
+    if section is None:
+        if allow_missing:
+            return None
+        raise ConfigError("Invalid pyproject.toml: [tool.matey] must be a table.")
+    if not isinstance(section, dict):
+        raise ConfigError("Invalid pyproject.toml: [tool.matey] must be a table.")
+    targets = _extract_workspace_targets(section, repo_root=repo_root, source="pyproject.toml [tool.matey]")
+    return WorkspaceConfig(repo_root=repo_root, targets=targets, source_path=path, source_kind="pyproject")
+
+
+def _extract_workspace_targets(doc: dict[str, Any], *, repo_root: Path, source: str) -> tuple[Path, ...]:
+    unsupported = set(doc) - {"targets"}
+    if unsupported:
+        rendered = ", ".join(sorted(repr(key) for key in unsupported))
+        raise ConfigError(f"{source}: unsupported workspace keys: {rendered}.")
+    raw_targets = doc.get("targets", [])
+    if not isinstance(raw_targets, list) or not all(isinstance(item, str) for item in raw_targets):
+        raise ConfigError(f"{source}: 'targets' must be an array of strings.")
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for item in raw_targets:
+        target_path = _resolve_target_path(root=repo_root, path=item, label="workspace target", allow_missing_leaf=True)
+        if target_path in seen:
+            raise ConfigError(f"{source}: duplicate target path {item!r}.")
+        seen.add(target_path)
+        paths.append(target_path)
+    return tuple(paths)
+
+
+def _target_from_doc(*, repo_root: Path, target_root: Path, doc: dict[str, Any], source: str) -> TargetConfig:
+    unsupported = set(doc) - (_TARGET_REQUIRED_KEYS | {"codegen"})
+    if unsupported:
+        rendered = ", ".join(sorted(repr(key) for key in unsupported))
+        raise ConfigError(f"{source}: unsupported target keys: {rendered}.")
+
+    values: dict[str, str] = {}
+    for key in _TARGET_REQUIRED_KEYS:
+        value = doc.get(key)
+        if not isinstance(value, str):
+            raise ConfigError(f"{source}: {key!r} must be a string.")
+        values[key] = value
+
+    _require_env_name(values["url_env"], source=f"{source}: url_env")
+    _require_env_name(values["test_url_env"], source=f"{source}: test_url_env")
+
+    codegen = _parse_codegen(doc.get("codegen"), source=source)
+    try:
+        name = target_root.relative_to(repo_root).as_posix()
+    except ValueError as error:
+        raise ConfigError(f"{source}: target path must stay inside repo root.") from error
+    return TargetConfig(
+        name=name or ".",
+        dir=target_root,
+        engine=values["engine"],
+        url_env=values["url_env"],
+        test_url_env=values["test_url_env"],
+        codegen=codegen,
+    )
+
+
+def _parse_codegen(value: Any, *, source: str) -> CodegenConfig | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ConfigError(f"{source}: [codegen] must be a table.")
+    unsupported = set(value) - {"enabled", "generator", "options"}
+    if unsupported:
+        rendered = ", ".join(sorted(repr(key) for key in unsupported))
+        raise ConfigError(f"{source}: unsupported [codegen] keys: {rendered}.")
+    enabled_raw = value.get("enabled", True)
+    if not isinstance(enabled_raw, bool):
+        raise ConfigError(f"{source}: codegen.enabled must be a boolean.")
+    generator_raw = value.get("generator", "tables")
+    options_raw = value.get("options")
+    if not isinstance(generator_raw, str):
+        raise ConfigError(f"{source}: codegen.generator must be a string.")
+    if options_raw is not None and not isinstance(options_raw, str):
+        raise ConfigError(f"{source}: codegen.options must be a string.")
+    return CodegenConfig(
+        enabled=enabled_raw,
+        generator=generator_raw,
+        options=options_raw,
+    )
+
+
+def _resolve_target_path(*, root: Path, path: str | Path, label: str, allow_missing_leaf: bool) -> Path:
+    raw = path if isinstance(path, Path) else Path(path)
+    if raw.is_absolute():
+        candidate = raw
+    else:
+        try:
+            normalized = normalize_target_path_ref(str(path), label=label)
+        except RelativePathError as error:
+            raise ConfigError(str(error)) from error
+        candidate = root / Path(normalized)
+    try:
+        return safe_descendant(
+            root=root,
+            candidate=candidate,
+            label=label,
+            allow_missing_leaf=allow_missing_leaf,
+            expected_kind="dir",
+        )
+    except PathBoundaryError as error:
+        raise ConfigError(
+            describe_path_boundary_error(
+                error,
+                path=candidate,
+                symlink_message=f"{label} uses symlinked path segment",
+            )
+        ) from error
 
 
 def _load_toml(path: Path, *, label: str) -> dict[str, Any]:
@@ -152,201 +312,14 @@ def _load_toml(path: Path, *, label: str) -> dict[str, Any]:
     return parsed
 
 
-def _load_pyproject_source(repo_root: Path) -> tuple[DefaultsMap, TargetsMap]:
-    pyproject_path = repo_root / "pyproject.toml"
-    if not pyproject_path.exists():
-        return {}, {}
-
-    parsed = _load_toml(pyproject_path, label="pyproject.toml")
-    tool = parsed.get("tool")
-    if tool is None:
-        return {}, {}
-    if not isinstance(tool, dict):
-        raise ConfigError("Invalid pyproject.toml: [tool] must be a table.")
-
-    section = tool.get("matey")
-    if section is None:
-        return {}, {}
-    if not isinstance(section, dict):
-        raise ConfigError("Invalid pyproject.toml: [tool.matey] must be a table.")
-
-    return _extract_source(section, source="pyproject.toml [tool.matey]")
-
-
-def _load_matey_source(
-    repo_root: Path,
-    config_path: Path | None,
-) -> tuple[DefaultsMap, TargetsMap]:
-    if config_path is None:
-        path = repo_root / "matey.toml"
-        if not path.exists():
-            return {}, {}
-    else:
-        path = config_path if config_path.is_absolute() else (repo_root / config_path)
-        if not path.exists():
-            raise ConfigError(f"Config file not found: {path}")
-
-    parsed = _load_toml(path, label=str(path))
-    return _extract_source(parsed, source=str(path))
-
-
-def _extract_source(doc: dict[str, Any], *, source: str) -> tuple[DefaultsMap, TargetsMap]:
-    defaults: DefaultsMap = {}
-    targets: TargetsMap = {}
-
-    for key, value in doc.items():
-        if key in _SCALAR_KEYS:
-            if not isinstance(value, str):
-                raise ConfigError(f"{source}: {key!r} must be a string.")
-            defaults[key] = value
-            continue
-
-        if key in {"defaults", "targets", "base_ref"}:
-            raise ConfigError(
-                f"{source}: legacy key {key!r} is not supported. "
-                "Use top-level defaults plus direct target tables ([core], [analytics], ...)."
-            )
-
-        _require_target_name(key, source=source)
-        if not isinstance(value, dict):
-            raise ConfigError(f"{source}: {key!r} must be a target table.")
-
-        override: dict[str, str] = {}
-        for override_key, override_value in value.items():
-            if override_key not in _SCALAR_KEYS:
-                raise ConfigError(f"{source}: target {key!r} has unsupported key {override_key!r}.")
-            if not isinstance(override_value, str):
-                raise ConfigError(
-                    f"{source}: target {key!r} field {override_key!r} must be a string."
-                )
-            override[override_key] = override_value
-        targets[key] = override
-
-    return defaults, targets
-
-
-def _merge_sources(
-    *,
-    defaults_a: DefaultsMap,
-    targets_a: TargetsMap,
-    defaults_b: DefaultsMap,
-    targets_b: TargetsMap,
-) -> tuple[DefaultsMap, TargetsMap]:
-    defaults = dict(_DEFAULTS)
-    defaults.update(defaults_a)
-    defaults.update(defaults_b)
-
-    targets: TargetsMap = {}
-    for source_targets in (targets_a, targets_b):
-        for name, override in source_targets.items():
-            targets.setdefault(name, {})
-            targets[name].update(override)
-    return defaults, targets
-
-
-def _resolve_targets(
-    *,
-    repo_root: Path,
-    defaults: DefaultsMap,
-    targets: TargetsMap,
-) -> tuple[dict[str, TargetConfig], TargetConfig]:
-    _require_env_name(defaults["url_env"], source="defaults.url_env")
-    _require_env_name(defaults["test_url_env"], source="defaults.test_url_env")
-
-    root = repo_root.resolve()
-    default_dir_path = _resolve_target_dir(root=root, dir_value=defaults["dir"], source="dir")
-
-    default_target = TargetConfig(
-        name="default",
-        dir=default_dir_path,
-        url_env=defaults["url_env"],
-        test_url_env=defaults["test_url_env"],
-    )
-
-    resolved: dict[str, TargetConfig] = {}
-    seen_dirs: dict[Path, str] = {default_dir_path: "default"}
-
-    for name in sorted(targets.keys()):
-        override = targets[name]
-        dir_value = override.get("dir", target_default_dir(defaults["dir"], name))
-        url_env = override.get("url_env", defaults["url_env"])
-        test_url_env = override.get("test_url_env", defaults["test_url_env"])
-
-        _require_env_name(url_env, source=f"{name}.url_env")
-        _require_env_name(test_url_env, source=f"{name}.test_url_env")
-        dir_path = _resolve_target_dir(root=root, dir_value=dir_value, source=f"{name}.dir")
-
-        previous = seen_dirs.get(dir_path)
-        if previous is not None:
-            raise ConfigError(
-                f"Targets {previous!r} and {name!r} resolve to the same directory: {dir_path}"
-            )
-        seen_dirs[dir_path] = name
-        resolved[name] = TargetConfig(
-            name=name,
-            dir=dir_path,
-            url_env=url_env,
-            test_url_env=test_url_env,
-        )
-
-    return resolved, default_target
-
-
-def _resolve_target_dir(*, root: Path, dir_value: str, source: str) -> Path:
-    try:
-        normalized_dir = normalize_relative_posix_path(dir_value, label=source)
-    except RelativePathError as error:
-        raise ConfigError(str(error)) from error
-    candidate = root / Path(normalized_dir)
-    try:
-        return safe_descendant(
-            root=root,
-            candidate=candidate,
-            label=source,
-            allow_missing_leaf=True,
-            expected_kind="dir",
-        )
-    except PathBoundaryError as error:
-        raise ConfigError(
-            describe_path_boundary_error(
-                error,
-                path=candidate,
-                symlink_message=f"{source} uses symlinked path segment",
-            )
-        ) from error
-
-
-def normalize_target_names(targets: tuple[str, ...]) -> tuple[str, ...]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for raw in targets:
-        value = raw.strip()
-        if not value:
-            raise ConfigError("Target names cannot be empty.")
-        if not _TARGET_NAME_PATTERN.fullmatch(value):
-            raise ConfigError(f"Invalid target name: {value!r}")
-        if value in seen:
-            raise ConfigError(f"Duplicate target name: {value!r}")
-        seen.add(value)
-        ordered.append(value)
-    return tuple(ordered)
-
-
-def target_env_stem(target: str) -> str:
-    _require_target_name(target, source="target")
-    stem = target.replace("-", "_").upper()
+def target_env_stem(path: str) -> str:
+    normalized = PurePosixPath(path).as_posix().strip()
+    if not normalized or normalized == ".":
+        return "DEFAULT"
+    stem = normalized.replace("/", "_").replace("-", "_").upper()
     if stem and stem[0].isdigit():
         stem = f"_{stem}"
     return stem
-
-
-def target_default_dir(default_dir: str, target_name: str) -> str:
-    return (PurePosixPath(default_dir) / target_name).as_posix()
-
-
-def _require_target_name(name: str, *, source: str) -> None:
-    if not _TARGET_NAME_PATTERN.fullmatch(name):
-        raise ConfigError(f"{source}: invalid target name {name!r}.")
 
 
 def _require_env_name(name: str, *, source: str) -> None:
@@ -356,12 +329,23 @@ def _require_env_name(name: str, *, source: str) -> None:
         )
 
 
+def normalize_target_path_ref(path: str, *, label: str = "target path") -> str:
+    if path in ("", "."):
+        return "."
+    return normalize_relative_posix_path(path, label=label)
+
+
 __all__ = [
-    "DEFAULT_CONFIG_VALUES",
+    "TARGET_CONFIG_FILE",
+    "WORKSPACE_CONFIG_FILE",
+    "CodegenConfig",
     "Config",
     "ConfigError",
     "TargetConfig",
-    "normalize_target_names",
-    "target_default_dir",
+    "WorkspaceConfig",
+    "load_target",
+    "load_targets_from_workspace",
+    "load_workspace",
+    "normalize_target_path_ref",
     "target_env_stem",
 ]

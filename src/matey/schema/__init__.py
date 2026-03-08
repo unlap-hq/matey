@@ -488,12 +488,13 @@ def _resolve_init_engine(
     engine: str | None,
     policy: LockPolicy,
 ) -> Engine:
-    if engine is not None and engine.strip():
-        normalized = normalize_engine(engine.strip())
+    requested = engine.strip() if engine is not None and engine.strip() else target.engine.strip()
+    if requested:
+        normalized = normalize_engine(requested)
         try:
             return Engine(normalized)
         except ValueError as error:
-            raise SchemaError(f"Unsupported engine {engine!r} for init target.") from error
+            raise SchemaError(f"Unsupported engine {requested!r} for init target.") from error
 
     try:
         snapshot = Snapshot.from_worktree(target)

@@ -10,13 +10,12 @@ from .common import (
     AllOpt,
     BaseOpt,
     CleanOpt,
-    ConfigOpt,
-    DbmateBinOpt,
     DiffOpt,
     KeepScratchOpt,
+    PathOpt,
     SqlOpt,
-    TargetOpt,
     TestUrlOpt,
+    WorkspaceOpt,
     plan_mode,
     run_targets,
 )
@@ -25,9 +24,9 @@ from .common import (
 def register_schema_commands(*, schema_app: App, renderer: Renderer) -> None:
     @schema_app.command(name="status", sort_key=10)
     def schema_status_command(
-        target: TargetOpt = None,
+        workspace: WorkspaceOpt = None,
+        path: PathOpt = None,
         all_targets: AllOpt = False,
-        config: ConfigOpt = None,
     ) -> None:
         """Show schema artifact health."""
 
@@ -35,8 +34,8 @@ def register_schema_commands(*, schema_app: App, renderer: Renderer) -> None:
             renderer.schema_status(schema_api.status(item))
 
         run_targets(
-            config_path=config,
-            target=target,
+            workspace_path=workspace,
+            path=path,
             all_targets=all_targets,
             renderer=renderer,
             require_single=False,
@@ -45,13 +44,12 @@ def register_schema_commands(*, schema_app: App, renderer: Renderer) -> None:
 
     @schema_app.command(name="plan", sort_key=20)
     def schema_plan_command(
-        target: TargetOpt = None,
+        workspace: WorkspaceOpt = None,
+        path: PathOpt = None,
         all_targets: AllOpt = False,
-        config: ConfigOpt = None,
-        dbmate_bin: DbmateBinOpt = None,
         base: BaseOpt = None,
-        clean: CleanOpt = False,
         test_url: TestUrlOpt = None,
+        clean: CleanOpt = False,
         keep_scratch: KeepScratchOpt = False,
         sql: SqlOpt = False,
         diff: DiffOpt = False,
@@ -65,7 +63,7 @@ def register_schema_commands(*, schema_app: App, renderer: Renderer) -> None:
                 "clean": clean,
                 "test_base_url": test_url,
                 "keep_scratch": keep_scratch,
-                "dbmate_bin": dbmate_bin,
+                "dbmate_bin": None,
             }
             match mode:
                 case "summary":
@@ -78,8 +76,8 @@ def register_schema_commands(*, schema_app: App, renderer: Renderer) -> None:
                     raise AssertionError("invalid plan mode")
 
         run_targets(
-            config_path=config,
-            target=target,
+            workspace_path=workspace,
+            path=path,
             all_targets=all_targets,
             renderer=renderer,
             require_single=False,
@@ -88,12 +86,11 @@ def register_schema_commands(*, schema_app: App, renderer: Renderer) -> None:
 
     @schema_app.command(name="apply", sort_key=30)
     def schema_apply_command(
-        target: TargetOpt = None,
-        config: ConfigOpt = None,
-        dbmate_bin: DbmateBinOpt = None,
+        workspace: WorkspaceOpt = None,
+        path: PathOpt = None,
         base: BaseOpt = None,
-        clean: CleanOpt = False,
         test_url: TestUrlOpt = None,
+        clean: CleanOpt = False,
         keep_scratch: KeepScratchOpt = False,
     ) -> None:
         """Run validated schema replay in scratch, then write schema artifacts."""
@@ -106,13 +103,13 @@ def register_schema_commands(*, schema_app: App, renderer: Renderer) -> None:
                     clean=clean,
                     test_base_url=test_url,
                     keep_scratch=keep_scratch,
-                    dbmate_bin=dbmate_bin,
+                    dbmate_bin=None,
                 )
             )
 
         run_targets(
-            config_path=config,
-            target=target,
+            workspace_path=workspace,
+            path=path,
             all_targets=False,
             renderer=renderer,
             require_single=True,
