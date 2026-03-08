@@ -320,7 +320,9 @@ def _dump_bigquery_emulator(conn: DbConnection) -> CmdResult:
 
 def _bigquery_emulator_dump_sql(url: str) -> str:
     # Compatibility shim: dbmate's real BigQuery dump path does not work against
-    # the emulator, so this path emits a table-only schema dump.
+    # the emulator, so this path emits a table-only schema dump. Views are still
+    # rejected here because the emulator metadata surfaces currently expose
+    # rewritten/internal SQL rather than a stable source definition.
     from google.auth.credentials import AnonymousCredentials
     from google.cloud import bigquery
 
@@ -337,6 +339,11 @@ def _bigquery_emulator_dump_sql(url: str) -> str:
     migrations_table = None
     for item in table_items:
         table = client.get_table(item.reference)
+        if table.table_type == "VIEW":
+            raise RuntimeError(
+                "bigquery-emulator view dumping is unsupported: the emulator does not expose "
+                "a stable source view definition for schema artifacts."
+            )
         if table.table_type != "TABLE":
             continue
         if table.table_id == "schema_migrations":

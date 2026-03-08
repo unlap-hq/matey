@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from urllib.parse import SplitResult, parse_qsl, urlencode, urlsplit, urlunsplit
 
-DEFAULT_BIGQUERY_EMULATOR_IMAGE = "ghcr.io/goccy/bigquery-emulator:0.4.4"
+DEFAULT_BIGQUERY_EMULATOR_IMAGE = "ghcr.io/recidiviz/bigquery-emulator:latest"
 DEFAULT_BIGQUERY_EMULATOR_PROJECT = "matey"
 DEFAULT_BIGQUERY_EMULATOR_LOCATION = "us"
 _BIGQUERY_MULTI_REGION = {"us", "eu"}
