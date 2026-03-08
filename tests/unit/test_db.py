@@ -360,7 +360,9 @@ def test_bootstrap_rejects_nonempty_database(
         ),
     )
 
-    with pytest.raises(db_mod.DbError, match="db bootstrap requires an empty or unapplied database"):
+    with pytest.raises(
+        db_mod.DbError, match="db bootstrap requires an empty or unapplied database"
+    ):
         db_mod.bootstrap(ctx.target)
 
 
@@ -477,7 +479,9 @@ def test_ensure_prefix_rejects_duplicate_basenames_in_applied_prefix(tmp_path: P
         applied_count=2,
     )
 
-    with pytest.raises(db_mod.DbError, match="applied worktree prefix has duplicate migration basenames"):
+    with pytest.raises(
+        db_mod.DbError, match="applied worktree prefix has duplicate migration basenames"
+    ):
         db_runtime_mod.ensure_prefix(state=state, live=live)
 
 
@@ -635,8 +639,14 @@ def test_down_allows_zero_index_target(
 
     statuses = iter(
         [
-            (_cmd("dbmate", "status", stdout="[X] 001_init.sql\nApplied: 1\n"), db_runtime_mod.LiveStatus(applied_files=("001_init.sql",), applied_count=1)),
-            (_cmd("dbmate", "status", stdout="Applied: 0\n"), db_runtime_mod.LiveStatus(applied_files=(), applied_count=0)),
+            (
+                _cmd("dbmate", "status", stdout="[X] 001_init.sql\nApplied: 1\n"),
+                db_runtime_mod.LiveStatus(applied_files=("001_init.sql",), applied_count=1),
+            ),
+            (
+                _cmd("dbmate", "status", stdout="Applied: 0\n"),
+                db_runtime_mod.LiveStatus(applied_files=(), applied_count=0),
+            ),
         ]
     )
     captured: dict[str, int] = {}
@@ -826,9 +836,13 @@ def test_expected_sql_for_index_uses_checkpoint_and_head(tmp_path: Path) -> None
     ctx = _ctx(tmp_path, conn=conn, steps=steps)
 
     assert db_runtime_mod.expected_sql_for_index(runtime=ctx, index=0) == ""
-    assert db_runtime_mod.expected_sql_for_index(runtime=ctx, index=1) == "CREATE TABLE c1(id INTEGER);\n"
     assert (
-        db_runtime_mod.expected_sql_for_index(runtime=ctx, index=2) == "CREATE TABLE head(id INTEGER);\n"
+        db_runtime_mod.expected_sql_for_index(runtime=ctx, index=1)
+        == "CREATE TABLE c1(id INTEGER);\n"
+    )
+    assert (
+        db_runtime_mod.expected_sql_for_index(runtime=ctx, index=2)
+        == "CREATE TABLE head(id INTEGER);\n"
     )
 
 

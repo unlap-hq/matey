@@ -29,7 +29,11 @@ class Renderer:
     def db_mutation(self, command: str, result: MutationResult) -> None:
         self.console.print(
             self._table(
-                columns=(("Command", {}), ("Before", {"justify": "right"}), ("After", {"justify": "right"})),
+                columns=(
+                    ("Command", {}),
+                    ("Before", {"justify": "right"}),
+                    ("After", {"justify": "right"}),
+                ),
                 rows=((command, str(result.before_index), str(result.after_index)),),
                 box=None,
             )
@@ -38,15 +42,27 @@ class Renderer:
     def db_drift(self, result: DriftResult) -> None:
         status = "drifted" if result.drifted else "clean"
         color = "yellow" if result.drifted else "green"
-        self.console.print(f"Applied index: {result.applied_index}  Status: [{color}]{status}[/{color}]")
+        self.console.print(
+            f"Applied index: {result.applied_index}  Status: [{color}]{status}[/{color}]"
+        )
 
     def db_plan(self, result: DbPlanResult) -> None:
         status = "match" if result.matches else "mismatch"
         color = "green" if result.matches else "yellow"
         self.console.print(
             self._table(
-                columns=(("Applied", {"justify": "right"}), ("Target", {"justify": "right"}), ("Status", {})),
-                rows=((str(result.applied_index), str(result.target_index), f"[{color}]{status}[/{color}]"),),
+                columns=(
+                    ("Applied", {"justify": "right"}),
+                    ("Target", {"justify": "right"}),
+                    ("Status", {}),
+                ),
+                rows=(
+                    (
+                        str(result.applied_index),
+                        str(result.target_index),
+                        f"[{color}]{status}[/{color}]",
+                    ),
+                ),
                 box=None,
             )
         )
@@ -56,8 +72,18 @@ class Renderer:
         color = "green" if state.is_clean else "yellow"
         self.console.print(
             self._table(
-                columns=(("Status", {}), ("Steps", {"justify": "right"}), ("Diagnostics", {"justify": "right"})),
-                rows=((f"[{color}]{status}[/{color}]", str(len(state.worktree_steps)), str(len(state.diagnostics))),),
+                columns=(
+                    ("Status", {}),
+                    ("Steps", {"justify": "right"}),
+                    ("Diagnostics", {"justify": "right"}),
+                ),
+                rows=(
+                    (
+                        f"[{color}]{status}[/{color}]",
+                        str(len(state.worktree_steps)),
+                        str(len(state.diagnostics)),
+                    ),
+                ),
                 box=None,
             )
         )
@@ -65,7 +91,9 @@ class Renderer:
             self.console.print(
                 self._table(
                     columns=(("Code", {}), ("Path", {}), ("Detail", {})),
-                    rows=tuple((item.code.value, item.path, item.detail) for item in state.diagnostics),
+                    rows=tuple(
+                        (item.code.value, item.path, item.detail) for item in state.diagnostics
+                    ),
                 )
             )
 
@@ -74,15 +102,29 @@ class Renderer:
         color = "green" if result.matches else "yellow"
         self.console.print(
             self._table(
-                columns=(("Divergence", {}), ("Anchor", {"justify": "right"}), ("Tail", {"justify": "right"}), ("Status", {})),
-                rows=(("-" if result.divergence_index is None else str(result.divergence_index), str(result.anchor_index), str(result.tail_count), f"[{color}]{status}[/{color}]"),),
+                columns=(
+                    ("Divergence", {}),
+                    ("Anchor", {"justify": "right"}),
+                    ("Tail", {"justify": "right"}),
+                    ("Status", {}),
+                ),
+                rows=(
+                    (
+                        "-" if result.divergence_index is None else str(result.divergence_index),
+                        str(result.anchor_index),
+                        str(result.tail_count),
+                        f"[{color}]{status}[/{color}]",
+                    ),
+                ),
                 box=None,
             )
         )
         self.console.print(f"Replay scratch: {result.replay_scratch_url}")
         if result.down_scratch_url:
             self.console.print(f"Down-check scratch: {result.down_scratch_url}")
-        self.console.print(f"Down checked: {len(result.down_checked)}  Down skipped: {len(result.down_skipped)}")
+        self.console.print(
+            f"Down checked: {len(result.down_checked)}  Down skipped: {len(result.down_skipped)}"
+        )
 
     def schema_apply(self, result: ApplyResult) -> None:
         status = "changed" if result.wrote else "no-op"
@@ -126,8 +168,7 @@ class Renderer:
                     ("Rows", {"justify": "right"}),
                 ),
                 rows=tuple(
-                    (item.name, item.table, item.mode, str(item.rows))
-                    for item in result.files
+                    (item.name, item.table, item.mode, str(item.rows)) for item in result.files
                 ),
                 box=None,
             )
@@ -144,8 +185,7 @@ class Renderer:
                     ("Rows", {"justify": "right"}),
                 ),
                 rows=tuple(
-                    (item.name, item.table, item.mode, str(item.rows))
-                    for item in result.files
+                    (item.name, item.table, item.mode, str(item.rows)) for item in result.files
                 ),
                 box=None,
             )

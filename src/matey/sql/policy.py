@@ -88,13 +88,16 @@ def normalize_engine(engine: str | None) -> str:
 
 def policy_for_engine(engine: str | None) -> EnginePolicy:
     normalized = normalize_engine(engine)
-    return _POLICIES.get(normalized, EnginePolicy(
-        name=normalized,
-        dialect=normalized,
-        guarded_writes=False,
-        checkpoint_retarget=False,
-        target_kind="none",
-    ))
+    return _POLICIES.get(
+        normalized,
+        EnginePolicy(
+            name=normalized,
+            dialect=normalized,
+            guarded_writes=False,
+            checkpoint_retarget=False,
+            target_kind="none",
+        ),
+    )
 
 
 def is_bigquery_family(engine: str | None) -> bool:

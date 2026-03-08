@@ -34,7 +34,7 @@ class WriteViolation:
 
     def excerpt(self, *, limit: int = 120) -> str:
         folded = _compact(self.statement)
-        return folded if len(folded) <= limit else f"{folded[:limit - 3]}..."
+        return folded if len(folded) <= limit else f"{folded[: limit - 3]}..."
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,7 +154,11 @@ def anchor_statements(text: str, *, engine: str, target_url: str) -> tuple[str, 
             )
 
         output = expr.copy()
-        if policy.checkpoint_retarget and target_identity is not None and source_identity is not None:
+        if (
+            policy.checkpoint_retarget
+            and target_identity is not None
+            and source_identity is not None
+        ):
             output = _retarget_expression(
                 output,
                 policy=policy,
@@ -171,7 +175,9 @@ def _validated_source_anchor_statements(text: str, policy: EnginePolicy) -> tupl
     expressions = tuple(
         expr for expr in _parse_expressions(text, policy) if not isinstance(expr, exp.Semicolon)
     )
-    if policy.name == "sqlite" and any(_render(expr, policy).upper().startswith("CREATE TRIGGER") for expr in expressions):
+    if policy.name == "sqlite" and any(
+        _render(expr, policy).upper().startswith("CREATE TRIGGER") for expr in expressions
+    ):
         raise SqlError(
             "sqlite trigger bodies are not supported safely in source-preserving replay."
         )
@@ -186,9 +192,7 @@ def _validated_source_anchor_statements(text: str, policy: EnginePolicy) -> tupl
             label=policy.name or "unknown",
         )
     except SqlTextDecodeError as error:
-        raise SqlError(
-            str(error)
-        ) from error
+        raise SqlError(str(error)) from error
     return tuple(
         statement
         for statement, expr in zip(source_statements, expressions, strict=True)

@@ -140,9 +140,19 @@ class _Backend:
 def test_apply_rows_dispatches_all_modes(tmp_path: Path) -> None:
     backend = _Backend()
     handle = IbisTarget(kind="ibis", backend=backend, database=None)
-    replace_file = DataFile(name="roles", table="roles", mode="replace", path=tmp_path / "roles.jsonl")
-    insert_file = DataFile(name="users", table="users", mode="insert", path=tmp_path / "users.jsonl")
-    upsert_file = DataFile(name="permissions", table="permissions", mode="upsert", path=tmp_path / "permissions.jsonl", on="id")
+    replace_file = DataFile(
+        name="roles", table="roles", mode="replace", path=tmp_path / "roles.jsonl"
+    )
+    insert_file = DataFile(
+        name="users", table="users", mode="insert", path=tmp_path / "users.jsonl"
+    )
+    upsert_file = DataFile(
+        name="permissions",
+        table="permissions",
+        mode="upsert",
+        path=tmp_path / "permissions.jsonl",
+        on="id",
+    )
 
     _apply_rows(handle=handle, data_file=replace_file, rows=[{"id": 1}])
     _apply_rows(handle=handle, data_file=insert_file, rows=[{"id": 2}])

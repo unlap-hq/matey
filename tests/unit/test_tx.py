@@ -214,7 +214,9 @@ def test_commit_failure_keeps_journal_and_is_recoverable(
     _write(stable_path, b"stable-before")
     _write(delete_path, b"delete-before")
 
-    def _failing_apply(*, target_root: Path, tx_dir: Path, manifest: tx_journal_mod.TxManifest) -> None:
+    def _failing_apply(
+        *, target_root: Path, tx_dir: Path, manifest: tx_journal_mod.TxManifest
+    ) -> None:
         # Simulate partial mutation before crash.
         first = tx_journal_mod.absolute_target_path(target_root, manifest.writes[0])
         first.write_bytes(b"mutated-during-apply")
@@ -342,7 +344,9 @@ def test_recover_artifacts_rejects_manifest_paths_in_tx_lock_file(tmp_path: Path
         recover_artifacts(target)
 
 
-def test_recover_artifacts_recovers_valid_transactions_before_raising_invalid(tmp_path: Path) -> None:
+def test_recover_artifacts_recovers_valid_transactions_before_raising_invalid(
+    tmp_path: Path,
+) -> None:
     target = (tmp_path / "target").resolve()
     target.mkdir(parents=True, exist_ok=True)
 

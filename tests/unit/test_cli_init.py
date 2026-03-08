@@ -58,17 +58,19 @@ def test_init_with_ci_writes_default_ci_path(tmp_path: Path, monkeypatch) -> Non
 def test_init_target_creates_workspace_target_and_zero_state(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
 
-    rc = cli.main([
-        "init",
-        "--path",
-        "db/core",
-        "--engine",
-        "sqlite",
-        "--url-env",
-        "CORE_DATABASE_URL",
-        "--test-url-env",
-        "CORE_TEST_DATABASE_URL",
-    ])
+    rc = cli.main(
+        [
+            "init",
+            "--path",
+            "db/core",
+            "--engine",
+            "sqlite",
+            "--url-env",
+            "CORE_DATABASE_URL",
+            "--test-url-env",
+            "CORE_TEST_DATABASE_URL",
+        ]
+    )
 
     assert rc == 0
     assert (tmp_path / "matey.toml").exists()
@@ -79,9 +81,11 @@ def test_init_target_creates_workspace_target_and_zero_state(tmp_path: Path, mon
     assert (tmp_path / "db" / "core" / "checkpoints").is_dir()
 
 
-def test_init_preserves_existing_workspace_comments_with_tomlkit(tmp_path: Path, monkeypatch) -> None:
+def test_init_preserves_existing_workspace_comments_with_tomlkit(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "matey.toml").write_text('# keep me\ntargets = ["db/core"]\n', encoding='utf-8')
+    (tmp_path / "matey.toml").write_text('# keep me\ntargets = ["db/core"]\n', encoding="utf-8")
     (tmp_path / "db" / "core").mkdir(parents=True, exist_ok=True)
     (tmp_path / "db" / "core" / "config.toml").write_text(
         'engine = "sqlite"\nurl_env = "CORE_DATABASE_URL"\ntest_url_env = "CORE_TEST_DATABASE_URL"\n',
@@ -115,25 +119,27 @@ def test_init_updates_target_local_config(tmp_path: Path, monkeypatch) -> None:
     target_root.mkdir(parents=True)
     (target_root / "config.toml").write_text(
         'engine = "sqlite"\nurl_env = "OLD_URL"\ntest_url_env = "OLD_TEST_URL"\n# keep me\n',
-        encoding='utf-8',
+        encoding="utf-8",
     )
 
-    rc = cli.main([
-        "init",
-        "--path",
-        "db/core",
-        "--url-env",
-        "CORE_DATABASE_URL",
-        "--test-url-env",
-        "CORE_TEST_DATABASE_URL",
-    ])
+    rc = cli.main(
+        [
+            "init",
+            "--path",
+            "db/core",
+            "--url-env",
+            "CORE_DATABASE_URL",
+            "--test-url-env",
+            "CORE_TEST_DATABASE_URL",
+        ]
+    )
 
     assert rc == 0
     content = (target_root / "config.toml").read_text(encoding="utf-8")
     assert 'engine = "sqlite"' in content
     assert 'url_env = "CORE_DATABASE_URL"' in content
-    assert '# keep me' in content
-    assert '[codegen]' in content
-    assert 'enabled = true' in content
+    assert "# keep me" in content
+    assert "[codegen]" in content
+    assert "enabled = true" in content
     assert 'generator = "tables"' in content
     assert '#  options = "..."' in content

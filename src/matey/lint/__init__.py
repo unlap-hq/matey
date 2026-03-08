@@ -48,7 +48,9 @@ class Linter:
         )
         findings = list(semantic.findings)
         if self.style and self._should_run_style(semantic.findings):
-            paths = tuple(sorted(target.migrations.rglob("*.sql"), key=lambda item: item.as_posix()))
+            paths = tuple(
+                sorted(target.migrations.rglob("*.sql"), key=lambda item: item.as_posix())
+            )
             findings.extend(
                 lint_style_paths(
                     target_name=target.name,
@@ -59,7 +61,11 @@ class Linter:
             )
         return LintResult(
             target_name=target.name,
-            findings=tuple(sorted(findings, key=lambda item: (item.path, item.line or 0, item.code, item.message))),
+            findings=tuple(
+                sorted(
+                    findings, key=lambda item: (item.path, item.line or 0, item.code, item.message)
+                )
+            ),
         )
 
     def _emit_results(self, results: tuple[LintResult, ...]) -> None:
@@ -72,10 +78,13 @@ class Linter:
             print(f"target: {result.target_name}")
             for finding in result.findings:
                 line = f":{finding.line}" if finding.line is not None else ""
-                print(f"{finding.level.upper():<5} {finding.code} {finding.path}{line} {finding.message}")
+                print(
+                    f"{finding.level.upper():<5} {finding.code} {finding.path}{line} {finding.message}"
+                )
 
     @staticmethod
     def _should_run_style(findings: tuple[LintFinding, ...]) -> bool:
         return not any(finding.code == "L004" for finding in findings)
+
 
 __all__ = ["LintFinding", "LintResult", "Linter"]

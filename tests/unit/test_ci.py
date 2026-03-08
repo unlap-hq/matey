@@ -23,14 +23,16 @@ def test_render_workspace_config_default() -> None:
 
 
 def test_render_workspace_config_targets() -> None:
-    rendered = ConfigEditor("workspace").render_workspace(target_paths=("db/core", "services/analytics/db"))
+    rendered = ConfigEditor("workspace").render_workspace(
+        target_paths=("db/core", "services/analytics/db")
+    )
     assert '"db/core"' in rendered
     assert '"services/analytics/db"' in rendered
 
 
 def test_update_workspace_text_adds_target() -> None:
     rendered = ConfigEditor("workspace").update_workspace(
-        existing_text="targets = [\"db/core\"]\n",
+        existing_text='targets = ["db/core"]\n',
         target_path="db/analytics",
     )
     assert '"db/core"' in rendered
@@ -45,7 +47,7 @@ def test_render_target_config_default() -> None:
     )
     assert 'engine = "postgres"' in rendered
     assert 'url_env = "DATABASE_URL"' in rendered
-    assert '[codegen]' not in rendered
+    assert "[codegen]" not in rendered
 
 
 def test_render_target_config_with_codegen() -> None:
@@ -55,8 +57,8 @@ def test_render_target_config_with_codegen() -> None:
         test_url_env="TEST_DATABASE_URL",
         codegen=CodegenConfig(enabled=True, generator="tables", options=None),
     )
-    assert '[codegen]' in rendered
-    assert 'enabled = true' in rendered
+    assert "[codegen]" in rendered
+    assert "enabled = true" in rendered
     assert 'out = "models.py"' not in rendered
     assert '#  options = "..."' in rendered
 
@@ -74,7 +76,10 @@ def test_update_target_config_preserves_unknown_keys() -> None:
 
 
 def test_default_target_config_values() -> None:
-    assert default_target_config_values("db/core") == ("DB_CORE_DATABASE_URL", "DB_CORE_TEST_DATABASE_URL")
+    assert default_target_config_values("db/core") == (
+        "DB_CORE_DATABASE_URL",
+        "DB_CORE_TEST_DATABASE_URL",
+    )
     assert default_target_config_values(".") == ("DATABASE_URL", "TEST_DATABASE_URL")
 
 

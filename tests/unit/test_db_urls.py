@@ -17,9 +17,12 @@ def test_parse_bigquery_emulator_url_with_location() -> None:
 
 
 def test_parse_bigquery_emulator_url_without_location() -> None:
-    assert parse_bigquery_emulator_url(
-        "bigquery-emulator://127.0.0.1:9050/matey/scratch_ds"
-    ) == ("127.0.0.1:9050", "matey", None, "scratch_ds")
+    assert parse_bigquery_emulator_url("bigquery-emulator://127.0.0.1:9050/matey/scratch_ds") == (
+        "127.0.0.1:9050",
+        "matey",
+        None,
+        "scratch_ds",
+    )
 
 
 def test_parse_bigquery_emulator_url_rejects_invalid_shape() -> None:
@@ -38,7 +41,10 @@ def test_is_bigquery_emulator_url_matches_scheme() -> None:
 
 
 def test_with_clickhouse_http_port_sets_query_param() -> None:
-    assert with_clickhouse_http_port(
-        "clickhouse://test:test@localhost:9000/testdb",
-        8123,
-    ) == "clickhouse://test:test@localhost:9000/testdb?http_port=8123"
+    assert (
+        with_clickhouse_http_port(
+            "clickhouse://test:test@localhost:9000/testdb",
+            8123,
+        )
+        == "clickhouse://test:test@localhost:9000/testdb?http_port=8123"
+    )

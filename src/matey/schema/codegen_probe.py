@@ -9,7 +9,9 @@ from sqlalchemy import create_engine, inspect
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if len(args) != 2:
-        raise SystemExit("usage: python -m matey.schema.codegen_probe <sqlalchemy-url> <engine-kwargs-json>")
+        raise SystemExit(
+            "usage: python -m matey.schema.codegen_probe <sqlalchemy-url> <engine-kwargs-json>"
+        )
 
     sqlalchemy_url, engine_kwargs_json = args
     engine_kwargs = json.loads(engine_kwargs_json)

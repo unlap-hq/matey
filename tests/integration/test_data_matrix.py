@@ -28,8 +28,7 @@ def _table_sql(engine: Engine, table: str) -> str:
     match engine:
         case Engine.CLICKHOUSE:
             return (
-                f"CREATE TABLE {table} (id Int64, name String) "
-                "ENGINE = MergeTree ORDER BY tuple();"
+                f"CREATE TABLE {table} (id Int64, name String) ENGINE = MergeTree ORDER BY tuple();"
             )
         case Engine.BIGQUERY | Engine.BIGQUERY_EMULATOR:
             return f"CREATE TABLE {table} (id INT64, name STRING);"
@@ -40,12 +39,7 @@ def _table_sql(engine: Engine, table: str) -> str:
 
 
 def _migration_sql(engine: Engine, table: str) -> str:
-    return (
-        "-- migrate:up\n"
-        f"{_table_sql(engine, table)}\n\n"
-        "-- migrate:down\n"
-        f"DROP TABLE {table};\n"
-    )
+    return f"-- migrate:up\n{_table_sql(engine, table)}\n\n-- migrate:down\nDROP TABLE {table};\n"
 
 
 def _insert_sql(table: str, rows: list[tuple[int, str]]) -> str:
@@ -107,7 +101,7 @@ files = [
 
     _write(
         target.data_dir / "roles.jsonl",
-        '\n'.join(
+        "\n".join(
             [
                 json.dumps({"id": 3, "name": "owner"}),
                 json.dumps({"id": 4, "name": "member"}),

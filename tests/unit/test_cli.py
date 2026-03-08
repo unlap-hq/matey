@@ -29,13 +29,25 @@ def _init_repo(path: Path) -> None:
 
 
 def _write_workspace(repo_root: Path, targets: tuple[str, ...]) -> None:
-    _write(repo_root / "matey.toml", "targets = [\n" + "".join(f'  \"{target}\",\n' for target in targets) + "]\n")
+    _write(
+        repo_root / "matey.toml",
+        "targets = [\n" + "".join(f'  "{target}",\n' for target in targets) + "]\n",
+    )
 
 
-def _write_target_config(repo_root: Path, rel_path: str, *, engine: str = "sqlite", url_env: str | None = None, test_url_env: str | None = None) -> None:
+def _write_target_config(
+    repo_root: Path,
+    rel_path: str,
+    *,
+    engine: str = "sqlite",
+    url_env: str | None = None,
+    test_url_env: str | None = None,
+) -> None:
     stem = rel_path.replace("/", "_").replace("-", "_").upper()
     url_env = url_env or ("DATABASE_URL" if rel_path == "." else f"{stem}_DATABASE_URL")
-    test_url_env = test_url_env or ("TEST_DATABASE_URL" if rel_path == "." else f"{stem}_TEST_DATABASE_URL")
+    test_url_env = test_url_env or (
+        "TEST_DATABASE_URL" if rel_path == "." else f"{stem}_TEST_DATABASE_URL"
+    )
     _write(
         repo_root / rel_path / "config.toml",
         f'engine = "{engine}"\nurl_env = "{url_env}"\ntest_url_env = "{test_url_env}"\n',
@@ -129,18 +141,20 @@ def test_init_target_routes_path(monkeypatch, tmp_path: Path) -> None:
             changed_files=(),
         ),
     )
-    rc = cli.main([
-        "init",
-        "--path",
-        "db/core",
-        "--engine",
-        "sqlite",
-        "--url-env",
-        "CORE_DATABASE_URL",
-        "--test-url-env",
-        "CORE_TEST_DATABASE_URL",
-        "--force",
-    ])
+    rc = cli.main(
+        [
+            "init",
+            "--path",
+            "db/core",
+            "--engine",
+            "sqlite",
+            "--url-env",
+            "CORE_DATABASE_URL",
+            "--test-url-env",
+            "CORE_TEST_DATABASE_URL",
+            "--force",
+        ]
+    )
 
     assert rc == 0
     assert captured == {
@@ -269,7 +283,9 @@ def test_data_apply_routes_to_engine(monkeypatch, tmp_path: Path) -> None:
 
     monkeypatch.setattr(cli.data.data_api, "apply", _fake_apply)
 
-    rc = cli.main(["data", "apply", "--path", "db/core", "--url", "sqlite:///tmp.db", "--set", "core"])
+    rc = cli.main(
+        ["data", "apply", "--path", "db/core", "--url", "sqlite:///tmp.db", "--set", "core"]
+    )
 
     assert rc == 0
     assert captured == {
@@ -298,7 +314,9 @@ def test_data_export_routes_to_engine(monkeypatch, tmp_path: Path) -> None:
 
     monkeypatch.setattr(cli.data.data_api, "export", _fake_export)
 
-    rc = cli.main(["data", "export", "--path", "db/core", "--url", "sqlite:///tmp.db", "--set", "core"])
+    rc = cli.main(
+        ["data", "export", "--path", "db/core", "--url", "sqlite:///tmp.db", "--set", "core"]
+    )
 
     assert rc == 0
     assert captured == {
@@ -308,7 +326,9 @@ def test_data_export_routes_to_engine(monkeypatch, tmp_path: Path) -> None:
     }
 
 
-def test_load_config_resolves_workspace_file_from_config_location(monkeypatch, tmp_path: Path) -> None:
+def test_load_config_resolves_workspace_file_from_config_location(
+    monkeypatch, tmp_path: Path
+) -> None:
     repo_root = tmp_path / "repo"
     workspace_path = repo_root / "matey.toml"
     _init_repo(repo_root)
@@ -357,7 +377,7 @@ def test_load_config_rejects_workspace_file_path(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     workspace_path = repo_root / "matey.toml"
     _init_repo(repo_root)
-    _write(workspace_path, 'targets = []\n')
+    _write(workspace_path, "targets = []\n")
 
     with pytest.raises(cli.common.CliUsageError, match="--workspace must point to a directory"):
         try:
@@ -448,7 +468,9 @@ def test_schema_plan_sql_routes_to_engine(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
     called: dict[str, object] = {}
 
-    def _fake_plan_sql(target, *, base_ref, clean, test_base_url, keep_scratch, dbmate_bin, policy=None):
+    def _fake_plan_sql(
+        target, *, base_ref, clean, test_base_url, keep_scratch, dbmate_bin, policy=None
+    ):
         del policy
         called.update(
             {
@@ -463,9 +485,21 @@ def test_schema_plan_sql_routes_to_engine(monkeypatch, tmp_path: Path) -> None:
         return "CREATE TABLE x(id INTEGER);\n"
 
     monkeypatch.setattr(cli.schema.schema_api, "plan_sql", _fake_plan_sql)
-    rc = cli.main([
-        "schema", "plan", "--sql", "--path", "db/core", "--base", "origin/main", "--clean", "--test-url", "sqlite3:/tmp/scratch.sqlite3", "--keep-scratch"
-    ])
+    rc = cli.main(
+        [
+            "schema",
+            "plan",
+            "--sql",
+            "--path",
+            "db/core",
+            "--base",
+            "origin/main",
+            "--clean",
+            "--test-url",
+            "sqlite3:/tmp/scratch.sqlite3",
+            "--keep-scratch",
+        ]
+    )
     assert rc == 0
     assert called == {
         "target": "db/core",

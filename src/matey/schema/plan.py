@@ -222,8 +222,7 @@ def resolve_replay_context(
         )
         raise SchemaError(
             "Unable to infer replay engine. Provide test_base_url, set test_url_env, or add schema.lock.toml. "
-            "url_env is used only for engine inference."
-            + details
+            "url_env is used only for engine inference." + details
         )
 
     if lock_engine is not None and inferred_engine is not lock_engine:
@@ -250,6 +249,8 @@ def resolved_lock_engine(lock: LockFile | None) -> Engine | None:
         raise SchemaError(
             f"Invalid lockfile engine {lock.engine!r}. Regenerate schema artifacts."
         ) from error
+
+
 def require_clean_state(state: LockState, *, label: str) -> None:
     if state.is_clean:
         return

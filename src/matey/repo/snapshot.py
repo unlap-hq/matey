@@ -224,7 +224,9 @@ def _collect_tree_sql_rows(
     for obj in tree:
         entry_path = prefix / obj.name
         if _is_symlink_object(obj):
-            raise SnapshotError(f"Refusing to read symlinked tree object at {entry_path.as_posix()!r}.")
+            raise SnapshotError(
+                f"Refusing to read symlinked tree object at {entry_path.as_posix()!r}."
+            )
         if isinstance(obj, pygit2.Tree):
             _collect_tree_sql_rows(obj, prefix=entry_path, rows=rows)
             continue

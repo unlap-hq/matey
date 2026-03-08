@@ -61,7 +61,9 @@ def validate_lock_header(*, lock: LockFile | None, policy: LockPolicy) -> tuple[
             f"checkpoints_dir={lock.checkpoints_dir!r}, expected {policy.checkpoints_dir!r}.",
         ),
     )
-    return tuple(Diagnostic(code, "schema.lock.toml", detail) for failed, code, detail in checks if failed)
+    return tuple(
+        Diagnostic(code, "schema.lock.toml", detail) for failed, code, detail in checks if failed
+    )
 
 
 def validate_target_coherence(

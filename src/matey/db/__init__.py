@@ -98,16 +98,20 @@ def bootstrap(
                     runtime.format_command_error("db bootstrap create-if-needed", create_result)
                 )
         try:
-            statements = SqlProgram(expected_sql, engine=runtime.engine_from_url(rt.conn.url)).anchor_statements(
-                target_url=rt.conn.url
-            )
+            statements = SqlProgram(
+                expected_sql, engine=runtime.engine_from_url(rt.conn.url)
+            ).anchor_statements(target_url=rt.conn.url)
         except SqlError as error:
-            raise runtime.DbError(f"db bootstrap load failed: SQL analysis failed: {error}") from error
+            raise runtime.DbError(
+                f"db bootstrap load failed: SQL analysis failed: {error}"
+            ) from error
         for index, statement in enumerate(statements, start=1):
             load_result = rt.conn.load(ensure_newline(f"{statement};"))
             if load_result.exit_code != 0:
                 raise runtime.DbError(
-                    runtime.format_command_error(f"db bootstrap load statement {index}", load_result)
+                    runtime.format_command_error(
+                        f"db bootstrap load statement {index}", load_result
+                    )
                 )
         after = runtime.inspect_live(rt, context="db bootstrap post-status")
         runtime.ensure_live_not_ahead(
@@ -187,7 +191,9 @@ def down(
         )
         rollback_result = rt.conn.rollback(steps)
         if rollback_result.exit_code != 0:
-            raise runtime.DbError(runtime.format_command_error(f"db down ({steps})", rollback_result))
+            raise runtime.DbError(
+                runtime.format_command_error(f"db down ({steps})", rollback_result)
+            )
         after = runtime.inspect_live(rt, context="db down post-status")
         runtime.ensure_live_not_ahead(
             state=rt.state,

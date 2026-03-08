@@ -104,7 +104,9 @@ def recover_artifacts_unlocked(target_root: Path) -> None:
     if root.exists() and not any(root.iterdir()):
         shutil.rmtree(root, ignore_errors=True)
     if errors:
-        raise TxError("Transaction recovery encountered invalid journal entries: " + "; ".join(errors))
+        raise TxError(
+            "Transaction recovery encountered invalid journal entries: " + "; ".join(errors)
+        )
 
 
 def commit_artifacts_unlocked(

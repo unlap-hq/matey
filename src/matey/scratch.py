@@ -177,9 +177,7 @@ class Scratch:
             .with_exposed_ports(9050)
             .with_command(f"--project={DEFAULT_BIGQUERY_EMULATOR_PROJECT}")
             .waiting_for(
-                HttpWaitStrategy(9050, wait_path).for_status_code_matching(
-                    lambda code: code < 500
-                )
+                HttpWaitStrategy(9050, wait_path).for_status_code_matching(lambda code: code < 500)
             )
         )
         try:
@@ -313,6 +311,8 @@ def _bigquery_scratch_url(*, base_url: str, scratch_name: str) -> str:
             fragment=parsed.fragment,
         )
     )
+
+
 def _postgres_image_for_local_pg_client() -> str:
     major = _detect_client_major(
         binary_name="pg_dump",

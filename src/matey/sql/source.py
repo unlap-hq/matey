@@ -116,9 +116,7 @@ def split_source_statements(text: str) -> tuple[str, ...]:
                 buffer.append(nxt)
                 i += 2
                 continue
-            if char == "'" and not (
-                single_backslash_escapes and _is_backslash_escaped(text, i)
-            ):
+            if char == "'" and not (single_backslash_escapes and _is_backslash_escaped(text, i)):
                 in_single = False
                 single_backslash_escapes = False
             i += 1

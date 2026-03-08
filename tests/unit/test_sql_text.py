@@ -87,7 +87,9 @@ def test_schema_fingerprint_mysql_normalizes_innodb_case() -> None:
         engine="mysql",
     )
 
-    assert left.schema_fingerprint(context_url="mysql://u:p@127.0.0.1:3306/db_name") == right.schema_fingerprint(
+    assert left.schema_fingerprint(
+        context_url="mysql://u:p@127.0.0.1:3306/db_name"
+    ) == right.schema_fingerprint(
         context_url="mysql://u:p@127.0.0.1:3306/db_name",
     )
 
@@ -148,18 +150,15 @@ SELECT * FROM `example-project.staging.users`;
 
 
 def test_bigquery_target_from_emulator_url_extracts_project_and_dataset() -> None:
-    assert bigquery_target_from_url(
-        "bigquery-emulator://127.0.0.1:9050/matey/us/scratch_ds"
-    ) == ("matey", "scratch_ds")
+    assert bigquery_target_from_url("bigquery-emulator://127.0.0.1:9050/matey/us/scratch_ds") == (
+        "matey",
+        "scratch_ds",
+    )
 
 
 def test_migration_sections_split_up_and_down() -> None:
     migration_sql = (
-        "-- migrate:up\n"
-        "CREATE TABLE events (id INT64);\n"
-        "\n"
-        "-- migrate:down\n"
-        "DROP TABLE events;\n"
+        "-- migrate:up\nCREATE TABLE events (id INT64);\n\n-- migrate:down\nDROP TABLE events;\n"
     )
 
     up_sql, down_sql = split_migration_sections(migration_sql)
@@ -202,10 +201,22 @@ def test_qualified_write_targets_allow_foreign_bigquery_read() -> None:
     ("engine", "sql", "expected_target"),
     [
         ("bigquery", "CREATE TABLE analytics.events (id INT64);", "analytics.events"),
-        ("bigquery", "CREATE TABLE project.analytics.events (id INT64);", "project.analytics.events"),
-        ("bigquery", "INSERT INTO `project:analytics.events` (id) VALUES (1);", "`project:analytics.events`"),
+        (
+            "bigquery",
+            "CREATE TABLE project.analytics.events (id INT64);",
+            "project.analytics.events",
+        ),
+        (
+            "bigquery",
+            "INSERT INTO `project:analytics.events` (id) VALUES (1);",
+            "`project:analytics.events`",
+        ),
         ("mysql", "CREATE TABLE other_db.events (id BIGINT);", "other_db.events"),
-        ("clickhouse", "CREATE TABLE other_db.events (id Int64) ENGINE = MergeTree ORDER BY tuple();", "other_db.events"),
+        (
+            "clickhouse",
+            "CREATE TABLE other_db.events (id Int64) ENGINE = MergeTree ORDER BY tuple();",
+            "other_db.events",
+        ),
     ],
 )
 def test_qualified_write_targets_reject_qualified_writes(

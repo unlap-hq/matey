@@ -33,9 +33,7 @@ _MISSING_DB_PATTERNS = {
         re.compile(r'database "[^"]+" does not exist', re.IGNORECASE),
         re.compile(r"\bdatabase [^\s]+ does not exist\b", re.IGNORECASE),
     ),
-    "mysql": (
-        re.compile(r"\bunknown database\b", re.IGNORECASE),
-    ),
+    "mysql": (re.compile(r"\bunknown database\b", re.IGNORECASE),),
     "sqlite": (
         re.compile(r"\bcannot open database file\b", re.IGNORECASE),
         re.compile(r"\bunable to open database file\b", re.IGNORECASE),
@@ -137,7 +135,9 @@ def parse_status(text: str) -> LiveStatus:
             try:
                 explicit_applied = int(count_text)
             except ValueError as error:
-                raise DbError(f"Unable to parse dbmate status applied count: {count_text!r}") from error
+                raise DbError(
+                    f"Unable to parse dbmate status applied count: {count_text!r}"
+                ) from error
     if explicit_applied is not None and explicit_applied != len(applied):
         raise DbError(
             "Unable to parse dbmate status output: applied count does not match listed rows."
@@ -339,10 +339,10 @@ def expected_sql_for_index(*, runtime: RuntimeContext, index: int) -> str | None
     step = runtime.state.worktree_steps[index - 1]
     checkpoint_sql = runtime.snapshot.checkpoints.get(step.checkpoint_file)
     if checkpoint_sql is None:
-        raise DbError(
-            f"Missing checkpoint for expected index {index}: {step.checkpoint_file}."
-        )
+        raise DbError(f"Missing checkpoint for expected index {index}: {step.checkpoint_file}.")
     return decode_sql_text(checkpoint_sql, label=f"checkpoint {step.checkpoint_file}")
+
+
 def dump_live_schema(conn: DbConnection, *, context: str) -> str:
     try:
         dump_result = conn.dump()
@@ -365,8 +365,7 @@ def format_lock_diagnostics(state: LockState) -> str:
         f"{diag.code.value}@{diag.path}: {diag.detail}" for diag in state.diagnostics
     )
     return (
-        "Worktree schema artifacts are not clean; refusing live DB command. "
-        f"Diagnostics: {details}"
+        f"Worktree schema artifacts are not clean; refusing live DB command. Diagnostics: {details}"
     )
 
 

@@ -42,7 +42,9 @@ def load_data_sets(target: TargetConfig) -> tuple[DataSet, ...]:
         unsupported = set(value) - _DATA_KEYS
         if unsupported:
             rendered = ", ".join(sorted(repr(key) for key in unsupported))
-            raise DataError(f"{manifest_path}: unsupported keys in data set {set_name!r}: {rendered}.")
+            raise DataError(
+                f"{manifest_path}: unsupported keys in data set {set_name!r}: {rendered}."
+            )
         raw_files = value.get("files")
         if not isinstance(raw_files, list):
             raise DataError(f"{manifest_path}: data set {set_name!r} must define a files array.")
@@ -65,9 +67,7 @@ def select_data_set(sets: tuple[DataSet, ...], *, set_name: str | None) -> DataS
         if len(sets) == 1:
             return sets[0]
         available = ", ".join(data_set.name for data_set in sets)
-        raise DataError(
-            f"Multiple data sets are defined; pass --set. Available sets: {available}"
-        )
+        raise DataError(f"Multiple data sets are defined; pass --set. Available sets: {available}")
     for data_set in sets:
         if data_set.name == set_name:
             return data_set

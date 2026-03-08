@@ -56,7 +56,11 @@ def test_semantic_lint_reports_qualified_write(tmp_path: Path) -> None:
     result = lint_target(target, engine="mysql")
 
     assert any(f.code == "L104" for f in result.findings)
-    assert any("cross-database writes are not allowed" in f.message for f in result.findings if f.code == "L104")
+    assert any(
+        "cross-database writes are not allowed" in f.message
+        for f in result.findings
+        if f.code == "L104"
+    )
 
 
 def test_semantic_lint_reports_transaction_false_warning(tmp_path: Path) -> None:
@@ -164,7 +168,9 @@ def test_sqlfluff_lint_reports_parse_violation(tmp_path: Path) -> None:
     assert any(f.code == "SF.PRS" for f in findings)
 
 
-def test_cli_lint_json_and_exit_code(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+def test_cli_lint_json_and_exit_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
     _init_repo(tmp_path)
     _write(
         tmp_path / "matey.toml",

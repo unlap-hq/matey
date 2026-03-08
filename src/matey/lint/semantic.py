@@ -49,7 +49,9 @@ def lint_target(
     state = build_lock_state(snapshot)
     findings.extend(_lock_findings(target=target, state=state, snapshot=snapshot))
 
-    resolved_engine = normalize_engine(state.lock.engine if state.lock is not None else (engine or target.engine))
+    resolved_engine = normalize_engine(
+        state.lock.engine if state.lock is not None else (engine or target.engine)
+    )
     if state.lock is not None and engine is not None:
         provided_engine = normalize_engine(engine)
         if provided_engine and provided_engine != state.lock.engine:
@@ -75,7 +77,11 @@ def lint_target(
                 message="Target is uninitialized and engine is unknown. Pass --engine or initialize the target first.",
             )
         )
-    findings.extend(_artifact_state_findings(target=target, snapshot=snapshot, state=state, engine=resolved_engine))
+    findings.extend(
+        _artifact_state_findings(
+            target=target, snapshot=snapshot, state=state, engine=resolved_engine
+        )
+    )
 
     paths = tuple(sorted(snapshot.migrations))
     findings.extend(_migration_structure_findings(target=target, paths=paths))
@@ -179,7 +185,9 @@ def _is_coherence_diagnostic(code: DiagnosticCode) -> bool:
     return code.name.startswith("COHERENCE_")
 
 
-def _migration_structure_findings(*, target: TargetConfig, paths: tuple[str, ...]) -> tuple[LintFinding, ...]:
+def _migration_structure_findings(
+    *, target: TargetConfig, paths: tuple[str, ...]
+) -> tuple[LintFinding, ...]:
     findings: list[LintFinding] = []
     versions: dict[str, str] = {}
     basenames: dict[str, list[str]] = defaultdict(list)
@@ -346,7 +354,9 @@ def _migration_content_findings(
         )
 
         if engine == "bigquery-emulator":
-            findings.extend(_bigquery_emulator_findings(target=target, path=path, sql=program.up_sql))
+            findings.extend(
+                _bigquery_emulator_findings(target=target, path=path, sql=program.up_sql)
+            )
     except SqlError as error:
         findings.append(
             LintFinding(
@@ -370,9 +380,13 @@ def _write_violation_finding(
     violation,
 ) -> LintFinding:
     if is_bigquery_family(engine):
-        message = f"BigQuery-family qualified writes are not allowed. Statement: {violation.excerpt()!r}"
+        message = (
+            f"BigQuery-family qualified writes are not allowed. Statement: {violation.excerpt()!r}"
+        )
     elif engine in {"mysql", "clickhouse"}:
-        message = f"{engine} cross-database writes are not allowed. Statement: {violation.excerpt()!r}"
+        message = (
+            f"{engine} cross-database writes are not allowed. Statement: {violation.excerpt()!r}"
+        )
     else:
         message = violation.excerpt()
     return LintFinding(
@@ -405,7 +419,9 @@ def _directive_structure_error(text: str) -> str | None:
     return None
 
 
-def _bigquery_emulator_findings(*, target: TargetConfig, path: str, sql: str) -> tuple[LintFinding, ...]:
+def _bigquery_emulator_findings(
+    *, target: TargetConfig, path: str, sql: str
+) -> tuple[LintFinding, ...]:
     try:
         expressions = parse(sql, read="bigquery")
     except ParseError:
@@ -476,7 +492,10 @@ def _has_bigquery_emulator_unsupported_table_features(expr: exp.Create) -> bool:
     ):
         return True
     return any(
-        any(isinstance(constraint.kind, exp.DefaultColumnConstraint) for constraint in column.args.get("constraints", []))
+        any(
+            isinstance(constraint.kind, exp.DefaultColumnConstraint)
+            for constraint in column.args.get("constraints", [])
+        )
         for column in expr.find_all(exp.ColumnDef)
     )
 
@@ -484,7 +503,11 @@ def _has_bigquery_emulator_unsupported_table_features(expr: exp.Create) -> bool:
 def _has_transaction_false(text: str) -> bool:
     for raw_line in text.splitlines():
         line = raw_line.rstrip("\r\n")
-        if (_UP_MARKER.fullmatch(line) or _DOWN_MARKER.fullmatch(line)) and "transaction:false" in line.lower():
+        if (
+            _UP_MARKER.fullmatch(line) or _DOWN_MARKER.fullmatch(line)
+        ) and "transaction:false" in line.lower():
             return True
     return False
+
+
 __all__ = ["lint_target"]

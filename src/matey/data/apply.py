@@ -139,12 +139,12 @@ def _apply_bigquery_emulator_rows(
             raise DataError(f"Data file {data_file.name!r} with mode='upsert' requires on.")
         if rows:
             values = ", ".join(json_value(row.get(data_file.on)) for row in rows)
-            client.query(
-                f"DELETE FROM `{table_ref}` WHERE {data_file.on} IN ({values})"
-            ).result()
+            client.query(f"DELETE FROM `{table_ref}` WHERE {data_file.on} IN ({values})").result()
             errors = client.insert_rows_json(table_ref, rows)
             if errors:
-                raise DataError(f"BigQuery emulator upsert insert failed for {data_file.table}: {errors}")
+                raise DataError(
+                    f"BigQuery emulator upsert insert failed for {data_file.table}: {errors}"
+                )
         return
     raise DataError(f"Unsupported data mode {data_file.mode!r} for {data_file.name}.")
 

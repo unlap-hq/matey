@@ -26,7 +26,9 @@ from ..render import Renderer
 from .common import EngineOpt, ForceOpt, PathOpt
 from .common import WorkspaceOpt as WorkspacePathOpt
 
-UrlEnvInitOpt = Annotated[str | None, Parameter(name="--url-env", help="Live database URL environment variable.")]
+UrlEnvInitOpt = Annotated[
+    str | None, Parameter(name="--url-env", help="Live database URL environment variable.")
+]
 TestUrlEnvInitOpt = Annotated[
     str | None,
     Parameter(name="--test-url-env", help="Scratch database URL environment variable."),
@@ -74,7 +76,11 @@ def register_init_command(*, root_app: App, renderer: Renderer) -> None:
             allow_missing_leaf=True,
             expected_kind="dir",
         )
-        current_target = TargetConfig.load(path=target_root, workspace_root=workspace_obj.root) if target_root.joinpath("config.toml").exists() else None
+        current_target = (
+            TargetConfig.load(path=target_root, workspace_root=workspace_obj.root)
+            if target_root.joinpath("config.toml").exists()
+            else None
+        )
         default_url_env, default_test_url_env = default_target_config_values(path_value)
         resolved_engine = engine or (current_target.engine if current_target is not None else None)
         resolved_url_env = url_env or (
@@ -99,9 +105,7 @@ def register_init_command(*, root_app: App, renderer: Renderer) -> None:
         )
 
         existing_target_text = (
-            target.config_path.read_text(encoding="utf-8")
-            if target.config_path.exists()
-            else None
+            target.config_path.read_text(encoding="utf-8") if target.config_path.exists() else None
         )
         editor = ConfigEditor("workspace")
         target_rendered = (
@@ -140,5 +144,6 @@ def register_init_command(*, root_app: App, renderer: Renderer) -> None:
             renderer.template_written(str(ci_path))
 
         renderer.init_target(schema_api.apply_init_target(init_plan))
+
 
 __all__ = ["register_init_command", "schema_api"]

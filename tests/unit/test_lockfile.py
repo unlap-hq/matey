@@ -192,7 +192,11 @@ def test_build_lock_state_reports_invalid_utf8_schema_sql() -> None:
 
 
 def test_parse_lockfile_unexpected_exception_propagates(monkeypatch) -> None:
-    monkeypatch.setattr(lockfile_parse_mod.LockFile, "from_toml", lambda text: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(
+        lockfile_parse_mod.LockFile,
+        "from_toml",
+        lambda text: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
 
     with pytest.raises(RuntimeError, match="boom"):
         lockfile_parse_mod.parse_lockfile(b"lock_version = 0\n")

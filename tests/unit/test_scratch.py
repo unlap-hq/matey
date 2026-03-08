@@ -150,12 +150,13 @@ def test_bigquery_emulator_base_url_rewrite(base_url: str, expected: str) -> Non
 
 def test_bigquery_emulator_location_like_single_segment_is_ambiguous() -> None:
     scratch = Scratch()
-    with pytest.raises(
-        ScratchConfigError, match="Ambiguous BigQuery emulator scratch base URL"
-    ), scratch.lease(
-        engine=Engine.BIGQUERY_EMULATOR,
-        scratch_name="scratch_ds",
-        test_base_url="bigquery-emulator://127.0.0.1:9050/matey/us",
+    with (
+        pytest.raises(ScratchConfigError, match="Ambiguous BigQuery emulator scratch base URL"),
+        scratch.lease(
+            engine=Engine.BIGQUERY_EMULATOR,
+            scratch_name="scratch_ds",
+            test_base_url="bigquery-emulator://127.0.0.1:9050/matey/us",
+        ),
     ):
         pass
 
@@ -236,25 +237,29 @@ def test_bigquery_emulator_auto_provision(monkeypatch: pytest.MonkeyPatch) -> No
 
 def test_bigquery_location_like_single_segment_is_ambiguous() -> None:
     scratch = Scratch()
-    with pytest.raises(
-        ScratchConfigError, match="Ambiguous BigQuery scratch base URL"
-    ), scratch.lease(
-        engine=Engine.BIGQUERY,
-        scratch_name="scratch_ds",
-        test_base_url="bigquery://project/us",
+    with (
+        pytest.raises(ScratchConfigError, match="Ambiguous BigQuery scratch base URL"),
+        scratch.lease(
+            engine=Engine.BIGQUERY,
+            scratch_name="scratch_ds",
+            test_base_url="bigquery://project/us",
+        ),
     ):
         pass
 
 
 def test_bigquery_invalid_path_message_lists_only_supported_forms() -> None:
     scratch = Scratch()
-    with pytest.raises(
-        ScratchConfigError,
-        match=r"bigquery://<project>, bigquery://<project>/<dataset>, bigquery://<project>/<location>/<dataset>",
-    ), scratch.lease(
-        engine=Engine.BIGQUERY,
-        scratch_name="scratch_ds",
-        test_base_url="bigquery://project/us/region/dataset",
+    with (
+        pytest.raises(
+            ScratchConfigError,
+            match=r"bigquery://<project>, bigquery://<project>/<dataset>, bigquery://<project>/<location>/<dataset>",
+        ),
+        scratch.lease(
+            engine=Engine.BIGQUERY,
+            scratch_name="scratch_ds",
+            test_base_url="bigquery://project/us/region/dataset",
+        ),
     ):
         pass
 
@@ -318,7 +323,10 @@ def test_clickhouse_auto_provision_rewrites_url_structurally(
         scratch_name="scratch_clickhouse",
         test_base_url=None,
     ) as lease:
-        assert lease.url == "clickhouse://default:@127.0.0.1:8123/scratch_clickhouse?secure=1&http_port=8123#frag"
+        assert (
+            lease.url
+            == "clickhouse://default:@127.0.0.1:8123/scratch_clickhouse?secure=1&http_port=8123#frag"
+        )
         assert container.started is True
 
     assert container.stopped is True
@@ -349,7 +357,9 @@ def test_mysql_auto_provision_uses_detected_image(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr("matey.scratch._mysql_image_for_local_dump_client", lambda: "mysql:9")
 
     scratch = Scratch()
-    with scratch.lease(engine=Engine.MYSQL, scratch_name="scratch_mysql", test_base_url=None) as lease:
+    with scratch.lease(
+        engine=Engine.MYSQL, scratch_name="scratch_mysql", test_base_url=None
+    ) as lease:
         assert lease.auto_provisioned is True
         assert container.started is True
         assert lease.url == "mysql://root:root@127.0.0.1:3306/testdb"

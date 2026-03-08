@@ -106,7 +106,9 @@ def test_dump_propagates_invalid_utf8_schema_file(
 
     monkeypatch.setattr(Dbmate, "_run", fake_run)
 
-    with pytest.raises(SqlTextDecodeError, match="Unable to decode dbmate dump schema file as UTF-8"):
+    with pytest.raises(
+        SqlTextDecodeError, match="Unable to decode dbmate dump schema file as UTF-8"
+    ):
         db.dump()
 
 
@@ -175,11 +177,8 @@ def test_wait_timeout_must_be_positive(tmp_path: Path) -> None:
 
 
 def test_bigquery_emulator_url_translates_to_dbmate_bigquery_dsn() -> None:
-    assert to_dbmate_bigquery_url(
-        "bigquery-emulator://127.0.0.1:9050/matey/us/scratch_ds"
-    ) == (
-        "bigquery://matey/us/scratch_ds?"
-        "disable_auth=true&endpoint=http%3A%2F%2F127.0.0.1%3A9050"
+    assert to_dbmate_bigquery_url("bigquery-emulator://127.0.0.1:9050/matey/us/scratch_ds") == (
+        "bigquery://matey/us/scratch_ds?disable_auth=true&endpoint=http%3A%2F%2F127.0.0.1%3A9050"
     )
 
 
@@ -278,9 +277,7 @@ def test_passthrough_runs_verbatim_and_inherits_environment(
 ) -> None:
     script = tmp_path / "dbmate"
     script.write_text(
-        "#!/bin/sh\n"
-        'printf "args:%s\\n" "$*"\n'
-        'printf "env:%s\\n" "${MATEY_DBMATE_TEST_ENV}"\n',
+        '#!/bin/sh\nprintf "args:%s\\n" "$*"\nprintf "env:%s\\n" "${MATEY_DBMATE_TEST_ENV}"\n',
         encoding="utf-8",
     )
     script.chmod(script.stat().st_mode | stat.S_IEXEC)

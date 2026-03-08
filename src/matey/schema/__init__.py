@@ -155,11 +155,13 @@ def apply(
             dbmate_bin=dbmate_bin,
             policy=policy,
             after_replay=(
-                (lambda structural, _conn, replay_scratch_url: generate_sqlalchemy_models(
-                    target=target,
-                    engine=structural.engine,
-                    url=replay_scratch_url,
-                ))
+                (
+                    lambda structural, _conn, replay_scratch_url: generate_sqlalchemy_models(
+                        target=target,
+                        engine=structural.engine,
+                        url=replay_scratch_url,
+                    )
+                )
                 if target.codegen is not None and target.codegen.enabled
                 else None
             ),
@@ -204,8 +206,12 @@ def prepare_init_target(
             policy=effective_policy,
         )
         target_root = _safe_target_dir(target)
-        migrations_dir = _safe_target_dir(target, path=target.migrations, label="migrations directory")
-        checkpoints_dir = _safe_target_dir(target, path=target.checkpoints, label="checkpoints directory")
+        migrations_dir = _safe_target_dir(
+            target, path=target.migrations, label="migrations directory"
+        )
+        checkpoints_dir = _safe_target_dir(
+            target, path=target.checkpoints, label="checkpoints directory"
+        )
         data_dir = _safe_target_dir(target, path=target.data_dir, label="data directory")
         missing_dirs = tuple(
             directory
@@ -408,7 +414,8 @@ def execute_replay_plan(
     keep_scratch: bool,
     dbmate_bin: Path | None,
     policy: LockPolicy | None,
-    after_replay: Callable[[planning.StructuralPlan, replay.DbConnection, str], U | None] | None = None,
+    after_replay: Callable[[planning.StructuralPlan, replay.DbConnection, str], U | None]
+    | None = None,
 ) -> tuple[planning.StructuralPlan, replay.ReplayOutcome, U | None]:
     recover_artifacts(target.root)
     structural = planning.build_structural_plan(
@@ -434,6 +441,8 @@ def execute_replay_plan(
     else:
         replay_outcome, replay_extra = replay_result, None
     return structural, replay_outcome, replay_extra
+
+
 def replay_sql_fingerprints(
     *,
     target: TargetConfig,
@@ -442,9 +451,13 @@ def replay_sql_fingerprints(
     context: str,
 ) -> tuple[str, str]:
     payload = structural.head_snapshot.schema_sql
-    worktree_sql = "" if payload is None else decode_sql_text(
-        payload,
-        label=f"{target.name} worktree schema.sql",
+    worktree_sql = (
+        ""
+        if payload is None
+        else decode_sql_text(
+            payload,
+            label=f"{target.name} worktree schema.sql",
+        )
     )
     try:
         left = SqlProgram(worktree_sql, engine=structural.engine.value).schema_fingerprint(

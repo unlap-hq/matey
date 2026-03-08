@@ -30,6 +30,7 @@ class Engine(StrEnum):
     BIGQUERY = "bigquery"
     BIGQUERY_EMULATOR = "bigquery-emulator"
 
+
 _LAZY_MODULES = {
     "cli",
     "db",

@@ -33,7 +33,7 @@ def test_lint_reports_semantic_and_style_issues(tmp_path: Path, monkeypatch, cap
     )
     _write(
         tmp_path / "db" / "core" / "migrations" / "001_init.sql",
-        'CREATE TABLE other_db.events (id BIGINT);\n',
+        "CREATE TABLE other_db.events (id BIGINT);\n",
     )
     monkeypatch.chdir(tmp_path)
 

@@ -47,4 +47,3 @@ class DataExportResult:
     target_name: str
     set_name: str
     files: tuple[DataFileResult, ...]
-

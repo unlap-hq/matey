@@ -101,10 +101,7 @@ def first_lock_divergence(base: LockState, head: LockState) -> Divergence | None
 
 
 def step_signatures(steps: tuple[Step, ...]) -> tuple[tuple[str, str, str], ...]:
-    return tuple(
-        (step.version, step.migration_file, step.migration_digest)
-        for step in steps
-    )
+    return tuple((step.version, step.migration_file, step.migration_digest) for step in steps)
 
 
 def first_signature_divergence(

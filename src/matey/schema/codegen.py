@@ -67,10 +67,10 @@ def reflect_object_names(
 ) -> tuple[str, ...]:
     result = run_tool(
         local[sys.executable][
-        "-m",
-        "matey.schema.codegen_probe",
-        sqlalchemy_url,
-        json.dumps(engine_kwargs),
+            "-m",
+            "matey.schema.codegen_probe",
+            sqlalchemy_url,
+            json.dumps(engine_kwargs),
         ],
         env=env_updates,
         failure_prefix="SQLAlchemy reflection failed",

@@ -15,7 +15,13 @@ from matey.scratch import Scratch, ScratchError
 
 
 def _integration_engines() -> list[Engine]:
-    engines = [Engine.SQLITE, Engine.POSTGRES, Engine.MYSQL, Engine.CLICKHOUSE, Engine.BIGQUERY_EMULATOR]
+    engines = [
+        Engine.SQLITE,
+        Engine.POSTGRES,
+        Engine.MYSQL,
+        Engine.CLICKHOUSE,
+        Engine.BIGQUERY_EMULATOR,
+    ]
     if os.getenv("MATEY_BIGQUERY_TEST_URL", "").strip():
         engines.append(Engine.BIGQUERY)
     return engines
@@ -85,7 +91,9 @@ def dbmate_bin() -> Path:
 
 
 @pytest.fixture(scope="session", params=_integration_engines(), ids=lambda engine: engine.value)
-def runtime(request: pytest.FixtureRequest, dbmate_bin: Path, tmp_path_factory: pytest.TempPathFactory):
+def runtime(
+    request: pytest.FixtureRequest, dbmate_bin: Path, tmp_path_factory: pytest.TempPathFactory
+):
     engine: Engine = request.param
     if engine is Engine.BIGQUERY:
         base = os.getenv("MATEY_BIGQUERY_TEST_URL", "").strip()

@@ -61,9 +61,7 @@ def parse_bigquery_emulator_url(url: str) -> tuple[str, str, str | None, str]:
 def rewrite_bigquery_emulator_url(*, base_url: str, scratch_name: str) -> str:
     parsed = urlsplit(base_url)
     if parsed.scheme != "bigquery-emulator" or not parsed.netloc:
-        raise BigQueryEmulatorUrlError(
-            "BigQuery emulator scratch base URL must include host:port."
-        )
+        raise BigQueryEmulatorUrlError("BigQuery emulator scratch base URL must include host:port.")
 
     segments = [segment for segment in parsed.path.split("/") if segment]
     if len(segments) == 0 or len(segments) > 3:

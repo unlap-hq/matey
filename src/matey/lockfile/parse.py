@@ -180,6 +180,8 @@ def build_worktree_steps(
     expected_checkpoints = {step.checkpoint_file for step in steps}
     orphans = tuple(path for path, _ in checkpoint_rows if path not in expected_checkpoints)
     return tuple(steps), orphans, tuple(diagnostics)
+
+
 def checkpoint_for_migration(*, migration_file: str, policy: LockPolicy) -> str:
     migration_path = PurePosixPath(migration_file)
     relative_path = migration_path.relative_to(PurePosixPath(policy.migrations_dir))
@@ -346,6 +348,8 @@ def check_duplicate_lock_step(
         seen_indices.add(step_index)
 
     return duplicate_entry, tuple(diagnostics)
+
+
 __all__ = [
     "build_worktree_steps",
     "checkpoint_for_migration",

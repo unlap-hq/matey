@@ -146,13 +146,17 @@ def safe_relative_descendant(
     allow_missing_leaf: bool,
     expected_kind: Literal["file", "dir"] | None = None,
 ) -> str:
-    return safe_descendant(
-        root=root,
-        candidate=candidate,
-        label=label,
-        allow_missing_leaf=allow_missing_leaf,
-        expected_kind=expected_kind,
-    ).relative_to(absolute_path(root)).as_posix()
+    return (
+        safe_descendant(
+            root=root,
+            candidate=candidate,
+            label=label,
+            allow_missing_leaf=allow_missing_leaf,
+            expected_kind=expected_kind,
+        )
+        .relative_to(absolute_path(root))
+        .as_posix()
+    )
 
 
 def describe_path_boundary_error(

@@ -131,7 +131,10 @@ def test_workspace_select_path_native(tmp_path: Path) -> None:
 
     assert workspace.target_paths == ("db/analytics", "db/core")
     assert tuple(target.name for target in workspace.select(path="db/core")) == ("db/core",)
-    assert tuple(target.name for target in workspace.select(all_targets=True)) == ("db/analytics", "db/core")
+    assert tuple(target.name for target in workspace.select(all_targets=True)) == (
+        "db/analytics",
+        "db/core",
+    )
     with pytest.raises(ConfigError, match="Multiple targets configured"):
         workspace.select()
 
@@ -171,7 +174,7 @@ def test_explicit_missing_config_path_errors(tmp_path: Path) -> None:
 
 def test_config_read_io_error_is_wrapped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     workspace_path = tmp_path / WORKSPACE_CONFIG_FILE
-    _write(workspace_path, 'targets = []\n')
+    _write(workspace_path, "targets = []\n")
 
     original = Path.read_text
 

@@ -108,10 +108,7 @@ class ConfigEditor:
         doc = tomlkit.document()
         section = self._workspace_section(doc, create=True)
         section["targets"] = tuple(
-            sorted(
-                normalize_target_path_ref(path, label="target path")
-                for path in target_paths
-            )
+            sorted(normalize_target_path_ref(path, label="target path") for path in target_paths)
         )
         return tomlkit.dumps(doc)
 
@@ -198,7 +195,11 @@ class Workspace:
         resolved_config_path = (
             resolved_root / WORKSPACE_CONFIG_FILE
             if config_path is None and config_kind == "none"
-            else (config_path if config_path is None or config_path.is_absolute() else (resolved_root / config_path))
+            else (
+                config_path
+                if config_path is None or config_path.is_absolute()
+                else (resolved_root / config_path)
+            )
         )
         if resolved_config_path is None:
             raise ConfigError("config_path is required when config_kind is not 'none'.")
@@ -293,9 +294,13 @@ class Workspace:
     def render_updated(self, *, target_path: str | None, existing_text: str | None = None) -> str:
         editor = ConfigEditor("pyproject" if self.config_kind == "pyproject" else "workspace")
         if existing_text is None:
-            existing_text = self.config_path.read_text(encoding="utf-8") if self.config_path.exists() else None
+            existing_text = (
+                self.config_path.read_text(encoding="utf-8") if self.config_path.exists() else None
+            )
         if existing_text is None:
-            return editor.render_workspace(target_paths=(target_path,) if target_path is not None else ())
+            return editor.render_workspace(
+                target_paths=(target_path,) if target_path is not None else ()
+            )
         return editor.update_workspace(existing_text=existing_text, target_path=target_path)
 
     @property
@@ -323,13 +328,17 @@ class Workspace:
             selected = (target_by_path[normalized],)
         elif all_targets:
             if not self.targets:
-                raise ConfigError("No targets configured in workspace. Add one with `matey init --path ...`.")
+                raise ConfigError(
+                    "No targets configured in workspace. Add one with `matey init --path ...`."
+                )
             selected = self.targets
         else:
             if len(self.targets) == 1:
                 selected = self.targets
             elif not self.targets:
-                raise ConfigError("No targets configured. Pass --path or initialize a target first.")
+                raise ConfigError(
+                    "No targets configured. Pass --path or initialize a target first."
+                )
             else:
                 available = ", ".join(self.target_paths)
                 raise ConfigError(
@@ -416,7 +425,9 @@ def _find_repo_root_or_none(start: Path) -> Path | None:
     return Path(discovered).resolve().parent
 
 
-def _target_from_doc(*, workspace_root: Path, target_root: Path, doc: dict[str, Any], source: str) -> TargetConfig:
+def _target_from_doc(
+    *, workspace_root: Path, target_root: Path, doc: dict[str, Any], source: str
+) -> TargetConfig:
     unsupported = set(doc) - (_TARGET_REQUIRED_KEYS | {"codegen"})
     if unsupported:
         rendered = ", ".join(sorted(repr(key) for key in unsupported))
@@ -468,7 +479,9 @@ def _parse_codegen(value: Any, *, source: str) -> CodegenConfig | None:
     return CodegenConfig(enabled=enabled_raw, generator=generator_raw, options=options_raw)
 
 
-def _resolve_target_path(*, root: Path, path: str | Path, label: str, allow_missing_leaf: bool) -> Path:
+def _resolve_target_path(
+    *, root: Path, path: str | Path, label: str, allow_missing_leaf: bool
+) -> Path:
     raw = path if isinstance(path, Path) else Path(path)
     if raw.is_absolute():
         candidate = raw
@@ -526,7 +539,7 @@ def _set_codegen(doc: TOMLDocument | Table, codegen: CodegenConfig | None) -> No
     if codegen.options is None:
         if "options" in table:
             del table["options"]
-        table.add(comment(" options = \"...\""))
+        table.add(comment(' options = "..."'))
     else:
         table["options"] = codegen.options
 

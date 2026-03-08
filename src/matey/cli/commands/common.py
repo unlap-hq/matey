@@ -17,7 +17,9 @@ class CliUsageError(RuntimeError):
     pass
 
 
-PathOpt = Annotated[str | None, Parameter(name="--path", help="Select target path relative to the workspace root.")]
+PathOpt = Annotated[
+    str | None, Parameter(name="--path", help="Select target path relative to the workspace root.")
+]
 AllOpt = Annotated[
     bool,
     Parameter(
@@ -26,11 +28,17 @@ AllOpt = Annotated[
         help="Run command for all configured targets.",
     ),
 ]
-WorkspaceOpt = Annotated[Path | None, Parameter(name="--workspace", help="Workspace root directory.")]
-UrlOpt = Annotated[str | None, Parameter(name="--url", help="Override selected target live database URL.")]
+WorkspaceOpt = Annotated[
+    Path | None, Parameter(name="--workspace", help="Workspace root directory.")
+]
+UrlOpt = Annotated[
+    str | None, Parameter(name="--url", help="Override selected target live database URL.")
+]
 StepsOpt = Annotated[int, Parameter(name="--steps", help="Number of migrations to rollback.")]
 BaseOpt = Annotated[str | None, Parameter(name="--base", help="Base ref for base-aware planning.")]
-TestUrlOpt = Annotated[str | None, Parameter(name="--test-url", help="Scratch test base URL override.")]
+TestUrlOpt = Annotated[
+    str | None, Parameter(name="--test-url", help="Scratch test base URL override.")
+]
 CleanOpt = Annotated[
     bool,
     Parameter(
@@ -71,10 +79,18 @@ DiffOpt = Annotated[
         help="Print unified diff output.",
     ),
 ]
-EngineOpt = Annotated[str | None, Parameter(name="--engine", help="Target engine for zero-state init. Required for fresh targets unless an existing lockfile supplies one.")]
+EngineOpt = Annotated[
+    str | None,
+    Parameter(
+        name="--engine",
+        help="Target engine for zero-state init. Required for fresh targets unless an existing lockfile supplies one.",
+    ),
+]
 
 
-def _parse_dbmate_passthrough_args(args: tuple[str, ...]) -> tuple[Path | None, tuple[str, ...]] | None:
+def _parse_dbmate_passthrough_args(
+    args: tuple[str, ...],
+) -> tuple[Path | None, tuple[str, ...]] | None:
     if not args or args[0] != "dbmate":
         return None
 

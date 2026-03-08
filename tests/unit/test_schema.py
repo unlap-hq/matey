@@ -109,7 +109,9 @@ chain_hash = "{chain}"
     )
 
 
-def _check_outcome(*, schema_sql: str, checkpoint_map: dict[str, str]) -> schema_replay_mod.ReplayOutcome:
+def _check_outcome(
+    *, schema_sql: str, checkpoint_map: dict[str, str]
+) -> schema_replay_mod.ReplayOutcome:
     return schema_replay_mod.ReplayOutcome(
         replay_scratch_url="sqlite3:/tmp/matey-schema-test-replay.sqlite3",
         down_scratch_url="sqlite3:/tmp/matey-schema-test-down.sqlite3",
@@ -269,7 +271,10 @@ def test_plan_clean_forces_full_replay(monkeypatch: pytest.MonkeyPatch, tmp_path
     [
         ("bigquery", "CREATE TABLE analytics.events (id INT64);"),
         ("mysql", "CREATE TABLE other_db.events (id BIGINT);"),
-        ("clickhouse", "CREATE TABLE other_db.events (id Int64) ENGINE = MergeTree ORDER BY tuple();"),
+        (
+            "clickhouse",
+            "CREATE TABLE other_db.events (id Int64) ENGINE = MergeTree ORDER BY tuple();",
+        ),
     ],
 )
 def test_plan_rejects_qualified_writes_in_up_section(
@@ -985,10 +990,7 @@ def test_sanitize_mysql_anchor_sql_filters_replication_set_noise_only() -> None:
 
 
 def test_retarget_bigquery_statement_rewrites_dataset_qualifiers() -> None:
-    statement = (
-        "INSERT INTO `example-project:old_ds.schema_migrations` (version) "
-        "VALUES ('001')"
-    )
+    statement = "INSERT INTO `example-project:old_ds.schema_migrations` (version) VALUES ('001')"
     rewritten = sql_mod.SqlProgram(statement, engine="bigquery").anchor_statements(
         target_url="bigquery://example-project/us/new_ds"
     )
@@ -1037,7 +1039,9 @@ def test_lease_bootstrapped_connection_drops_explicit_server_scratch(
     structural = schema_plan_mod.StructuralPlan(
         target=target,
         policy=LockPolicy(),
-        head_snapshot=Snapshot(target_name=target.name, schema_sql=None, lock_toml=None, migrations={}, checkpoints={}),
+        head_snapshot=Snapshot(
+            target_name=target.name, schema_sql=None, lock_toml=None, migrations={}, checkpoints={}
+        ),
         head_state=LockState(
             target_name=target.name,
             lock=None,
@@ -1112,7 +1116,9 @@ def test_lease_bootstrapped_connection_unlinks_explicit_sqlite_scratch(
     structural = schema_plan_mod.StructuralPlan(
         target=target,
         policy=LockPolicy(),
-        head_snapshot=Snapshot(target_name=target.name, schema_sql=None, lock_toml=None, migrations={}, checkpoints={}),
+        head_snapshot=Snapshot(
+            target_name=target.name, schema_sql=None, lock_toml=None, migrations={}, checkpoints={}
+        ),
         head_state=LockState(
             target_name=target.name,
             lock=None,

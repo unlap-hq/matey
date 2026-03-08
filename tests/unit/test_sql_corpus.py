@@ -49,11 +49,7 @@ def test_split_migration_sections_accepts_dbmate_directive_suffixes() -> None:
 
 def test_has_executable_sql_handles_postgres_dollar_quoted_body() -> None:
     sql = (
-        "CREATE FUNCTION f() RETURNS void AS $$\n"
-        "BEGIN\n"
-        "  PERFORM 1;\n"
-        "END;\n"
-        "$$ LANGUAGE plpgsql;\n"
+        "CREATE FUNCTION f() RETURNS void AS $$\nBEGIN\n  PERFORM 1;\nEND;\n$$ LANGUAGE plpgsql;\n"
     )
 
     assert has_executable_sql(sql, engine="postgres") is True
@@ -151,11 +147,7 @@ def test_anchor_statements_postgres_keep_semicolons_inside_block_comments() -> N
 
 
 def test_anchor_statements_postgres_allow_nested_block_comments() -> None:
-    sql = (
-        "/* outer /* inner */ still; comment */\n"
-        "SELECT 1;\n"
-        "SELECT 2;\n"
-    )
+    sql = "/* outer /* inner */ still; comment */\nSELECT 1;\nSELECT 2;\n"
 
     statements = SqlProgram(sql, engine="postgres").anchor_statements(
         target_url="postgresql://u:p@host:5432/app_db?sslmode=disable"
@@ -237,10 +229,7 @@ def test_source_anchor_statements_handles_plain_string_backslashes_before_closin
 
 
 def test_anchor_statements_postgres_identifier_with_dollar_tag_fragment() -> None:
-    sql = (
-        "CREATE TABLE foo$tag$bar (id bigint);\n"
-        "SELECT 1;\n"
-    )
+    sql = "CREATE TABLE foo$tag$bar (id bigint);\nSELECT 1;\n"
 
     statements = SqlProgram(sql, engine="postgres").anchor_statements(
         target_url="postgresql://u:p@host:5432/app_db?sslmode=disable"
@@ -297,7 +286,9 @@ def test_first_migration_violation_message_stops_at_first_violation() -> None:
 
 
 def test_first_migration_violation_message_attributes_decode_failure() -> None:
-    with pytest.raises(MigrationSqlError, match=r"Unable to decode migration migrations/002_bad\.sql as UTF-8"):
+    with pytest.raises(
+        MigrationSqlError, match=r"Unable to decode migration migrations/002_bad\.sql as UTF-8"
+    ):
         first_migration_violation_message(
             entries=(
                 ("migrations/001_ok.sql", b"CREATE TABLE events (id BIGINT);"),

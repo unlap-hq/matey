@@ -266,9 +266,7 @@ class DbConnection:
             if result.exit_code != 0:
                 return result
             if not schema_path.exists():
-                raise DbmateError(
-                    "dbmate dump completed without producing a schema file."
-                )
+                raise DbmateError("dbmate dump completed without producing a schema file.")
             dump_text = decode_sql_text(
                 schema_path.read_bytes(),
                 label="dbmate dump schema file",
@@ -288,6 +286,8 @@ class DbConnection:
                 no_dump_schema=True,
                 global_args=("--schema-file", str(schema_path)),
             )
+
+
 def _dump_bigquery_emulator(conn: DbConnection) -> CmdResult:
     dbmate_url = dbmate_target(conn.url)
     argv = (
@@ -350,10 +350,7 @@ def _bigquery_emulator_dump_sql(url: str) -> str:
             _render_bigquery_emulator_table_ddl("schema_migrations", migrations_table.schema)
         )
         values = ",\n    ".join(f"('{version}')" for version in versions)
-        lines.append(
-            "INSERT INTO schema_migrations (version) VALUES\n"
-            f"    {values};"
-        )
+        lines.append(f"INSERT INTO schema_migrations (version) VALUES\n    {values};")
 
     output = "\n\n".join(lines).strip()
     return f"{output}\n" if output else ""
