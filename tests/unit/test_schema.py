@@ -11,6 +11,7 @@ import pytest
 import matey.schema as schema_mod
 import matey.scratch as scratch_mod
 import matey.sql as sql_mod
+from matey import Engine
 from matey.dbmate import CmdResult, DbmateError
 from matey.lockfile import LockFile, LockPolicy, LockState
 from matey.project import CodegenConfig, TargetConfig
@@ -26,7 +27,6 @@ from matey.schema import (
     status,
 )
 from matey.schema.codegen import CodegenResult
-from matey.scratch import Engine
 from matey.sql import MigrationSqlError
 
 schema_plan_mod = importlib.import_module("matey.schema.plan")

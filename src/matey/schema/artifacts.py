@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
+from matey import Engine
 from matey.lockfile import LockFile, LockPolicy, LockStep, WorktreeStep, generated_sql_digest
 from matey.paths import (
     PathBoundaryError,
@@ -11,7 +12,6 @@ from matey.paths import (
     safe_relative_descendant,
 )
 from matey.project import TargetConfig
-from matey.scratch import Engine
 from matey.sql import decode_sql_text, ensure_newline
 from matey.tx import TxError, commit_artifacts
 from matey.zero import zero_schema_sql

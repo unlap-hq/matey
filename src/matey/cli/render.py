@@ -6,6 +6,7 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
+from matey.data import DataApplyResult, DataExportResult
 from matey.db import DriftResult, MutationResult
 from matey.db import PlanResult as DbPlanResult
 from matey.lockfile import LockState
@@ -113,6 +114,42 @@ class Renderer:
                     box=None,
                 )
             )
+
+    def data_apply(self, result: DataApplyResult) -> None:
+        self.console.print(f"Data set: {result.set_name}")
+        self.console.print(
+            self._table(
+                columns=(
+                    ("File", {}),
+                    ("Table", {}),
+                    ("Mode", {}),
+                    ("Rows", {"justify": "right"}),
+                ),
+                rows=tuple(
+                    (item.name, item.table, item.mode, str(item.rows))
+                    for item in result.files
+                ),
+                box=None,
+            )
+        )
+
+    def data_export(self, result: DataExportResult) -> None:
+        self.console.print(f"Data export set: {result.set_name}")
+        self.console.print(
+            self._table(
+                columns=(
+                    ("File", {}),
+                    ("Table", {}),
+                    ("Mode", {}),
+                    ("Rows", {"justify": "right"}),
+                ),
+                rows=tuple(
+                    (item.name, item.table, item.mode, str(item.rows))
+                    for item in result.files
+                ),
+                box=None,
+            )
+        )
 
     def template_content(self, content: str) -> None:
         self._print_blob(self.console, content)

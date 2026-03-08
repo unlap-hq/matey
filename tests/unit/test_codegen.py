@@ -1,64 +1,64 @@
 from __future__ import annotations
 
-from matey.schema.codegen import sqlalchemy_target
-from matey.scratch import Engine
+from matey import Engine
+from matey.db_urls import sqlalchemy_target
 
 
 def test_sqlalchemy_target_sqlite() -> None:
-    url, env, kwargs = sqlalchemy_target(
+    target = sqlalchemy_target(
         engine=Engine.SQLITE,
         url="sqlite3:/tmp/codegen.sqlite3",
     )
-    assert url == "sqlite:////tmp/codegen.sqlite3"
-    assert env == {}
-    assert kwargs == {}
+    assert target.url == "sqlite:////tmp/codegen.sqlite3"
+    assert target.env == {}
+    assert target.engine_kwargs == {}
 
 
 def test_sqlalchemy_target_postgres() -> None:
-    url, env, kwargs = sqlalchemy_target(
+    target = sqlalchemy_target(
         engine=Engine.POSTGRES,
         url="postgresql+psycopg2://user:pass@localhost:5432/testdb",
     )
-    assert url == "postgresql+psycopg://user:pass@localhost:5432/testdb?sslmode=disable"
-    assert env == {}
-    assert kwargs == {}
+    assert target.url == "postgresql+psycopg://user:pass@localhost:5432/testdb?sslmode=disable"
+    assert target.env == {}
+    assert target.engine_kwargs == {}
 
 
 def test_sqlalchemy_target_mysql() -> None:
-    url, env, kwargs = sqlalchemy_target(
+    target = sqlalchemy_target(
         engine=Engine.MYSQL,
         url="mysql://root:root@localhost:3306/testdb",
     )
-    assert url == "mysql+pymysql://root:root@localhost:3306/testdb"
-    assert env == {}
-    assert kwargs == {}
+    assert target.url == "mysql+pymysql://root:root@localhost:3306/testdb"
+    assert target.env == {}
+    assert target.engine_kwargs == {}
 
 
 def test_sqlalchemy_target_clickhouse() -> None:
-    url, env, kwargs = sqlalchemy_target(
+    target = sqlalchemy_target(
         engine=Engine.CLICKHOUSE,
-        url="clickhouse://test:test@localhost:9000/testdb",
+        url="clickhouse://test:test@localhost:9000/testdb?http_port=8123",
     )
-    assert url == "clickhouse+native://test:test@localhost:9000/testdb"
-    assert env == {}
-    assert kwargs == {}
+    assert target.url == "clickhouse+native://test:test@localhost:9000/testdb?http_port=8123"
+    assert target.env == {}
+    assert target.engine_kwargs == {}
 
 
 def test_sqlalchemy_target_bigquery() -> None:
-    url, env, kwargs = sqlalchemy_target(
+    target = sqlalchemy_target(
         engine=Engine.BIGQUERY,
         url="bigquery://example-project/us/testds",
     )
-    assert url == "bigquery://example-project/testds"
-    assert env == {}
-    assert kwargs == {"location": "us"}
+    assert target.url == "bigquery://example-project/testds"
+    assert target.env == {}
+    assert target.engine_kwargs == {"location": "us"}
 
 
 def test_sqlalchemy_target_bigquery_emulator() -> None:
-    url, env, kwargs = sqlalchemy_target(
+    target = sqlalchemy_target(
         engine=Engine.BIGQUERY_EMULATOR,
         url="bigquery-emulator://127.0.0.1:9050/matey/us/testds",
     )
-    assert url == "bigquery://matey/testds"
-    assert env == {"BIGQUERY_EMULATOR_HOST": "http://127.0.0.1:9050"}
-    assert kwargs == {"location": "us"}
+    assert target.url == "bigquery://matey/testds"
+    assert target.env == {"BIGQUERY_EMULATOR_HOST": "http://127.0.0.1:9050"}
+    assert target.engine_kwargs == {"location": "us"}

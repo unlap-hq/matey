@@ -5,13 +5,12 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 from plumbum import local
 
-from matey.bqemu import parse_bigquery_emulator_url
+from matey import Engine
+from matey.db_urls import sqlalchemy_target
 from matey.project import TargetConfig
-from matey.scratch import Engine
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,11 +36,11 @@ def generate_sqlalchemy_models(
     engine: Engine,
     url: str,
 ) -> CodegenResult:
-    sqlalchemy_url, env_updates, engine_kwargs = sqlalchemy_target(engine=engine, url=url)
+    target_info = sqlalchemy_target(engine=engine, url=url)
     names = reflect_object_names(
-        sqlalchemy_url=sqlalchemy_url,
-        env_updates=env_updates,
-        engine_kwargs=engine_kwargs,
+        sqlalchemy_url=target_info.url,
+        env_updates=target_info.env,
+        engine_kwargs=target_info.engine_kwargs,
     )
     if not names:
         return CodegenResult(
@@ -52,83 +51,12 @@ def generate_sqlalchemy_models(
         path=target.models,
         content=run_sqlacodegen(
             target=target,
-            sqlalchemy_url=sqlalchemy_url,
-            env_updates=env_updates,
-            engine_kwargs=engine_kwargs,
+            sqlalchemy_url=target_info.url,
+            env_updates=target_info.env,
+            engine_kwargs=target_info.engine_kwargs,
             names=names,
         ),
     )
-
-
-def sqlalchemy_target(
-    *,
-    engine: Engine,
-    url: str,
-) -> tuple[str, dict[str, str], dict[str, Any]]:
-    parsed = urlsplit(url)
-
-    if engine is Engine.SQLITE:
-        path = url.removeprefix("sqlite3:")
-        return f"sqlite:///{path}", {}, {}
-
-    if engine is Engine.POSTGRES:
-        query = parsed.query
-        if "sslmode=" not in query:
-            query = f"{query}&sslmode=disable" if query else "sslmode=disable"
-        sqlalchemy_url = urlunsplit(
-            SplitResult(
-                scheme="postgresql+psycopg",
-                netloc=parsed.netloc,
-                path=parsed.path,
-                query=query,
-                fragment=parsed.fragment,
-            )
-        )
-        return sqlalchemy_url, {}, {}
-
-    if engine is Engine.MYSQL:
-        sqlalchemy_url = urlunsplit(
-            SplitResult(
-                scheme="mysql+pymysql",
-                netloc=parsed.netloc,
-                path=parsed.path,
-                query=parsed.query,
-                fragment=parsed.fragment,
-            )
-        )
-        return sqlalchemy_url, {}, {}
-
-    if engine is Engine.CLICKHOUSE:
-        sqlalchemy_url = urlunsplit(
-            SplitResult(
-                scheme="clickhouse+native",
-                netloc=parsed.netloc,
-                path=parsed.path,
-                query=parsed.query,
-                fragment=parsed.fragment,
-            )
-        )
-        return sqlalchemy_url, {}, {}
-
-    if engine is Engine.BIGQUERY:
-        parts = [segment for segment in parsed.path.split("/") if segment]
-        if len(parts) == 2:
-            location, dataset = parts
-        elif len(parts) == 1:
-            location, dataset = None, parts[0]
-        else:
-            raise CodegenError(f"Unsupported BigQuery scratch URL for codegen: {url}")
-        sqlalchemy_url = f"bigquery://{parsed.netloc}/{dataset}"
-        return sqlalchemy_url, {}, {"location": location} if location is not None else {}
-
-    if engine is Engine.BIGQUERY_EMULATOR:
-        hostport, project, location, dataset = parse_bigquery_emulator_url(url)
-        sqlalchemy_url = f"bigquery://{project}/{dataset}"
-        return sqlalchemy_url, {"BIGQUERY_EMULATOR_HOST": f"http://{hostport}"}, {
-            "location": location
-        } if location is not None else {}
-
-    raise CodegenError(f"Unsupported engine for SQLAlchemy codegen: {engine.value}")
 
 
 def reflect_object_names(

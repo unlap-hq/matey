@@ -5,11 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeVar
 
+from matey import Engine
 from matey.lockfile import LockPolicy, LockState, build_lock_state
 from matey.paths import PathBoundaryError, describe_path_boundary_error, safe_descendant
 from matey.project import TargetConfig
 from matey.repo import Snapshot
-from matey.scratch import Engine
 from matey.sql import SqlError, SqlProgram, decode_sql_text, unified_sql_diff
 from matey.sql.policy import normalize_engine
 from matey.tx import recover_artifacts, serialized_target
@@ -206,15 +206,16 @@ def prepare_init_target(
         target_root = _safe_target_dir(target)
         migrations_dir = _safe_target_dir(target, path=target.migrations, label="migrations directory")
         checkpoints_dir = _safe_target_dir(target, path=target.checkpoints, label="checkpoints directory")
+        data_dir = _safe_target_dir(target, path=target.data_dir, label="data directory")
         missing_dirs = tuple(
             directory
-            for directory in (migrations_dir, checkpoints_dir)
+            for directory in (migrations_dir, checkpoints_dir, data_dir)
             if not directory.exists()
         )
 
         existing_paths = tuple(
             path
-            for path in (target.schema, target.lockfile, migrations_dir, checkpoints_dir)
+            for path in (target.schema, target.lockfile, migrations_dir, checkpoints_dir, data_dir)
             if path.exists()
         )
         if existing_paths and not force:

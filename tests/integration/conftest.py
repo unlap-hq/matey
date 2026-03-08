@@ -8,9 +8,10 @@ from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 import pytest
 
+from matey import Engine
 from matey.dbmate import Dbmate, default_dbmate_binary
 from matey.project import TargetConfig
-from matey.scratch import Engine, Scratch, ScratchError
+from matey.scratch import Scratch, ScratchError
 
 
 def _integration_engines() -> list[Engine]:

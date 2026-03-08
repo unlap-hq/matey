@@ -7,11 +7,11 @@ from pathlib import Path
 import pygit2
 import pytest
 
+from matey import Engine
 from matey.db import MutationResult
 from matey.db import PlanResult as DbPlanResult
 from matey.dbmate import CmdResult
 from matey.lockfile import LockState
-from matey.scratch import Engine
 
 cli = import_module("matey.cli.app")
 
@@ -231,7 +231,7 @@ def test_root_help_command_order(capsys) -> None:
     rc = cli.main(["--help"])
     assert rc == 0
     captured = capsys.readouterr()
-    assert _help_command_names(captured.out) == ["init", "lint", "schema", "db", "dbmate"]
+    assert _help_command_names(captured.out) == ["init", "lint", "schema", "db", "data", "dbmate"]
 
 
 def test_db_help_command_order_semantic(capsys) -> None:
@@ -248,6 +248,64 @@ def test_db_help_command_order_semantic(capsys) -> None:
         "plan",
         "new",
     ]
+
+
+def test_data_apply_routes_to_engine(monkeypatch, tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_workspace(tmp_path, ("db/core",))
+    _write_target_config(tmp_path, "db/core")
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, object] = {}
+
+    def _fake_apply(*, target, url, set_name):
+        captured["target"] = target.name
+        captured["url"] = url
+        captured["set_name"] = set_name
+        return cli.data.data_api.DataApplyResult(
+            target_name=target.name,
+            set_name=set_name or "core",
+            files=(),
+        )
+
+    monkeypatch.setattr(cli.data.data_api, "apply", _fake_apply)
+
+    rc = cli.main(["data", "apply", "--path", "db/core", "--url", "sqlite:///tmp.db", "--set", "core"])
+
+    assert rc == 0
+    assert captured == {
+        "target": "db/core",
+        "url": "sqlite:///tmp.db",
+        "set_name": "core",
+    }
+
+
+def test_data_export_routes_to_engine(monkeypatch, tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_workspace(tmp_path, ("db/core",))
+    _write_target_config(tmp_path, "db/core")
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, object] = {}
+
+    def _fake_export(*, target, url, set_name):
+        captured["target"] = target.name
+        captured["url"] = url
+        captured["set_name"] = set_name
+        return cli.data.data_api.DataExportResult(
+            target_name=target.name,
+            set_name=set_name or "core",
+            files=(),
+        )
+
+    monkeypatch.setattr(cli.data.data_api, "export", _fake_export)
+
+    rc = cli.main(["data", "export", "--path", "db/core", "--url", "sqlite:///tmp.db", "--set", "core"])
+
+    assert rc == 0
+    assert captured == {
+        "target": "db/core",
+        "url": "sqlite:///tmp.db",
+        "set_name": "core",
+    }
 
 
 def test_load_config_resolves_workspace_file_from_config_location(monkeypatch, tmp_path: Path) -> None:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from matey.scratch import Engine
+from matey import Engine
 
 
 def zero_schema_sql(*, engine: Engine) -> str:

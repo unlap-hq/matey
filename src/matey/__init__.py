@@ -1,10 +1,34 @@
 from __future__ import annotations
 
+import warnings
+from enum import StrEnum
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 from types import ModuleType
 
 from .project import ConfigError, TargetConfig, Workspace
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"urllib3 .* doesn't match a supported version!",
+    category=Warning,
+    module=r"requests(\..*)?",
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"The @wait_container_is_ready decorator is deprecated.*",
+    category=DeprecationWarning,
+    module=r"testcontainers\.clickhouse(\..*)?",
+)
+
+
+class Engine(StrEnum):
+    POSTGRES = "postgres"
+    MYSQL = "mysql"
+    SQLITE = "sqlite"
+    CLICKHOUSE = "clickhouse"
+    BIGQUERY = "bigquery"
+    BIGQUERY_EMULATOR = "bigquery-emulator"
 
 _LAZY_MODULES = {
     "cli",
@@ -12,6 +36,7 @@ _LAZY_MODULES = {
     "dbmate",
     "lockfile",
     "repo",
+    "data",
     "schema",
     "scratch",
     "sql",
@@ -34,6 +59,7 @@ def __getattr__(name: str) -> ModuleType:
 
 __all__ = [
     "ConfigError",
+    "Engine",
     "TargetConfig",
     "Workspace",
     "__version__",

@@ -7,10 +7,10 @@ import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import Path
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
+from matey import Engine
 from matey.bqemu import (
     DEFAULT_BIGQUERY_EMULATOR_IMAGE,
     DEFAULT_BIGQUERY_EMULATOR_LOCATION,
@@ -20,19 +20,11 @@ from matey.bqemu import (
     is_bigquery_location_like,
     rewrite_bigquery_emulator_url,
 )
+from matey.db_urls import with_clickhouse_http_port
 from matey.sql import engine_from_url as sql_engine_from_url
 
 _DEFAULT_POSTGRES_IMAGE = "postgres:16-alpine"
 _DEFAULT_MYSQL_IMAGE = "mysql:8.4"
-
-
-class Engine(StrEnum):
-    POSTGRES = "postgres"
-    MYSQL = "mysql"
-    SQLITE = "sqlite"
-    CLICKHOUSE = "clickhouse"
-    BIGQUERY = "bigquery"
-    BIGQUERY_EMULATOR = "bigquery-emulator"
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,10 +146,14 @@ class Scratch:
             container = ClickHouseContainer(image="clickhouse/clickhouse-server:24.8")
             container.start()
             base_url = str(container.get_connection_url())
+            http_port = str(container.get_exposed_port(8123))
             lease = ScratchLease(
                 engine=engine,
                 scratch_name=scratch_name,
-                url=_replace_path_segment(base_url=base_url, scratch_name=scratch_name),
+                url=with_clickhouse_http_port(
+                    _replace_path_segment(base_url=base_url, scratch_name=scratch_name),
+                    int(http_port),
+                ),
                 auto_provisioned=True,
             )
             return lease, container.stop
@@ -379,7 +375,6 @@ def _detect_client_major(
 
 
 __all__ = [
-    "Engine",
     "Scratch",
     "ScratchConfigError",
     "ScratchError",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from matey import Engine
 from matey.lockfile import (
     DiagnosticCode,
     Divergence,
@@ -16,7 +17,7 @@ from matey.lockfile import (
 )
 from matey.project import TargetConfig
 from matey.repo import GitRepo, Snapshot
-from matey.scratch import Engine, ScratchError
+from matey.scratch import ScratchError
 from matey.scratch import engine_from_url as scratch_engine_from_url
 from matey.sql import decode_sql_text
 

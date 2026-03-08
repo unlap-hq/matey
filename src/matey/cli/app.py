@@ -8,6 +8,7 @@ from cyclopts import App
 from cyclopts.exceptions import CycloptsError
 
 from matey.bqemu import BigQueryEmulatorUrlError
+from matey.data import DataError
 from matey.dbmate import DbmateError
 from matey.paths import PathBoundaryError, RelativePathError
 from matey.repo import GitRepoError, SnapshotError
@@ -16,7 +17,7 @@ from matey.scratch import ScratchError
 from matey.sql import MigrationSqlError, SqlTextDecodeError
 from matey.tx import TxError
 
-from .commands import common, db, init, lint, schema
+from .commands import common, data, db, init, lint, schema
 from .render import Renderer
 
 
@@ -51,6 +52,14 @@ schema_app = App(
     exit_on_error=False,
     sort_key=30,
 )
+data_app = App(
+    name="data",
+    help="Live data workflows.",
+    help_flags=["--help"],
+    print_error=False,
+    exit_on_error=False,
+    sort_key=45,
+)
 renderer = Renderer.create()
 db.register_db_commands(
     db_app=db_app,
@@ -68,8 +77,13 @@ init.register_init_command(
 lint.register_lint_command(
     root_app=app,
 )
+data.register_data_commands(
+    data_app=data_app,
+    renderer=renderer,
+)
 app.command(db_app)
 app.command(schema_app)
+app.command(data_app)
 
 _USER_ERRORS = (
     common.CliUsageError,
@@ -87,6 +101,7 @@ _USER_ERRORS = (
     SqlTextDecodeError,
     TxError,
     CodegenError,
+    DataError,
     CycloptsError,
 )
 
@@ -129,6 +144,8 @@ def maybe_run_dbmate_passthrough(args: list[str]) -> int | None:
 __all__ = [
     "app",
     "common",
+    "data",
+    "data_app",
     "db",
     "db_app",
     "init",

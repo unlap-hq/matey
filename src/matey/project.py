@@ -88,6 +88,14 @@ class TargetConfig:
         return self.root / "checkpoints"
 
     @property
+    def data_dir(self) -> Path:
+        return self.root / "data"
+
+    @property
+    def data_manifest(self) -> Path:
+        return self.data_dir / "data.toml"
+
+    @property
     def models(self) -> Path:
         return self.root / "models.py"
 

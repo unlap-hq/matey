@@ -6,6 +6,7 @@ from types import ModuleType
 
 import pytest
 
+from matey import Engine
 from matey.bqemu import (
     DEFAULT_BIGQUERY_EMULATOR_IMAGE,
     DEFAULT_BIGQUERY_EMULATOR_LOCATION,
@@ -13,7 +14,7 @@ from matey.bqemu import (
     build_bigquery_emulator_url,
     rewrite_bigquery_emulator_url,
 )
-from matey.scratch import Engine, Scratch, ScratchConfigError
+from matey.scratch import Scratch, ScratchConfigError
 
 
 class _FakeContainer:
@@ -30,6 +31,11 @@ class _FakeContainer:
 
     def get_connection_url(self) -> str:
         return self._url
+
+    def get_exposed_port(self, port: int) -> int:
+        if port == 8123:
+            return 8123
+        raise AssertionError(f"unexpected exposed port request: {port}")
 
 
 def _install_fake_container_module(
@@ -312,7 +318,7 @@ def test_clickhouse_auto_provision_rewrites_url_structurally(
         scratch_name="scratch_clickhouse",
         test_base_url=None,
     ) as lease:
-        assert lease.url == "clickhouse://default:@127.0.0.1:8123/scratch_clickhouse?secure=1#frag"
+        assert lease.url == "clickhouse://default:@127.0.0.1:8123/scratch_clickhouse?secure=1&http_port=8123#frag"
         assert container.started is True
 
     assert container.stopped is True

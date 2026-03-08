@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from matey import Engine
 from matey.db import (
     DbError,
     bootstrap,
@@ -20,7 +21,6 @@ from matey.dbmate import Dbmate
 from matey.project import TargetConfig
 from matey.schema import apply
 from matey.schema import init_target as init_schema_target
-from matey.scratch import Engine
 
 from .conftest import IntegrationRuntime
 from .helpers_sql import create_table_sql, migration_sql

@@ -11,11 +11,8 @@ from typing import TYPE_CHECKING
 
 from plumbum import local
 
-from matey.bqemu import (
-    is_bigquery_emulator_url,
-    parse_bigquery_emulator_url,
-    to_dbmate_bigquery_url,
-)
+from matey.bqemu import is_bigquery_emulator_url, parse_bigquery_emulator_url
+from matey.db_urls import dbmate_target
 from matey.paths import PathBoundaryError, describe_path_boundary_error, ensure_non_symlink_path
 from matey.sql import decode_sql_text
 
@@ -151,7 +148,7 @@ class Dbmate:
         return DbConnection(dbmate=self, url=url)
 
     def _base_args(self, url: str) -> tuple[str, ...]:
-        dbmate_url = to_dbmate_bigquery_url(url)
+        dbmate_url = dbmate_target(url)
         return ("--url", dbmate_url, "--migrations-dir", str(self._migrations_dir))
 
     def _run_url_verb(
@@ -292,7 +289,7 @@ class DbConnection:
                 global_args=("--schema-file", str(schema_path)),
             )
 def _dump_bigquery_emulator(conn: DbConnection) -> CmdResult:
-    dbmate_url = to_dbmate_bigquery_url(conn.url)
+    dbmate_url = dbmate_target(conn.url)
     argv = (
         str(conn.dbmate.dbmate_bin),
         "--url",

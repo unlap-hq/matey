@@ -9,9 +9,10 @@ from pathlib import Path
 from typing import TypeVar
 from urllib.parse import urlsplit
 
+from matey import Engine
 from matey.dbmate import DbConnection, Dbmate, DbmateError
 from matey.lockfile import WorktreeStep
-from matey.scratch import Engine, ScratchLease
+from matey.scratch import ScratchLease
 from matey.sql import (
     SqlError,
     SqlProgram,

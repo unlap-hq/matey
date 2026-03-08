@@ -1,3 +1,3 @@
-from . import common, db, init, lint, schema
+from . import common, data, db, init, lint, schema
 
-__all__ = ["common", "db", "init", "lint", "schema"]
+__all__ = ["common", "data", "db", "init", "lint", "schema"]

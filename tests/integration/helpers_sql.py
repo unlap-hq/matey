@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from matey.scratch import Engine
+from matey import Engine
 
 
 def migration_sql(*, engine: Engine, table: str) -> str:
