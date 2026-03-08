@@ -7,6 +7,7 @@ import pytest
 from matey.config import TargetConfig
 from matey.db import (
     DbError,
+    bootstrap,
     down,
     drift,
     migrate,
@@ -95,6 +96,38 @@ def test_db_matrix_up_down_drift_plan_cycle(
 
     final_plan = plan(target, url=live_url, dbmate_bin=runtime.dbmate_bin)
     assert final_plan.matches is True
+
+
+def test_db_bootstrap_loads_head_schema(
+    runtime: IntegrationRuntime,
+    target: TargetConfig,
+    live_url: str,
+) -> None:
+    _write(
+        target.migrations / "001_init.sql",
+        migration_sql(engine=runtime.engine, table="it_db_bootstrap_one"),
+    )
+    _write(
+        target.migrations / "002_next.sql",
+        migration_sql(engine=runtime.engine, table="it_db_bootstrap_two"),
+    )
+    _bootstrap_target_artifacts(runtime, target)
+
+    bootstrap_result = bootstrap(
+        target,
+        url=live_url,
+        dbmate_bin=runtime.dbmate_bin,
+    )
+    assert bootstrap_result.before_index == 0
+    assert bootstrap_result.after_index == 2
+
+    status_result = status_raw(target, url=live_url, dbmate_bin=runtime.dbmate_bin)
+    assert status_result.exit_code == 0
+    assert "Applied: 2" in status_result.stdout
+    assert "Pending: 0" in status_result.stdout
+
+    plan_result = plan(target, url=live_url, dbmate_bin=runtime.dbmate_bin)
+    assert plan_result.matches is True
 
 
 def test_db_migrate_requires_existing_database(

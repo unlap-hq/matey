@@ -58,6 +58,12 @@ def split_migration_sections(text: str) -> tuple[str, str]:
 
 
 def split_source_statements(text: str) -> tuple[str, ...]:
+    """Split validated source text only for source-preserving replay.
+
+    This is intentionally not a general SQL parser. The main SQL pipeline is
+    `sqlglot`-first; this scanner exists only so postgres/sqlite replay can keep
+    the original validated statement text instead of re-rendering SQL.
+    """
     statements: list[str] = []
     buffer: list[str] = []
     in_single = False

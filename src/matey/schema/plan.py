@@ -67,6 +67,12 @@ def build_structural_plan(
     test_base_url: str | None,
     policy: LockPolicy | None,
 ) -> StructuralPlan:
+    """Build the non-mutating replay plan for one target.
+
+    This computes the divergence/anchor boundary and the scratch replay context,
+    but does not touch scratch or execute any migrations. Downstream code uses
+    the returned plan to run replay and artifact generation consistently.
+    """
     if clean and base_ref is not None:
         raise SchemaError("Cannot combine clean=True with base_ref.")
 

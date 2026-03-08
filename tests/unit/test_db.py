@@ -47,6 +47,7 @@ class _FakeConn:
         self.up_calls = 0
         self.migrate_calls = 0
         self.rollback_calls: list[int] = []
+        self.loaded_sql: list[str] = []
 
     def create(self) -> CmdResult:
         self.create_calls += 1
@@ -63,6 +64,10 @@ class _FakeConn:
     def rollback(self, steps: int) -> CmdResult:
         self.rollback_calls.append(steps)
         return _cmd("dbmate", "rollback", str(steps))
+
+    def load(self, schema_sql: str) -> CmdResult:
+        self.loaded_sql.append(schema_sql)
+        return _cmd("dbmate", "load")
 
     def status(self) -> CmdResult:  # pragma: no cover - patched in tests
         return _cmd("dbmate", "status")
@@ -240,6 +245,122 @@ def test_migrate_rejects_zero_migration_baseline(
     ):
         db_mod.migrate(ctx.target)
     assert conn.migrate_calls == 0
+
+
+def test_bootstrap_loads_schema_and_verifies_head(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    conn = _FakeConn()
+    steps = (_step(1, "001_init.sql"), _step(2, "002_next.sql"))
+    ctx = _ctx(tmp_path, conn=conn, steps=steps)
+
+    @contextmanager
+    def _fake_open_ctx(**kwargs):
+        del kwargs
+        yield ctx
+
+    statuses = iter(
+        [
+            (
+                _cmd("dbmate", "status", stdout="[ ] 001_init.sql\n[ ] 002_next.sql\nApplied: 0\n"),
+                db_runtime_mod.LiveStatus(applied_files=(), applied_count=0),
+            ),
+            (
+                _cmd(
+                    "dbmate",
+                    "status",
+                    stdout="[X] 001_init.sql\n[X] 002_next.sql\nApplied: 2\n",
+                ),
+                db_runtime_mod.LiveStatus(
+                    applied_files=("001_init.sql", "002_next.sql"),
+                    applied_count=2,
+                ),
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
+    monkeypatch.setattr(db_runtime_mod, "read_status", lambda _conn: next(statuses))
+    monkeypatch.setattr(
+        db_runtime_mod,
+        "verify_expected_schema",
+        lambda **kwargs: True,
+    )
+
+    result = db_mod.bootstrap(ctx.target)
+
+    assert result.before_index == 0
+    assert result.after_index == 2
+    assert conn.loaded_sql == ["CREATE TABLE head(id INTEGER);\n"]
+
+
+def test_bootstrap_creates_missing_database(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    conn = _FakeConn(url="postgres://u:p@host:5432/app")
+    steps = (_step(1, "001_init.sql"),)
+    ctx = _ctx(tmp_path, conn=conn, steps=steps)
+
+    @contextmanager
+    def _fake_open_ctx(**kwargs):
+        del kwargs
+        yield ctx
+
+    missing = _cmd("dbmate", "status", exit_code=1, stderr='database "app" does not exist')
+    statuses = iter(
+        [
+            db_runtime_mod.StatusError(result=missing, missing_db=True),
+            (
+                _cmd("dbmate", "status", stdout="[X] 001_init.sql\nApplied: 1\n"),
+                db_runtime_mod.LiveStatus(applied_files=("001_init.sql",), applied_count=1),
+            ),
+        ]
+    )
+
+    def _fake_status(_conn):
+        value = next(statuses)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
+    monkeypatch.setattr(db_runtime_mod, "read_status", _fake_status)
+    monkeypatch.setattr(db_runtime_mod, "verify_expected_schema", lambda **kwargs: True)
+
+    result = db_mod.bootstrap(ctx.target)
+
+    assert result.before_index == 0
+    assert result.after_index == 1
+    assert conn.create_calls == 1
+
+
+def test_bootstrap_rejects_nonempty_database(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    conn = _FakeConn()
+    steps = (_step(1, "001_init.sql"),)
+    ctx = _ctx(tmp_path, conn=conn, steps=steps)
+
+    @contextmanager
+    def _fake_open_ctx(**kwargs):
+        del kwargs
+        yield ctx
+
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
+    monkeypatch.setattr(
+        db_runtime_mod,
+        "read_status",
+        lambda _conn: (
+            _cmd("dbmate", "status", stdout="[X] 001_init.sql\nApplied: 1\n"),
+            db_runtime_mod.LiveStatus(applied_files=("001_init.sql",), applied_count=1),
+        ),
+    )
+
+    with pytest.raises(db_mod.DbError, match="db bootstrap requires an empty or unapplied database"):
+        db_mod.bootstrap(ctx.target)
 
 
 def test_missing_db_status_classifier_is_engine_specific() -> None:

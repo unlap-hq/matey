@@ -11,6 +11,7 @@ from matey.paths import (
     safe_descendant,
     safe_relative_descendant,
 )
+from matey.scratch import Engine
 from matey.sql import SqlTextDecodeError, decode_sql_text, ensure_newline
 from matey.tx import TxError, commit_artifacts
 
@@ -171,7 +172,7 @@ def build_lock_toml(
     *,
     policy: LockPolicy,
     target: TargetConfig,
-    engine: object,
+    engine: Engine,
     steps: tuple[WorktreeStep, ...],
     checkpoint_texts: Mapping[str, str],
     schema_sql: str,

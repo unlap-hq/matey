@@ -12,6 +12,7 @@ requires-python = ">=3.11,<3.15"
 dependencies = [
   "boltons>=25.0.0,<26",
   "cyclopts>=4.6.0,<5",
+  "ibis-framework[postgres,mysql,sqlite,clickhouse,bigquery]>=12.0.0,<13",
   "mashumaro[toml]>=3.20,<4",
   "plumbum>=1.10.0,<2",
   "portalocker>=3.2.0,<4",
@@ -68,6 +69,8 @@ clang = ">=21.1.8,<22"
 clangxx = ">=21.1.8,<22"
 go = ">=1.26.0,<2"
 mysql-client = ">=9.5.0,<10"
+mysql-devel = ">=9.5.0,<10"
+pkg-config = ">=0.29.2,<0.30"
 postgresql = ">=18.3,<19"
 python = "3.11.*"
 

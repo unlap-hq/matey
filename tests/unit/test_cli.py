@@ -69,6 +69,39 @@ test_url_env = "CORE_TEST_DATABASE_URL"
     }
 
 
+def test_db_bootstrap_routes_to_engine(monkeypatch, tmp_path: Path) -> None:
+    _write(
+        tmp_path / "matey.toml",
+        """
+dir = "db"
+url_env = "DATABASE_URL"
+test_url_env = "TEST_DATABASE_URL"
+
+[core]
+url_env = "CORE_DATABASE_URL"
+test_url_env = "CORE_TEST_DATABASE_URL"
+""".strip(),
+    )
+    _init_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, object] = {}
+
+    def _fake_bootstrap(target, *, url, dbmate_bin):
+        captured["target"] = target.name
+        captured["url"] = url
+        captured["dbmate_bin"] = dbmate_bin
+        return MutationResult(target_name=target.name, before_index=0, after_index=1)
+
+    monkeypatch.setattr(cli.commands.db_api, "bootstrap", _fake_bootstrap)
+    rc = cli.main(["db", "bootstrap", "--target", "core", "--url", "sqlite:///tmp.db"])
+    assert rc == 0
+    assert captured == {
+        "target": "core",
+        "url": "sqlite:///tmp.db",
+        "dbmate_bin": None,
+    }
+
+
 def test_db_status_nonzero_exit_maps_to_user_error(monkeypatch, tmp_path: Path) -> None:
     _write(
         tmp_path / "matey.toml",
@@ -204,6 +237,7 @@ def test_db_help_command_order_semantic(capsys) -> None:
     captured = capsys.readouterr()
     assert _help_command_names(captured.out) == [
         "status",
+        "bootstrap",
         "up",
         "migrate",
         "down",
@@ -218,6 +252,7 @@ def test_db_help_descriptions_match_semantics(capsys) -> None:
     assert rc == 0
     captured = capsys.readouterr()
     output = captured.out
+    assert "Load schema.sql into an empty DB and verify dbmate head state." in output
     assert "Create DB if missing, then apply pending migrations." in output
     assert "Apply pending migrations (no create-if-needed)." in output
     assert "Compare live schema to expected worktree target schema." in output

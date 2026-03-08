@@ -60,17 +60,43 @@ def register_commands(
         url: UrlOpt = None,
     ) -> None:
         """Show live migration status."""
+        def render_target(item: TargetConfig) -> None:
+            render_cmd_blob(
+                renderer=renderer,
+                result=db_api.status_raw(item, url=url, dbmate_bin=dbmate_bin),
+                context="db status",
+            )
+
         _run_targets(
             config_path=config,
             target=target,
             all_targets=all_targets,
             renderer=renderer,
             require_single=False,
-            body=lambda item: render_cmd_blob(
-                renderer=renderer,
-                result=db_api.status_raw(item, url=url, dbmate_bin=dbmate_bin),
-                context="db status",
-            ),
+            body=render_target,
+        )
+
+    @db_app.command(name="bootstrap", sort_key=15)
+    def bootstrap_command(
+        target: TargetOpt = None,
+        config: ConfigOpt = None,
+        dbmate_bin: DbmateBinOpt = None,
+        url: UrlOpt = None,
+    ) -> None:
+        """Load schema.sql into an empty DB and verify dbmate head state."""
+        def render_target(item: TargetConfig) -> None:
+            renderer.db_mutation(
+                "bootstrap",
+                db_api.bootstrap(item, url=url, dbmate_bin=dbmate_bin),
+            )
+
+        _run_targets(
+            config_path=config,
+            target=target,
+            all_targets=False,
+            renderer=renderer,
+            require_single=True,
+            body=render_target,
         )
 
     @db_app.command(name="up", sort_key=20)
@@ -81,16 +107,19 @@ def register_commands(
         url: UrlOpt = None,
     ) -> None:
         """Create DB if missing, then apply pending migrations."""
+        def render_target(item: TargetConfig) -> None:
+            renderer.db_mutation(
+                "up",
+                db_api.up(item, url=url, dbmate_bin=dbmate_bin),
+            )
+
         _run_targets(
             config_path=config,
             target=target,
             all_targets=False,
             renderer=renderer,
             require_single=True,
-            body=lambda item: renderer.db_mutation(
-                "up",
-                db_api.up(item, url=url, dbmate_bin=dbmate_bin),
-            ),
+            body=render_target,
         )
 
     @db_app.command(name="migrate", sort_key=30)
@@ -101,16 +130,19 @@ def register_commands(
         url: UrlOpt = None,
     ) -> None:
         """Apply pending migrations (no create-if-needed)."""
+        def render_target(item: TargetConfig) -> None:
+            renderer.db_mutation(
+                "migrate",
+                db_api.migrate(item, url=url, dbmate_bin=dbmate_bin),
+            )
+
         _run_targets(
             config_path=config,
             target=target,
             all_targets=False,
             renderer=renderer,
             require_single=True,
-            body=lambda item: renderer.db_mutation(
-                "migrate",
-                db_api.migrate(item, url=url, dbmate_bin=dbmate_bin),
-            ),
+            body=render_target,
         )
 
     @db_app.command(name="down", sort_key=40)
@@ -122,16 +154,19 @@ def register_commands(
         steps: StepsOpt = 1,
     ) -> None:
         """Rollback migration(s)."""
+        def render_target(item: TargetConfig) -> None:
+            renderer.db_mutation(
+                "down",
+                db_api.down(item, steps=steps, url=url, dbmate_bin=dbmate_bin),
+            )
+
         _run_targets(
             config_path=config,
             target=target,
             all_targets=False,
             renderer=renderer,
             require_single=True,
-            body=lambda item: renderer.db_mutation(
-                "down",
-                db_api.down(item, steps=steps, url=url, dbmate_bin=dbmate_bin),
-            ),
+            body=render_target,
         )
 
     @db_app.command(name="drift", sort_key=50)
@@ -143,15 +178,18 @@ def register_commands(
         url: UrlOpt = None,
     ) -> None:
         """Check live schema drift."""
+        def render_target(item: TargetConfig) -> None:
+            renderer.db_drift(
+                db_api.drift(item, url=url, dbmate_bin=dbmate_bin)
+            )
+
         _run_targets(
             config_path=config,
             target=target,
             all_targets=all_targets,
             renderer=renderer,
             require_single=False,
-            body=lambda item: renderer.db_drift(
-                db_api.drift(item, url=url, dbmate_bin=dbmate_bin)
-            ),
+            body=render_target,
         )
 
     @db_app.command(name="plan", sort_key=60)
@@ -195,17 +233,20 @@ def register_commands(
         dbmate_bin: DbmateBinOpt = None,
     ) -> None:
         """Create a new migration file."""
+        def render_target(item: TargetConfig) -> None:
+            render_cmd_blob(
+                renderer=renderer,
+                result=db_api.new(item, name=name, dbmate_bin=dbmate_bin),
+                context="db new",
+            )
+
         _run_targets(
             config_path=config,
             target=target,
             all_targets=False,
             renderer=renderer,
             require_single=True,
-            body=lambda item: render_cmd_blob(
-                renderer=renderer,
-                result=db_api.new(item, name=name, dbmate_bin=dbmate_bin),
-                context="db new",
-            ),
+            body=render_target,
         )
 
     @schema_app.command(name="status", sort_key=10)
@@ -215,13 +256,16 @@ def register_commands(
         config: ConfigOpt = None,
     ) -> None:
         """Show schema artifact health."""
+        def render_target(item: TargetConfig) -> None:
+            renderer.schema_status(schema_api.status(item))
+
         _run_targets(
             config_path=config,
             target=target,
             all_targets=all_targets,
             renderer=renderer,
             require_single=False,
-            body=lambda item: renderer.schema_status(schema_api.status(item)),
+            body=render_target,
         )
 
     @schema_app.command(name="plan", sort_key=20)
@@ -278,13 +322,8 @@ def register_commands(
         keep_scratch: KeepScratchOpt = False,
     ) -> None:
         """Run validated schema replay in scratch, then write schema artifacts."""
-        _run_targets(
-            config_path=config,
-            target=target,
-            all_targets=False,
-            renderer=renderer,
-            require_single=True,
-            body=lambda item: renderer.schema_apply(
+        def render_target(item: TargetConfig) -> None:
+            renderer.schema_apply(
                 schema_api.apply(
                     item,
                     base_ref=base,
@@ -293,7 +332,15 @@ def register_commands(
                     keep_scratch=keep_scratch,
                     dbmate_bin=dbmate_bin,
                 )
-            ),
+            )
+
+        _run_targets(
+            config_path=config,
+            target=target,
+            all_targets=False,
+            renderer=renderer,
+            require_single=True,
+            body=render_target,
         )
 
     @template_app.command(name="config", sort_key=10)

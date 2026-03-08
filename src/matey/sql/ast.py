@@ -172,7 +172,9 @@ def _validated_source_anchor_statements(text: str, policy: EnginePolicy) -> tupl
         )
     try:
         # Postgres/sqlite replay intentionally preserves validated source text
-        # instead of re-rendering SQL through sqlglot.
+        # instead of re-rendering SQL through sqlglot, because re-rendering can
+        # introduce harmless but noisy normalization and, in edge cases, backend-
+        # specific behavior drift.
         source_statements = _source_anchor_statements(
             _prepare_sql_text(text, policy),
             expected_count=len(expressions),

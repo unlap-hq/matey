@@ -9,7 +9,7 @@ from typing import Literal, TypeVar
 from matey.config import TargetConfig
 from matey.dbmate import CmdResult, Dbmate
 from matey.paths import PathBoundaryError, describe_path_boundary_error, safe_descendant
-from matey.sql import SqlError, SqlProgram, unified_sql_diff
+from matey.sql import SqlError, SqlProgram, ensure_newline, unified_sql_diff
 
 from . import runtime
 from .runtime import DbError
@@ -76,6 +76,60 @@ def new(
         ) from error
     dbmate = Dbmate(migrations_dir=migrations_dir, dbmate_bin=dbmate_bin)
     return dbmate.new(migration_name)
+
+
+def bootstrap(
+    target: TargetConfig,
+    *,
+    url: str | None = None,
+    dbmate_bin: Path | None = None,
+) -> MutationResult:
+    with runtime.open_runtime(target=target, url=url, dbmate_bin=dbmate_bin) as rt:
+        require_head_baseline(rt, "db bootstrap")
+        expected_index = len(rt.state.worktree_steps)
+        expected_sql = runtime.expected_sql_for_index(runtime=rt, index=expected_index)
+        if expected_sql is None:
+            raise runtime.DbError(
+                "db bootstrap is unavailable before the first worktree migration checkpoint."
+            )
+
+        before = read_bootstrap_status(rt)
+        if runtime.is_bigquery_url(rt.conn.url):
+            runtime.require_success(
+                rt.conn.create(),
+                context="db bootstrap create-if-needed",
+            )
+        try:
+            statements = SqlProgram(expected_sql, engine=runtime.engine_from_url(rt.conn.url)).anchor_statements(
+                target_url=rt.conn.url
+            )
+        except SqlError as error:
+            raise runtime.DbError(f"db bootstrap load failed: SQL analysis failed: {error}") from error
+        for index, statement in enumerate(statements, start=1):
+            runtime.require_success(
+                rt.conn.load(ensure_newline(f"{statement};")),
+                context=f"db bootstrap load statement {index}",
+            )
+        after = runtime.inspect_live(rt, context="db bootstrap post-status")
+        runtime.ensure_live_not_ahead(
+            state=rt.state,
+            live=after,
+            context="db bootstrap post-status",
+        )
+        if after.applied_count != expected_index:
+            raise runtime.DbError(
+                "db bootstrap post-status failed: live migration count does not match worktree head."
+            )
+        runtime.verify_expected_schema(
+            runtime=rt,
+            expected_index=expected_index,
+            context="db bootstrap postcheck",
+        )
+        return MutationResult(
+            target_name=target.name,
+            before_index=before.applied_count,
+            after_index=after.applied_count,
+        )
 
 
 def up(
@@ -323,6 +377,28 @@ def ensure_migrate_preflight(rt: runtime.RuntimeContext, command: str) -> None:
         )
 
 
+def read_bootstrap_status(rt: runtime.RuntimeContext) -> runtime.LiveStatus:
+    try:
+        _, before = runtime.read_status(rt.conn)
+    except runtime.StatusError as error:
+        if not error.missing_db:
+            raise runtime.DbError(
+                runtime.format_command_error("db bootstrap pre-status", error.result)
+            ) from error
+        runtime.require_success(rt.conn.create(), context="db bootstrap create-if-needed")
+        return runtime.LiveStatus(applied_files=(), applied_count=0)
+
+    runtime.ensure_prefix(state=rt.state, live=before)
+    runtime.ensure_live_not_ahead(
+        state=rt.state,
+        live=before,
+        context="db bootstrap pre-status",
+    )
+    if before.applied_count != 0:
+        raise runtime.DbError("db bootstrap requires an empty or unapplied database.")
+    return before
+
+
 @contextmanager
 def open_plan_runtime(
     *,
@@ -447,6 +523,7 @@ __all__ = [
     "DriftResult",
     "MutationResult",
     "PlanResult",
+    "bootstrap",
     "down",
     "drift",
     "migrate",

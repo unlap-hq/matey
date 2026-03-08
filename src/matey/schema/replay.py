@@ -9,6 +9,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from matey.dbmate import CmdResult, DbConnection, Dbmate, DbmateError
+from matey.lockfile import WorktreeStep
+from matey.scratch import Engine, ScratchLease
 from matey.sql import (
     MigrationSqlError,
     SqlError,
@@ -75,6 +77,13 @@ def run_down_roundtrip(
     keep_scratch: bool,
     dbmate_bin: Path | None,
 ) -> tuple[dict[str, str], tuple[str, ...], tuple[str, ...], str | None]:
+    """Validate reversible tail steps incrementally on one scratch connection.
+
+    The database state moves forward cumulatively through the tail so dbmate only
+    ever applies the newly-written migration file. For reversible steps we dump a
+    baseline before applying, roll back one step, and compare the rollback state
+    to that baseline before re-applying the step.
+    """
     if not structural.tail_steps:
         return {}, (), (), None
 
@@ -215,12 +224,10 @@ def lease_bootstrapped_connection(
 def bootstrap_scratch(
     *,
     conn: DbConnection,
-    engine: object,
+    engine: Engine,
     anchor_sql: str | None,
     context: str,
 ) -> None:
-    from matey.scratch import Engine
-
     if engine in {Engine.POSTGRES, Engine.MYSQL, Engine.CLICKHOUSE}:
         require_ok(conn.wait(60), context=f"{context} wait")
     require_ok(conn.create(), context=f"{context} create")
@@ -240,16 +247,14 @@ def bootstrap_scratch(
 def explicit_scratch_cleanup(
     *,
     conn: DbConnection,
-    engine: object,
-    lease: object,
+    engine: Engine,
+    lease: ScratchLease,
     keep_scratch: bool,
 ) -> Callable[[], None] | None:
     if keep_scratch or lease.auto_provisioned:
         return None
 
     def _cleanup() -> None:
-        from matey.scratch import Engine
-
         if engine is Engine.SQLITE:
             sqlite_path = _sqlite_file_from_url(conn.url)
             if sqlite_path is not None:
@@ -288,7 +293,7 @@ def write_tail_slice(
 def write_tail_migration(
     migrations_dir: Path,
     structural: StructuralPlan,
-    step: object,
+    step: WorktreeStep,
 ) -> None:
     payload = migration_payload(structural, step)
     rel = Path(step.migration_file).relative_to(structural.policy.migrations_dir)
@@ -297,14 +302,14 @@ def write_tail_migration(
     output_path.write_bytes(payload)
 
 
-def migration_payload(structural: StructuralPlan, step: object) -> bytes:
+def migration_payload(structural: StructuralPlan, step: WorktreeStep) -> bytes:
     payload = structural.head_snapshot.migrations.get(step.migration_file)
     if payload is None:
         raise SchemaError(f"Missing migration payload for {step.migration_file}.")
     return payload
 
 
-def migration_sql_text(structural: StructuralPlan, step: object) -> str:
+def migration_sql_text(structural: StructuralPlan, step: WorktreeStep) -> str:
     try:
         return migration_payload(structural, step).decode("utf-8")
     except UnicodeDecodeError as error:
