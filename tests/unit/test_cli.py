@@ -59,7 +59,7 @@ test_url_env = "CORE_TEST_DATABASE_URL"
         captured["dbmate_bin"] = dbmate_bin
         return MutationResult(target_name=target.name, before_index=0, after_index=1)
 
-    monkeypatch.setattr(cli.commands.db_api, "up", _fake_up)
+    monkeypatch.setattr(cli.db.db_api, "up", _fake_up)
     rc = cli.main(["db", "up", "--target", "core", "--url", "sqlite:///tmp.db"])
     assert rc == 0
     assert captured == {
@@ -92,7 +92,7 @@ test_url_env = "CORE_TEST_DATABASE_URL"
         captured["dbmate_bin"] = dbmate_bin
         return MutationResult(target_name=target.name, before_index=0, after_index=1)
 
-    monkeypatch.setattr(cli.commands.db_api, "bootstrap", _fake_bootstrap)
+    monkeypatch.setattr(cli.db.db_api, "bootstrap", _fake_bootstrap)
     rc = cli.main(["db", "bootstrap", "--target", "core", "--url", "sqlite:///tmp.db"])
     assert rc == 0
     assert captured == {
@@ -116,7 +116,7 @@ test_url_env = "CORE_TEST_DATABASE_URL"
     monkeypatch.chdir(tmp_path)
 
     monkeypatch.setattr(
-        cli.commands.db_api,
+        cli.db.db_api,
         "status_raw",
         lambda target, *, url, dbmate_bin: CmdResult(
             argv=("dbmate", "status"),
@@ -169,7 +169,7 @@ test_url_env = "ANALYTICS_TEST_DATABASE_URL"
             diagnostics=(),
         )
 
-    monkeypatch.setattr(cli.commands.schema_api, "status", _fake_status)
+    monkeypatch.setattr(cli.schema.schema_api, "status", _fake_status)
     rc = cli.main(["schema", "status", "--all"])
     assert rc == 0
     assert calls == ["analytics", "core"]
@@ -276,7 +276,7 @@ test_url_env = "CORE_TEST_DATABASE_URL"
     outside.mkdir()
     monkeypatch.chdir(outside)
 
-    config = cli.commands.load_config(config_path)
+    config = cli.common.load_config(config_path)
 
     assert config.targets["core"].dir == (repo_root / "db" / "core").resolve()
 
@@ -307,7 +307,7 @@ test_url_env = "PY_TEST_URL"
     outside.mkdir()
     monkeypatch.chdir(outside)
 
-    config = cli.commands.load_config(config_path)
+    config = cli.common.load_config(config_path)
 
     core = config.targets["core"]
     assert core.url_env == "PY_URL"
@@ -347,7 +347,7 @@ test_url_env = "CORE_TEST_DATABASE_URL"
             stderr="",
         )
 
-    monkeypatch.setattr(cli.commands.db_api, "new", _fake_new)
+    monkeypatch.setattr(cli.db.db_api, "new", _fake_new)
     rc = cli.main(["db", "new", "add_users", "--target", "core"])
     assert rc == 0
     assert called == {"target": "core", "name": "add_users", "dbmate_bin": None}
@@ -366,7 +366,7 @@ def test_dbmate_passthrough_routes_verbatim(monkeypatch) -> None:
             stderr="",
         )
 
-    monkeypatch.setattr(cli.commands.dbmate_api, "passthrough", _fake_passthrough)
+    monkeypatch.setattr(cli.common.dbmate_api, "passthrough", _fake_passthrough)
     rc = cli.main(["dbmate", "--", "status", "--wait"])
     assert rc == 0
     assert captured == {"args": ("status", "--wait"), "dbmate_bin": None}
@@ -381,7 +381,7 @@ def test_dbmate_top_level_intercept_uses_shared_helper(monkeypatch) -> None:
         captured["renderer"] = renderer
         return 0
 
-    monkeypatch.setattr(cli.commands, "handle_dbmate_passthrough", _fake_run)
+    monkeypatch.setattr(cli.common, "handle_dbmate_passthrough", _fake_run)
 
     rc = cli.main(["dbmate", "--", "status"])
 
@@ -399,7 +399,7 @@ def test_dbmate_registered_command_uses_shared_helper(monkeypatch) -> None:
         captured["renderer"] = renderer
         return 0
 
-    monkeypatch.setattr(cli.commands, "handle_dbmate_passthrough", _fake_run)
+    monkeypatch.setattr(cli.common, "handle_dbmate_passthrough", _fake_run)
 
     with pytest.raises(SystemExit) as excinfo:
         cli.app(["dbmate", "status"])
@@ -411,7 +411,7 @@ def test_dbmate_registered_command_uses_shared_helper(monkeypatch) -> None:
 
 def test_dbmate_passthrough_propagates_exit_code(monkeypatch) -> None:
     monkeypatch.setattr(
-        cli.commands.dbmate_api,
+        cli.common.dbmate_api,
         "passthrough",
         lambda *args, dbmate_bin: CmdResult(
             argv=("dbmate", *args),
@@ -452,7 +452,7 @@ def test_dbmate_passthrough_parses_binary_override_after_command(monkeypatch, tm
         )
 
     dbmate_bin = tmp_path / "dbmate"
-    monkeypatch.setattr(cli.commands.dbmate_api, "passthrough", _fake_passthrough)
+    monkeypatch.setattr(cli.common.dbmate_api, "passthrough", _fake_passthrough)
 
     rc = cli.main(["dbmate", "status", "--dbmate-bin", str(dbmate_bin)])
 
@@ -473,7 +473,7 @@ def test_dbmate_passthrough_defaults_to_help_when_empty(monkeypatch) -> None:
             stderr="",
         )
 
-    monkeypatch.setattr(cli.commands.dbmate_api, "passthrough", _fake_passthrough)
+    monkeypatch.setattr(cli.common.dbmate_api, "passthrough", _fake_passthrough)
     rc = cli.main(["dbmate"])
     assert rc == 0
     assert captured == {"args": ("--help",), "dbmate_bin": None}
@@ -492,7 +492,7 @@ def test_dbmate_dash_help_is_forwarded_to_dbmate(monkeypatch) -> None:
             stderr="",
         )
 
-    monkeypatch.setattr(cli.commands.dbmate_api, "passthrough", _fake_passthrough)
+    monkeypatch.setattr(cli.common.dbmate_api, "passthrough", _fake_passthrough)
     rc = cli.main(["dbmate", "--help"])
     assert rc == 0
     assert captured == {"args": ("--help",), "dbmate_bin": None}
@@ -531,7 +531,7 @@ test_url_env = "CORE_TEST_DATABASE_URL"
         called["dbmate_bin"] = dbmate_bin
         return "CREATE TABLE x(id INTEGER);\n"
 
-    monkeypatch.setattr(cli.commands.schema_api, "plan_sql", _fake_plan_sql)
+    monkeypatch.setattr(cli.schema.schema_api, "plan_sql", _fake_plan_sql)
     rc = cli.main(
         [
             "schema",
@@ -591,7 +591,7 @@ test_url_env = "CORE_TEST_DATABASE_URL"
         called["dbmate_bin"] = dbmate_bin
         return ""
 
-    monkeypatch.setattr(cli.commands.schema_api, "plan_diff", _fake_plan_diff)
+    monkeypatch.setattr(cli.schema.schema_api, "plan_diff", _fake_plan_diff)
     rc = cli.main(["schema", "plan", "--diff", "--target", "core"])
     assert rc == 0
     assert called["target"] == "core"
@@ -629,7 +629,7 @@ test_url_env = "CORE_TEST_DATABASE_URL"
             matches=False,
         )
 
-    monkeypatch.setattr(cli.commands.db_api, "plan", _fake_db_plan)
+    monkeypatch.setattr(cli.db.db_api, "plan", _fake_db_plan)
     rc = cli.main(["db", "plan", "--target", "core", "--url", "sqlite:///tmp.db"])
     assert rc == 0
     assert called == {"target": "core", "url": "sqlite:///tmp.db", "dbmate_bin": None}
@@ -655,7 +655,7 @@ test_url_env = "CORE_TEST_DATABASE_URL"
         called["dbmate_bin"] = dbmate_bin
         return "CREATE TABLE x(id INTEGER);\n"
 
-    monkeypatch.setattr(cli.commands.db_api, "plan_sql", _fake_db_plan_sql)
+    monkeypatch.setattr(cli.db.db_api, "plan_sql", _fake_db_plan_sql)
     rc = cli.main(["db", "plan", "--sql", "--target", "core"])
     assert rc == 0
     assert called == {"target": "core", "url": None, "dbmate_bin": None}
@@ -681,7 +681,7 @@ test_url_env = "CORE_TEST_DATABASE_URL"
         called["dbmate_bin"] = dbmate_bin
         return ""
 
-    monkeypatch.setattr(cli.commands.db_api, "plan_diff", _fake_db_plan_diff)
+    monkeypatch.setattr(cli.db.db_api, "plan_diff", _fake_db_plan_diff)
     rc = cli.main(["db", "plan", "--diff", "--target", "core"])
     assert rc == 0
     assert called == {"target": "core", "url": None, "dbmate_bin": None}

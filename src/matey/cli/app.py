@@ -12,7 +12,7 @@ from matey.repo import GitRepoError, SnapshotError
 from matey.scratch import ScratchError
 from matey.tx import TxError
 
-from . import commands
+from .commands import common, db, schema, template
 from .render import Renderer
 
 
@@ -57,11 +57,17 @@ template_app = App(
 )
 
 renderer = Renderer.create()
-commands.register_commands(
+db.register_db_commands(
     db_app=db_app,
-    schema_app=schema_app,
-    template_app=template_app,
     root_app=app,
+    renderer=renderer,
+)
+schema.register_schema_commands(
+    schema_app=schema_app,
+    renderer=renderer,
+)
+template.register_template_commands(
+    template_app=template_app,
     renderer=renderer,
 )
 app.command(db_app)
@@ -69,10 +75,10 @@ app.command(schema_app)
 app.command(template_app)
 
 _USER_ERRORS = (
-    commands.CliUsageError,
-    commands.db_api.DbError,
-    commands.schema_api.SchemaError,
-    commands.ConfigError,
+    common.CliUsageError,
+    db.db_api.DbError,
+    schema.schema_api.SchemaError,
+    common.ConfigError,
     DbmateError,
     GitRepoError,
     SnapshotError,
@@ -113,10 +119,20 @@ def maybe_run_dbmate_passthrough(args: list[str]) -> int | None:
     # preserves real dbmate help semantics instead of Cyclopts help.
     if not args or args[0] != "dbmate":
         return None
-    return commands.handle_dbmate_passthrough(
+    return common.handle_dbmate_passthrough(
         argv=tuple(args),
         renderer=renderer,
     )
 
 
-__all__ = ["app", "commands", "db_app", "main", "schema_app", "template_app"]
+__all__ = [
+    "app",
+    "common",
+    "db",
+    "db_app",
+    "main",
+    "schema",
+    "schema_app",
+    "template",
+    "template_app",
+]
