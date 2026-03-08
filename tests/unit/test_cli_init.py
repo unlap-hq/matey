@@ -82,6 +82,11 @@ def test_init_target_creates_workspace_target_and_zero_state(tmp_path: Path, mon
 def test_init_preserves_existing_workspace_comments_with_tomlkit(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / "matey.toml").write_text('# keep me\ntargets = ["db/core"]\n', encoding='utf-8')
+    (tmp_path / "db" / "core").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "db" / "core" / "config.toml").write_text(
+        'engine = "sqlite"\nurl_env = "CORE_DATABASE_URL"\ntest_url_env = "CORE_TEST_DATABASE_URL"\n',
+        encoding="utf-8",
+    )
 
     rc = cli.main(
         [
@@ -128,3 +133,7 @@ def test_init_updates_target_local_config(tmp_path: Path, monkeypatch) -> None:
     assert 'engine = "sqlite"' in content
     assert 'url_env = "CORE_DATABASE_URL"' in content
     assert '# keep me' in content
+    assert '[codegen]' in content
+    assert 'enabled = true' in content
+    assert 'generator = "tables"' in content
+    assert '#  options = "..."' in content

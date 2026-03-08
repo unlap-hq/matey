@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from matey.cli.template import (
+from matey.cli.ci import (
     TemplateProvider,
     default_ci_template_path,
     render_ci_template,
@@ -58,6 +58,7 @@ def test_render_target_config_with_codegen() -> None:
     assert '[codegen]' in rendered
     assert 'enabled = true' in rendered
     assert 'out = "models.py"' not in rendered
+    assert '#  options = "..."' in rendered
 
 
 def test_update_target_config_preserves_unknown_keys() -> None:

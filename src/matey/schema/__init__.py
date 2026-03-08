@@ -148,7 +148,6 @@ def apply(
     with serialized_target(target.root):
         structural, replay_outcome, codegen_output = execute_replay_plan(
             target=target,
-            context="apply",
             base_ref=base_ref,
             clean=clean,
             test_base_url=test_base_url,
@@ -345,15 +344,9 @@ def _run_plan_mode(
     dbmate_bin: Path | None,
     policy: LockPolicy | None,
 ) -> PlanResult | str:
-    contexts: dict[str, str] = {
-        "summary": "plan",
-        "sql": "plan sql",
-        "diff": "plan diff",
-    }
     with serialized_target(target.root):
         structural, replay_outcome, _replay_extra = execute_replay_plan(
             target=target,
-            context=contexts[mode],
             base_ref=base_ref,
             clean=clean,
             test_base_url=test_base_url,
@@ -408,7 +401,6 @@ def _plan_result_for_mode(
 def execute_replay_plan(
     *,
     target: TargetConfig,
-    context: str,
     base_ref: str | None,
     clean: bool,
     test_base_url: str | None,
@@ -417,7 +409,6 @@ def execute_replay_plan(
     policy: LockPolicy | None,
     after_replay: Callable[[planning.StructuralPlan, replay.DbConnection, str], U | None] | None = None,
 ) -> tuple[planning.StructuralPlan, replay.ReplayOutcome, U | None]:
-    del context
     recover_artifacts(target.root)
     structural = planning.build_structural_plan(
         target=target,

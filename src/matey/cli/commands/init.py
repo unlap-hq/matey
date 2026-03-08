@@ -6,7 +6,7 @@ from typing import Annotated
 from cyclopts import App, Parameter
 
 import matey.schema as schema_api
-from matey.cli.template import (
+from matey.cli.ci import (
     TemplateProvider,
     default_ci_template_path,
     render_ci_template,
@@ -14,6 +14,7 @@ from matey.cli.template import (
 )
 from matey.paths import normalize_target_path_ref, safe_descendant
 from matey.project import (
+    DEFAULT_CODEGEN,
     ConfigEditor,
     ConfigError,
     TargetConfig,
@@ -90,7 +91,11 @@ def register_init_command(*, root_app: App, renderer: Renderer) -> None:
             engine=resolved_engine,
             url_env=resolved_url_env,
             test_url_env=resolved_test_url_env,
-            codegen=current_target.codegen if current_target is not None else None,
+            codegen=(
+                current_target.codegen
+                if current_target is not None and current_target.codegen is not None
+                else DEFAULT_CODEGEN
+            ),
         )
 
         existing_target_text = (

@@ -20,6 +20,13 @@ class CodegenResult:
     content: bytes
 
 
+@dataclass(frozen=True, slots=True)
+class ToolResult:
+    stdout: str
+    stderr: str
+    exit_code: int
+
+
 class CodegenError(RuntimeError):
     pass
 
@@ -130,26 +137,22 @@ def reflect_object_names(
     env_updates: dict[str, str],
     engine_kwargs: dict[str, Any],
 ) -> tuple[str, ...]:
-    cmd = local[sys.executable][
+    result = run_tool(
+        local[sys.executable][
         "-m",
         "matey.schema.codegen_probe",
         sqlalchemy_url,
         json.dumps(engine_kwargs),
-    ]
+        ],
+        env=env_updates,
+        failure_prefix="SQLAlchemy reflection failed",
+    )
     try:
-        exit_code, stdout, stderr = cmd.run(retcode=None, env=dict(env_updates))
-    except OSError as error:
-        raise CodegenError(f"Unable to execute reflection probe: {error}") from error
-    if exit_code != 0:
-        raise CodegenError(
-            f"SQLAlchemy reflection failed (exit_code={exit_code}): stderr={stderr.strip()!r}; stdout={stdout.strip()!r}"
-        )
-    try:
-        names = json.loads(stdout)
+        names = json.loads(result.stdout)
     except json.JSONDecodeError as error:
-        raise CodegenError(f"Invalid reflection probe output: {stdout!r}") from error
+        raise CodegenError(f"Invalid reflection probe output: {result.stdout!r}") from error
     if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
-        raise CodegenError(f"Invalid reflection probe output: {stdout!r}")
+        raise CodegenError(f"Invalid reflection probe output: {result.stdout!r}")
     return tuple(names)
 
 
@@ -180,11 +183,26 @@ def run_sqlacodegen(
         argv += ["--engine-arg", f"{key}={value!r}"]
     argv.append(sqlalchemy_url)
 
-    cmd = binary[tuple(argv)]
-    run_env = dict(env_updates)
-    exit_code, stdout, stderr = cmd.run(retcode=None, env=run_env)
+    result = run_tool(
+        binary[tuple(argv)],
+        env=env_updates,
+        failure_prefix="sqlacodegen failed",
+    )
+    return result.stdout.encode("utf-8")
+
+
+def run_tool(
+    cmd: Any,
+    *,
+    env: dict[str, str],
+    failure_prefix: str,
+) -> ToolResult:
+    try:
+        exit_code, stdout, stderr = cmd.run(retcode=None, env=dict(env))
+    except OSError as error:
+        raise CodegenError(f"{failure_prefix}: {error}") from error
     if exit_code != 0:
         raise CodegenError(
-            f"sqlacodegen failed (exit_code={exit_code}): stderr={stderr.strip()!r}; stdout={stdout.strip()!r}"
+            f"{failure_prefix} (exit_code={exit_code}): stderr={stderr.strip()!r}; stdout={stdout.strip()!r}"
         )
-    return stdout.encode("utf-8")
+    return ToolResult(stdout=stdout, stderr=stderr, exit_code=exit_code)

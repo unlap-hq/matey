@@ -7,7 +7,9 @@ from typing import Any, Literal
 
 import pygit2
 import tomlkit
+from tomlkit import comment
 from tomlkit.items import Table
+from tomlkit.toml_document import TOMLDocument
 
 from matey.paths import (
     PathBoundaryError,
@@ -31,6 +33,9 @@ class CodegenConfig:
     enabled: bool
     generator: str
     options: str | None
+
+
+DEFAULT_CODEGEN = CodegenConfig(enabled=True, generator="tables", options=None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -501,7 +506,7 @@ def _require_env_name(name: str, *, source: str) -> None:
         )
 
 
-def _set_codegen(doc: Table, codegen: CodegenConfig | None) -> None:
+def _set_codegen(doc: TOMLDocument | Table, codegen: CodegenConfig | None) -> None:
     if codegen is None:
         return
     table = doc.get("codegen")
@@ -513,11 +518,13 @@ def _set_codegen(doc: Table, codegen: CodegenConfig | None) -> None:
     if codegen.options is None:
         if "options" in table:
             del table["options"]
+        table.add(comment(" options = \"...\""))
     else:
         table["options"] = codegen.options
 
 
 __all__ = [
+    "DEFAULT_CODEGEN",
     "TARGET_CONFIG_FILE",
     "WORKSPACE_CONFIG_FILE",
     "CodegenConfig",
