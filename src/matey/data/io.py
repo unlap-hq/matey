@@ -162,9 +162,7 @@ def resolve_order_by(data_file: DataFile) -> tuple[str, ...]:
         return data_file.order_by
     if data_file.on:
         return data_file.on
-    raise DataError(
-        f"Data file {data_file.name!r} requires order_by for deterministic export."
-    )
+    raise DataError(f"Data file {data_file.name!r} requires order_by for deterministic export.")
 
 
 def _normalize_columns(

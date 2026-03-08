@@ -95,7 +95,7 @@ def test_render_ci_template(provider: TemplateProvider, expected_base_var: str) 
     content = render_ci_template(provider)
     assert "pixi run matey lint --all" in content
     assert "pixi run matey schema apply --all --base" in content
-    assert 'git status --porcelain' in content
+    assert "git status --porcelain" in content
     assert expected_base_var in content
 
 

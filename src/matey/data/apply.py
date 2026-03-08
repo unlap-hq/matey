@@ -114,7 +114,9 @@ def _apply_rows(
                 raise DataError(
                     f"Data file {data_file.name!r} uses composite upsert keys, which this backend does not support."
                 )
-            handle.backend.upsert(data_file.table, rows, on=data_file.on[0], database=handle.database)  # type: ignore[attr-defined]
+            handle.backend.upsert(
+                data_file.table, rows, on=data_file.on[0], database=handle.database
+            )  # type: ignore[attr-defined]
         return
     raise DataError(f"Unsupported data mode {data_file.mode!r} for {data_file.name}.")
 
@@ -133,11 +135,15 @@ def _apply_bigquery_emulator_rows(
     if data_file.mode == "replace":
         client.query(f"TRUNCATE TABLE `{table_ref}`").result()
         if rows:
-            _insert_bigquery_emulator_rows(client=client, table_ref=table_ref, rows=rows, table=data_file.table)
+            _insert_bigquery_emulator_rows(
+                client=client, table_ref=table_ref, rows=rows, table=data_file.table
+            )
         return
     if data_file.mode == "insert":
         if rows:
-            _insert_bigquery_emulator_rows(client=client, table_ref=table_ref, rows=rows, table=data_file.table)
+            _insert_bigquery_emulator_rows(
+                client=client, table_ref=table_ref, rows=rows, table=data_file.table
+            )
         return
     if data_file.mode == "upsert":
         if not data_file.on:
@@ -146,7 +152,9 @@ def _apply_bigquery_emulator_rows(
             predicate = _bigquery_emulator_delete_predicate(data_file=data_file, rows=rows)
             if predicate:
                 client.query(f"DELETE FROM `{table_ref}` WHERE {predicate}").result()
-            _insert_bigquery_emulator_rows(client=client, table_ref=table_ref, rows=rows, table=data_file.table)
+            _insert_bigquery_emulator_rows(
+                client=client, table_ref=table_ref, rows=rows, table=data_file.table
+            )
         return
     raise DataError(f"Unsupported data mode {data_file.mode!r} for {data_file.name}.")
 
