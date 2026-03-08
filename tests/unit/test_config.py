@@ -22,6 +22,10 @@ def _write(path: Path, content: str) -> None:
 
 def test_load_workspace_from_dedicated_file(tmp_path: Path) -> None:
     _write(tmp_path / WORKSPACE_CONFIG_FILE, 'targets = ["db/core"]\n')
+    _write(
+        tmp_path / "db" / "core" / TARGET_CONFIG_FILE,
+        'engine = "postgres"\nurl_env = "CORE_DATABASE_URL"\ntest_url_env = "CORE_TEST_DATABASE_URL"\n',
+    )
 
     workspace = Workspace.load(
         root=tmp_path,
@@ -30,13 +34,17 @@ def test_load_workspace_from_dedicated_file(tmp_path: Path) -> None:
     )
 
     assert workspace.config_kind == "workspace"
-    assert tuple(workspace.targets) == ("db/core",)
+    assert workspace.target_paths == ("db/core",)
 
 
 def test_load_workspace_falls_back_to_pyproject(tmp_path: Path) -> None:
     _write(
         tmp_path / "pyproject.toml",
         '[tool.matey]\ntargets = ["db/core"]\n',
+    )
+    _write(
+        tmp_path / "db" / "core" / TARGET_CONFIG_FILE,
+        'engine = "postgres"\nurl_env = "CORE_DATABASE_URL"\ntest_url_env = "CORE_TEST_DATABASE_URL"\n',
     )
 
     workspace = Workspace.load(
@@ -46,7 +54,7 @@ def test_load_workspace_falls_back_to_pyproject(tmp_path: Path) -> None:
     )
 
     assert workspace.config_kind == "pyproject"
-    assert tuple(workspace.targets) == ("db/core",)
+    assert workspace.target_paths == ("db/core",)
 
 
 def test_workspace_file_wins_over_pyproject(tmp_path: Path) -> None:
@@ -55,10 +63,14 @@ def test_workspace_file_wins_over_pyproject(tmp_path: Path) -> None:
         tmp_path / "pyproject.toml",
         '[tool.matey]\ntargets = ["db/analytics"]\n',
     )
+    _write(
+        tmp_path / "db" / "core" / TARGET_CONFIG_FILE,
+        'engine = "postgres"\nurl_env = "CORE_DATABASE_URL"\ntest_url_env = "CORE_TEST_DATABASE_URL"\n',
+    )
 
     workspace = Workspace.discover(start=tmp_path, workspace=tmp_path)
 
-    assert tuple(workspace.targets) == ("db/core",)
+    assert workspace.target_paths == ("db/core",)
 
 
 def test_load_target_local_config(tmp_path: Path) -> None:
@@ -117,7 +129,7 @@ def test_workspace_select_path_native(tmp_path: Path) -> None:
         config_kind="workspace",
     )
 
-    assert workspace.targets == ("db/analytics", "db/core")
+    assert workspace.target_paths == ("db/analytics", "db/core")
     assert tuple(target.name for target in workspace.select(path="db/core")) == ("db/core",)
     assert tuple(target.name for target in workspace.select(all_targets=True)) == ("db/analytics", "db/core")
     with pytest.raises(ConfigError, match="Multiple targets configured"):

@@ -208,6 +208,8 @@ def aligned_source_statements(
             f"{label} anchor statements could not be aligned safely with source text."
         )
     return statements
+
+
 def _is_migration_directive_line(line: str, *, marker: re.Pattern[str]) -> bool:
     return marker.fullmatch(line.rstrip("\r\n")) is not None
 

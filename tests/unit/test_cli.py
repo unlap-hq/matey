@@ -262,7 +262,7 @@ def test_load_config_resolves_workspace_file_from_config_location(monkeypatch, t
 
     workspace = cli.common.Workspace.discover(start=outside.resolve(), workspace=repo_root)
 
-    assert workspace.targets == ("db/core",)
+    assert workspace.target_paths == ("db/core",)
 
 
 def test_load_config_preserves_pyproject_workspace_fallback(monkeypatch, tmp_path: Path) -> None:
@@ -277,7 +277,7 @@ def test_load_config_preserves_pyproject_workspace_fallback(monkeypatch, tmp_pat
 
     workspace = cli.common.Workspace.discover(start=outside.resolve(), workspace=repo_root)
 
-    assert workspace.targets == ("db/core",)
+    assert workspace.target_paths == ("db/core",)
 
 
 def test_load_config_prefers_local_workspace_over_git_root(monkeypatch, tmp_path: Path) -> None:
@@ -292,7 +292,7 @@ def test_load_config_prefers_local_workspace_over_git_root(monkeypatch, tmp_path
 
     workspace = cli.common.Workspace.discover(start=nested.resolve(), workspace=None)
 
-    assert workspace.targets == ("db/local",)
+    assert workspace.target_paths == ("db/local",)
 
 
 def test_load_config_rejects_workspace_file_path(tmp_path: Path) -> None:

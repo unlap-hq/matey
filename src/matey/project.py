@@ -171,7 +171,7 @@ class Workspace:
     root: Path
     config_path: Path
     config_kind: Literal["workspace", "pyproject", "none"]
-    targets: tuple[str, ...]
+    targets: tuple[TargetConfig, ...]
 
     @classmethod
     def load(
@@ -240,12 +240,22 @@ class Workspace:
     ) -> Workspace:
         root = root.resolve()
         if config_kind == "none":
-            targets: tuple[str, ...] = ()
+            targets: tuple[TargetConfig, ...] = ()
         else:
             targets = tuple(
                 sorted(
-                    path.relative_to(root).as_posix() or "."
-                    for path in _parse_workspace_targets(root, config_path=config_path, config_kind=config_kind)
+                    (
+                        TargetConfig.load(
+                            path=path.relative_to(root).as_posix() or ".",
+                            workspace_root=root,
+                        )
+                        for path in _parse_workspace_targets(
+                            root,
+                            config_path=config_path,
+                            config_kind=config_kind,
+                        )
+                    ),
+                    key=lambda target: target.name,
                 )
             )
         return cls(
@@ -275,6 +285,10 @@ class Workspace:
             return editor.render_workspace(target_paths=(target_path,) if target_path is not None else ())
         return editor.update_workspace(existing_text=existing_text, target_path=target_path)
 
+    @property
+    def target_paths(self) -> tuple[str, ...]:
+        return tuple(target.name for target in self.targets)
+
     def select(
         self,
         *,
@@ -287,23 +301,24 @@ class Workspace:
 
         if path is not None:
             normalized = normalize_target_path_ref(path)
-            if normalized not in self.targets:
-                available = ", ".join(self.targets) or "(none)"
+            target_by_path = {target.name: target for target in self.targets}
+            if normalized not in target_by_path:
+                available = ", ".join(self.target_paths) or "(none)"
                 raise ConfigError(
                     f"Target path {normalized!r} is not configured in workspace. Available paths: {available}"
                 )
-            selected = (TargetConfig.load(path=normalized, workspace_root=self.root),)
+            selected = (target_by_path[normalized],)
         elif all_targets:
             if not self.targets:
                 raise ConfigError("No targets configured in workspace. Add one with `matey init --path ...`.")
-            selected = tuple(TargetConfig.load(path=target, workspace_root=self.root) for target in self.targets)
+            selected = self.targets
         else:
             if len(self.targets) == 1:
-                selected = (TargetConfig.load(path=self.targets[0], workspace_root=self.root),)
+                selected = self.targets
             elif not self.targets:
                 raise ConfigError("No targets configured. Pass --path or initialize a target first.")
             else:
-                available = ", ".join(self.targets)
+                available = ", ".join(self.target_paths)
                 raise ConfigError(
                     "Multiple targets configured; choose one with --path or use --all. "
                     f"Available paths: {available}"
