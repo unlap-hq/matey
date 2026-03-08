@@ -9,8 +9,9 @@ from pathlib import Path, PurePosixPath
 
 from matey.config import TargetConfig
 from matey.dbmate import CmdResult, DbConnection, Dbmate, DbmateError
-from matey.lockfile import LockState, build_lock_state
+from matey.lockfile import LockState, WorktreeStep, build_lock_state
 from matey.repo import Snapshot, SnapshotError
+from matey.scratch import engine_from_url as scratch_engine_from_url
 from matey.sql import (
     MigrationSqlError,
     SqlError,
@@ -22,6 +23,7 @@ from matey.sql import (
     is_bigquery_family,
 )
 from matey.tx import TxError, recover_artifacts, serialized_target
+from matey.zero import zero_schema_sql
 
 _STATUS_LINE_PATTERN = re.compile(r"^\[(?P<mark>[ X])\]\s+(?P<file>.+?)\s*$")
 _BIGQUERY_MISSING_DB_PATTERNS = (
@@ -276,7 +278,7 @@ def ensure_rollback_allowed(
 def ensure_migration_range_allowed(
     *,
     runtime: RuntimeContext,
-    steps: tuple[object, ...],
+    steps: tuple[WorktreeStep, ...],
     engine: str,
     section: str,
     context: str,
@@ -360,7 +362,7 @@ def expected_sql_for_index(*, runtime: RuntimeContext, index: int) -> str | None
             f"Expected schema index {index} is outside worktree lock range 0..{target_index}."
         )
     if index == 0:
-        return None
+        return zero_schema_sql(engine=scratch_engine_from_url(runtime.conn.url))
     if index == target_index:
         if runtime.snapshot.schema_sql is None:
             raise DbError("Worktree schema.sql is missing.")

@@ -12,7 +12,7 @@ from matey.repo import GitRepoError, SnapshotError
 from matey.scratch import ScratchError
 from matey.tx import TxError
 
-from .commands import common, db, schema, template
+from .commands import common, db, init, schema
 from .render import Renderer
 
 
@@ -47,15 +47,6 @@ schema_app = App(
     exit_on_error=False,
     sort_key=20,
 )
-template_app = App(
-    name="template",
-    help="Project template helpers.",
-    help_flags=["--help"],
-    print_error=False,
-    exit_on_error=False,
-    sort_key=30,
-)
-
 renderer = Renderer.create()
 db.register_db_commands(
     db_app=db_app,
@@ -66,13 +57,12 @@ schema.register_schema_commands(
     schema_app=schema_app,
     renderer=renderer,
 )
-template.register_template_commands(
-    template_app=template_app,
+init.register_init_command(
+    root_app=app,
     renderer=renderer,
 )
 app.command(db_app)
 app.command(schema_app)
-app.command(template_app)
 
 _USER_ERRORS = (
     common.CliUsageError,
@@ -130,9 +120,8 @@ __all__ = [
     "common",
     "db",
     "db_app",
+    "init",
     "main",
     "schema",
     "schema_app",
-    "template",
-    "template_app",
 ]

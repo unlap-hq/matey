@@ -58,15 +58,18 @@ class TargetConfig:
 
 
 class Config:
-    def __init__(self, targets: dict[str, TargetConfig]) -> None:
-        if not targets:
-            raise ConfigError("Config must contain at least one target.")
+    def __init__(self, targets: dict[str, TargetConfig], *, default_target: TargetConfig) -> None:
         ordered = dict(sorted(targets.items(), key=lambda item: item[0]))
         self._targets = MappingProxyType(ordered)
+        self._default_target = default_target
 
     @property
     def targets(self) -> MappingProxyType[str, TargetConfig]:
         return self._targets
+
+    @property
+    def default_target(self) -> TargetConfig:
+        return self._default_target
 
     @classmethod
     def load(
@@ -83,8 +86,26 @@ class Config:
             defaults_b=file_defaults,
             targets_b=file_targets,
         )
-        target_root = (config_root if config_root is not None else repo_root).resolve()
-        return cls(_resolve_targets(repo_root=target_root, defaults=defaults, targets=targets))
+        return cls.from_sources(
+            repo_root=(config_root if config_root is not None else repo_root).resolve(),
+            defaults=defaults,
+            targets=targets,
+        )
+
+    @classmethod
+    def from_sources(
+        cls,
+        *,
+        repo_root: Path,
+        defaults: DefaultsMap,
+        targets: TargetsMap,
+    ) -> Config:
+        resolved_targets, default_target = _resolve_targets(
+            repo_root=repo_root,
+            defaults=defaults,
+            targets=targets,
+        )
+        return cls(resolved_targets, default_target=default_target)
 
     def select(
         self,
@@ -96,19 +117,21 @@ class Config:
             raise ConfigError("Cannot combine --target with --all.")
 
         if target is not None:
+            if target == "default":
+                return (self._default_target,)
             selected = self._targets.get(target)
             if selected is None:
-                available = ", ".join(self._targets.keys())
+                available = ", ".join(("default", *self._targets.keys()))
                 raise ConfigError(f"Unknown target {target!r}. Available targets: {available}")
             return (selected,)
 
         if all_targets:
-            return tuple(self._targets.values())
+            return (self._default_target, *self._targets.values())
 
-        if len(self._targets) == 1:
-            return tuple(self._targets.values())
+        if not self._targets:
+            return (self._default_target,)
 
-        available = ", ".join(self._targets.keys())
+        available = ", ".join(("default", *self._targets.keys()))
         raise ConfigError(
             "Multiple targets configured; choose one with --target or use --all. "
             f"Available targets: {available}"
@@ -226,26 +249,49 @@ def _resolve_targets(
     repo_root: Path,
     defaults: DefaultsMap,
     targets: TargetsMap,
-) -> dict[str, TargetConfig]:
+) -> tuple[dict[str, TargetConfig], TargetConfig]:
     _require_env_name(defaults["url_env"], source="defaults.url_env")
     _require_env_name(defaults["test_url_env"], source="defaults.test_url_env")
 
-    if not targets:
-        targets = {
-            "default": {
-                "dir": defaults["dir"],
-                "url_env": defaults["url_env"],
-                "test_url_env": defaults["test_url_env"],
-            }
-        }
-
     root = repo_root.resolve()
+    default_dir = defaults["dir"]
+    try:
+        normalized_default_dir = normalize_relative_posix_path(
+            default_dir,
+            label="dir",
+        )
+    except RelativePathError as error:
+        raise ConfigError(str(error)) from error
+    try:
+        default_dir_path = safe_descendant(
+            root=root,
+            candidate=root / Path(normalized_default_dir),
+            label="dir",
+            allow_missing_leaf=True,
+            expected_kind="dir",
+        )
+    except PathBoundaryError as error:
+        raise ConfigError(
+            describe_path_boundary_error(
+                error,
+                path=root / Path(normalized_default_dir),
+                symlink_message="dir uses symlinked path segment",
+            )
+        ) from error
+
+    default_target = TargetConfig(
+        name="default",
+        dir=default_dir_path,
+        url_env=defaults["url_env"],
+        test_url_env=defaults["test_url_env"],
+    )
+
     resolved: dict[str, TargetConfig] = {}
-    seen_dirs: dict[Path, str] = {}
+    seen_dirs: dict[Path, str] = {default_dir_path: "default"}
 
     for name in sorted(targets.keys()):
         override = targets[name]
-        dir_value = override.get("dir", _target_default_dir(defaults["dir"], name))
+        dir_value = override.get("dir", target_default_dir(defaults["dir"], name))
         url_env = override.get("url_env", defaults["url_env"])
         test_url_env = override.get("test_url_env", defaults["test_url_env"])
 
@@ -289,7 +335,7 @@ def _resolve_targets(
             test_url_env=test_url_env,
         )
 
-    return resolved
+    return resolved, default_target
 
 
 def normalize_target_names(targets: tuple[str, ...]) -> tuple[str, ...]:
@@ -316,7 +362,7 @@ def target_env_stem(target: str) -> str:
     return stem
 
 
-def _target_default_dir(default_dir: str, target_name: str) -> str:
+def target_default_dir(default_dir: str, target_name: str) -> str:
     return (PurePosixPath(default_dir) / target_name).as_posix()
 
 
@@ -338,5 +384,6 @@ __all__ = [
     "ConfigError",
     "TargetConfig",
     "normalize_target_names",
+    "target_default_dir",
     "target_env_stem",
 ]

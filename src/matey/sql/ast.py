@@ -111,7 +111,7 @@ def schema_fingerprint(text: str, *, engine: str, context_url: str | None) -> st
     default_identity = _target_identity_from_url(context_url, policy)
     normalized: list[str] = []
     for expr in _parse_expressions(text, policy):
-        if _is_nonsemantic_expr(expr, policy):
+        if _is_nonsemantic_expr(expr, policy) or _is_internal_migration_expr(expr):
             continue
         if isinstance(expr, exp.Command):
             raise SqlError(
@@ -521,6 +521,13 @@ def _is_postgres_set_config(expr: exp.Expression) -> bool:
             and value.expression.name.lower() == "set_config"
         )
     return False
+
+
+def _is_internal_migration_expr(expr: exp.Expression) -> bool:
+    target = _write_target(expr)
+    if target is None:
+        return False
+    return _identifier_value(target.args.get("this")) == "schema_migrations"
 
 
 def _looks_mutating_expr(expr: exp.Expression, statement: str) -> bool:

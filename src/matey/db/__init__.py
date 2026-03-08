@@ -186,12 +186,6 @@ def down(
             steps=steps,
             context="db down precheck",
         )
-        target_index = max(before.applied_count - steps, 0)
-        if target_index == 0:
-            raise runtime.DbError(
-                "db down to migration index 0 is not supported because matey has no zero-migration schema baseline."
-            )
-
         runtime.require_success(rt.conn.rollback(steps), context=f"db down ({steps})")
         after = runtime.inspect_live(rt, context="db down post-status")
         runtime.ensure_live_not_ahead(
@@ -224,10 +218,6 @@ def drift(
                 target_name=target.name,
                 applied_index=live.applied_count,
                 drifted=True,
-            )
-        if live.applied_count == 0:
-            raise runtime.DbError(
-                "db drift is unavailable before the first applied migration checkpoint."
             )
         schema_match, _, _ = runtime.compare_expected_schema(
             runtime=rt,
@@ -410,10 +400,6 @@ def open_plan_runtime(
     with runtime.open_runtime(target=target, url=url, dbmate_bin=dbmate_bin) as rt:
         live = runtime.inspect_live(rt, context=f"{context} status")
         target_index = len(rt.state.worktree_steps)
-        if target_index == 0:
-            raise runtime.DbError(
-                f"{context} is unavailable before the first worktree migration checkpoint."
-            )
         yield rt, live, target_index
 
 

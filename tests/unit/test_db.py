@@ -619,7 +619,7 @@ def test_down_expected_index_comes_from_post_status(
     assert conn.rollback_calls == [2]
 
 
-def test_down_rejects_zero_index_target(
+def test_down_allows_zero_index_target(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -632,22 +632,39 @@ def test_down_rejects_zero_index_target(
         del kwargs
         yield ctx
 
-    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
-    monkeypatch.setattr(
-        db_runtime_mod,
-        "read_status",
-        lambda _conn: (
-            _cmd("dbmate", "status", stdout="[X] 001_init.sql\nApplied: 1\n"),
-            db_runtime_mod.LiveStatus(applied_files=("001_init.sql",), applied_count=1),
-        ),
+    statuses = iter(
+        [
+            (_cmd("dbmate", "status", stdout="[X] 001_init.sql\nApplied: 1\n"), db_runtime_mod.LiveStatus(applied_files=("001_init.sql",), applied_count=1)),
+            (_cmd("dbmate", "status", stdout="Applied: 0\n"), db_runtime_mod.LiveStatus(applied_files=(), applied_count=0)),
+        ]
     )
+    captured: dict[str, int] = {}
 
-    with pytest.raises(
-        db_mod.DbError,
-        match="db down to migration index 0 is not supported",
-    ):
-        db_mod.down(ctx.target, steps=1)
-    assert conn.rollback_calls == []
+    def _fake_status(_conn: _FakeConn):
+        return next(statuses)
+
+    def _fake_verify(*, runtime: db_runtime_mod.RuntimeContext, expected_index: int, context: str):
+        del runtime, context
+        captured["expected_index"] = expected_index
+        return True
+
+    monkeypatch.setattr(db_runtime_mod, "open_runtime", _fake_open_ctx)
+    monkeypatch.setattr(db_runtime_mod, "read_status", _fake_status)
+    monkeypatch.setattr(db_runtime_mod, "verify_expected_schema", _fake_verify)
+
+    result = db_mod.down(ctx.target, steps=1)
+
+    assert result.before_index == 1
+    assert result.after_index == 0
+    assert captured["expected_index"] == 0
+    assert conn.rollback_calls == [1]
+
+
+def test_expected_sql_for_index_zero_returns_zero_baseline(tmp_path: Path) -> None:
+    conn = _FakeConn()
+    ctx = _ctx(tmp_path, conn=conn, steps=())
+
+    assert db_runtime_mod.expected_sql_for_index(runtime=ctx, index=0) == ""
 
 
 def test_plan_uses_worktree_target_index_for_expected_schema(
@@ -807,7 +824,7 @@ def test_expected_sql_for_index_uses_checkpoint_and_head(tmp_path: Path) -> None
     steps = (_step(1, "001_init.sql"), _step(2, "002_next.sql"))
     ctx = _ctx(tmp_path, conn=conn, steps=steps)
 
-    assert db_runtime_mod.expected_sql_for_index(runtime=ctx, index=0) is None
+    assert db_runtime_mod.expected_sql_for_index(runtime=ctx, index=0) == ""
     assert db_runtime_mod.expected_sql_for_index(runtime=ctx, index=1) == "CREATE TABLE c1(id INTEGER);\n"
     assert (
         db_runtime_mod.expected_sql_for_index(runtime=ctx, index=2) == "CREATE TABLE head(id INTEGER);\n"
@@ -944,7 +961,7 @@ def test_plan_reports_live_ahead_as_mismatch(
     assert result.applied_index == 2
 
 
-def test_drift_rejects_missing_expected_baseline(
+def test_drift_uses_zero_baseline(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -965,12 +982,19 @@ def test_drift_rejects_missing_expected_baseline(
             db_runtime_mod.LiveStatus(applied_files=(), applied_count=0),
         ),
     )
+    monkeypatch.setattr(
+        db_runtime_mod,
+        "compare_expected_schema",
+        lambda *, runtime, expected_index, context: (True, "", ""),
+    )
 
-    with pytest.raises(db_mod.DbError, match="db drift is unavailable before the first applied migration checkpoint"):
-        db_mod.drift(ctx.target)
+    result = db_mod.drift(ctx.target)
+
+    assert result.applied_index == 0
+    assert result.drifted is False
 
 
-def test_plan_rejects_missing_worktree_baseline(
+def test_plan_uses_zero_baseline(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -991,9 +1015,17 @@ def test_plan_rejects_missing_worktree_baseline(
             db_runtime_mod.LiveStatus(applied_files=(), applied_count=0),
         ),
     )
+    monkeypatch.setattr(
+        db_runtime_mod,
+        "compare_expected_schema",
+        lambda *, runtime, expected_index, context: (True, "", ""),
+    )
 
-    with pytest.raises(db_mod.DbError, match="db plan is unavailable before the first worktree migration checkpoint"):
-        db_mod.plan(ctx.target)
+    result = db_mod.plan(ctx.target)
+
+    assert result.applied_index == 0
+    assert result.target_index == 0
+    assert result.matches is True
 
 
 def test_up_rejects_live_ahead(

@@ -10,6 +10,7 @@ import pytest
 from matey.db import MutationResult
 from matey.dbmate import CmdResult
 from matey.lockfile import LockState
+from matey.scratch import Engine
 
 cli = import_module("matey.cli.app")
 
@@ -102,6 +103,110 @@ test_url_env = "CORE_TEST_DATABASE_URL"
     }
 
 
+def test_init_target_uses_default_target_when_target_not_provided(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _write(
+        tmp_path / "matey.toml",
+        """
+dir = "db/root"
+url_env = "DATABASE_URL"
+test_url_env = "TEST_DATABASE_URL"
+
+[core]
+url_env = "CORE_DATABASE_URL"
+test_url_env = "CORE_TEST_DATABASE_URL"
+""".strip(),
+    )
+    _init_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, object] = {}
+
+    def _fake_prepare_init_target(target, *, engine, overwrite, policy=None):
+        del policy
+        captured["target"] = target.name
+        captured["dir"] = target.dir
+        captured["engine"] = engine
+        captured["overwrite"] = overwrite
+        return cli.init.schema_api.InitPlan(
+            target=target,
+            engine=Engine.SQLITE,
+            writes={},
+            deletes=(),
+            created_dirs=(),
+        )
+
+    monkeypatch.setattr(cli.init.schema_api, "prepare_init_target", _fake_prepare_init_target)
+    monkeypatch.setattr(
+        cli.init.schema_api,
+        "apply_init_target",
+        lambda plan: cli.init.schema_api.InitResult(
+            target_name=plan.target.name,
+            engine=plan.engine.value,
+            wrote=True,
+            changed_files=("schema.sql", "schema.lock.toml"),
+        ),
+    )
+    rc = cli.main(["init", "--engine", "sqlite"])
+    assert rc == 0
+    assert captured == {
+        "target": "default",
+        "dir": (tmp_path / "db" / "root").resolve(),
+        "engine": "sqlite",
+        "overwrite": False,
+    }
+
+
+def test_init_target_routes_named_target(monkeypatch, tmp_path: Path) -> None:
+    _write(
+        tmp_path / "matey.toml",
+        """
+dir = "db/root"
+url_env = "DATABASE_URL"
+test_url_env = "TEST_DATABASE_URL"
+
+[core]
+url_env = "CORE_DATABASE_URL"
+test_url_env = "CORE_TEST_DATABASE_URL"
+""".strip(),
+    )
+    _init_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, object] = {}
+
+    def _fake_prepare_init_target(target, *, engine, overwrite, policy=None):
+        del policy
+        captured["target"] = target.name
+        captured["engine"] = engine
+        captured["overwrite"] = overwrite
+        return cli.init.schema_api.InitPlan(
+            target=target,
+            engine=Engine.SQLITE,
+            writes={},
+            deletes=(),
+            created_dirs=(),
+        )
+
+    monkeypatch.setattr(cli.init.schema_api, "prepare_init_target", _fake_prepare_init_target)
+    monkeypatch.setattr(
+        cli.init.schema_api,
+        "apply_init_target",
+        lambda plan: cli.init.schema_api.InitResult(
+            target_name=plan.target.name,
+            engine=plan.engine.value,
+            wrote=False,
+            changed_files=(),
+        ),
+    )
+    rc = cli.main(["init", "--target", "core", "--engine", "sqlite", "--overwrite"])
+    assert rc == 0
+    assert captured == {
+        "target": "core",
+        "engine": "sqlite",
+        "overwrite": True,
+    }
+
+
 def test_db_status_nonzero_exit_maps_to_user_error(monkeypatch, tmp_path: Path) -> None:
     _write(
         tmp_path / "matey.toml",
@@ -172,7 +277,7 @@ test_url_env = "ANALYTICS_TEST_DATABASE_URL"
     monkeypatch.setattr(cli.schema.schema_api, "status", _fake_status)
     rc = cli.main(["schema", "status", "--all"])
     assert rc == 0
-    assert calls == ["analytics", "core"]
+    assert calls == ["default", "analytics", "core"]
 
 
 def test_schema_status_symlink_boundary_is_user_error(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -228,7 +333,7 @@ def test_help_commands_exit_zero() -> None:
     assert cli.main(["db", "plan", "--help"]) == 0
     assert cli.main(["schema", "--help"]) == 0
     assert cli.main(["schema", "plan", "--help"]) == 0
-    assert cli.main(["template", "--help"]) == 0
+    assert cli.main(["init", "--help"]) == 0
 
 
 def test_db_help_command_order_semantic(capsys) -> None:

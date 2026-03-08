@@ -9,7 +9,7 @@ from rich.table import Table
 from matey.db import DriftResult, MutationResult
 from matey.db import PlanResult as DbPlanResult
 from matey.lockfile import LockState
-from matey.schema import ApplyResult
+from matey.schema import ApplyResult, InitResult
 from matey.schema import PlanResult as SchemaPlanResult
 
 
@@ -90,6 +90,19 @@ class Renderer:
         self.console.print(f"Replay scratch: {result.replay_scratch_url}")
         if result.down_scratch_url:
             self.console.print(f"Down-check scratch: {result.down_scratch_url}")
+        if result.changed_files:
+            self.console.print(
+                self._table(
+                    columns=(("Changed Files", {}),),
+                    rows=tuple((path,) for path in result.changed_files),
+                    box=None,
+                )
+            )
+
+    def init_target(self, result: InitResult) -> None:
+        status = "changed" if result.wrote else "no-op"
+        color = "green" if result.wrote else "cyan"
+        self.console.print(f"Init: [{color}]{status}[/{color}]  Engine: {result.engine}")
         if result.changed_files:
             self.console.print(
                 self._table(

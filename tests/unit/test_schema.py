@@ -14,7 +14,16 @@ from matey.config import TargetConfig
 from matey.dbmate import CmdResult, DbmateError
 from matey.lockfile import LockFile, LockPolicy, LockState
 from matey.repo import Snapshot
-from matey.schema import SchemaError, apply, plan, plan_diff, plan_sql, status
+from matey.schema import (
+    InitResult,
+    SchemaError,
+    apply,
+    init_target,
+    plan,
+    plan_diff,
+    plan_sql,
+    status,
+)
 from matey.scratch import Engine
 
 schema_plan_mod = importlib.import_module("matey.schema.plan")
@@ -128,6 +137,39 @@ def test_status_returns_lock_state_for_target(tmp_path: Path) -> None:
 
     assert state.target_name == target.name
     assert len(state.worktree_steps) == 1
+
+
+def test_init_target_writes_zero_state_and_status_is_clean(tmp_path: Path) -> None:
+    target = _target(tmp_path)
+
+    result = init_target(target, engine="sqlite")
+
+    assert isinstance(result, InitResult)
+    assert result.target_name == target.name
+    assert result.engine == "sqlite"
+    assert target.schema.exists()
+    assert target.lockfile.exists()
+    assert target.migrations.exists()
+    assert target.checkpoints.exists()
+
+    state = status(target)
+
+    assert state.is_clean is True
+    assert state.lock is not None
+    assert state.lock.engine == "sqlite"
+    assert state.lock.head_index == 0
+    assert state.lock.steps == ()
+    assert state.worktree_steps == ()
+
+
+def test_init_target_requires_engine_for_fresh_target(tmp_path: Path) -> None:
+    target = _target(tmp_path)
+
+    with pytest.raises(
+        SchemaError,
+        match="requires --engine for a fresh target",
+    ):
+        init_target(target)
 
 
 def test_plan_local_without_lock_uses_full_tail(

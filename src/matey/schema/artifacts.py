@@ -14,6 +14,7 @@ from matey.paths import (
 from matey.scratch import Engine
 from matey.sql import SqlTextDecodeError, decode_sql_text, ensure_newline
 from matey.tx import TxError, commit_artifacts
+from matey.zero import zero_schema_sql
 
 from .plan import SchemaError, StructuralPlan
 from .replay import ReplayOutcome
@@ -52,6 +53,27 @@ def build_desired_artifacts(
         checkpoint_path = target.dir / step.checkpoint_file
         artifacts[checkpoint_path] = ensure_newline(checkpoint_sql).encode("utf-8")
     return artifacts
+
+
+def build_zero_target_artifacts(
+    *,
+    target: TargetConfig,
+    engine: Engine,
+    policy: LockPolicy,
+) -> dict[Path, bytes]:
+    schema_sql = zero_schema_sql(engine=engine)
+    lock_sql = build_lock_toml(
+        policy=policy,
+        target=target,
+        engine=engine,
+        steps=(),
+        checkpoint_texts={},
+        schema_sql=schema_sql,
+    )
+    return {
+        target.schema: ensure_newline(schema_sql).encode("utf-8"),
+        target.lockfile: lock_sql.encode("utf-8"),
+    }
 
 
 def compute_artifact_delta(
@@ -230,6 +252,8 @@ __all__ = [
     "apply_artifact_delta",
     "build_desired_artifacts",
     "build_lock_toml",
+    "build_zero_target_artifacts",
     "collect_checkpoint_texts",
     "compute_artifact_delta",
+    "zero_schema_sql",
 ]

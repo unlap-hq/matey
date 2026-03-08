@@ -7,7 +7,6 @@ from typing import Annotated
 from cyclopts import Parameter
 
 import matey.dbmate as dbmate_api
-from matey.cli.template import write_text_file
 from matey.config import Config, ConfigError, TargetConfig
 from matey.dbmate import CmdResult
 from matey.repo import GitRepo, NotGitRepositoryError
@@ -29,10 +28,10 @@ BaseOpt = Annotated[str | None, Parameter(name="--base", help="Base ref for base
 TestUrlOpt = Annotated[str | None, Parameter(name="--test-url", help="Scratch test base URL override.")]
 CleanOpt = Annotated[bool, Parameter(name="--clean", help="Replay full migration chain from empty.")]
 KeepScratchOpt = Annotated[bool, Parameter(name="--keep-scratch", help="Keep scratch database after command.")]
-PathOpt = Annotated[Path | None, Parameter(name="--path", help="Write output to this path instead of stdout.")]
 OverwriteOpt = Annotated[bool, Parameter(name="--overwrite", help="Allow overwriting existing file when writing.")]
 SqlOpt = Annotated[bool, Parameter(name="--sql", help="Print expected SQL output.")]
 DiffOpt = Annotated[bool, Parameter(name="--diff", help="Print unified diff output.")]
+EngineOpt = Annotated[str | None, Parameter(name="--engine", help="Target engine for zero-state init. Required for fresh targets unless an existing lockfile supplies one.")]
 
 
 def select_targets(
@@ -185,17 +184,6 @@ def render_cmd_blob(
     renderer.stderr_blob(result.stderr)
 
 
-def emit_template(*, content: str, path: Path | None, overwrite: bool, renderer: Renderer) -> None:
-    if path is None:
-        renderer.template_content(content)
-        return
-    try:
-        write_text_file(path, content, overwrite=overwrite)
-    except FileExistsError as error:
-        raise CliUsageError(str(error)) from error
-    renderer.template_written(str(path))
-
-
 def plan_mode(*, sql: bool, diff: bool) -> str:
     if sql and diff:
         raise CliUsageError("Cannot combine --sql and --diff.")
@@ -215,16 +203,15 @@ __all__ = [
     "ConfigOpt",
     "DbmateBinOpt",
     "DiffOpt",
+    "EngineOpt",
     "KeepScratchOpt",
     "OverwriteOpt",
-    "PathOpt",
     "SqlOpt",
     "StepsOpt",
     "TargetOpt",
     "TestUrlOpt",
     "UrlOpt",
     "dbmate_api",
-    "emit_template",
     "find_repo_root",
     "find_repo_root_or_none",
     "handle_dbmate_passthrough",

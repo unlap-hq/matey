@@ -19,6 +19,7 @@ from matey.db import (
 )
 from matey.dbmate import Dbmate
 from matey.schema import apply
+from matey.schema import init_target as init_schema_target
 from matey.scratch import Engine
 
 from .conftest import IntegrationRuntime
@@ -128,6 +129,39 @@ def test_db_bootstrap_loads_head_schema(
 
     plan_result = plan(target, url=live_url, dbmate_bin=runtime.dbmate_bin)
     assert plan_result.matches is True
+
+
+def test_db_down_to_zero_verifies_zero_baseline(
+    runtime: IntegrationRuntime,
+    target: TargetConfig,
+    live_url: str,
+) -> None:
+    _ = init_schema_target(target, engine=runtime.engine.value)
+    _write(
+        target.migrations / "001_init.sql",
+        migration_sql(engine=runtime.engine, table="it_db_zero"),
+    )
+    _bootstrap_target_artifacts(runtime, target)
+
+    up_result = up(target, url=live_url, dbmate_bin=runtime.dbmate_bin)
+    assert up_result.after_index == 1
+
+    down_result = down(target, steps=1, url=live_url, dbmate_bin=runtime.dbmate_bin)
+    assert down_result.before_index == 1
+    assert down_result.after_index == 0
+
+    status_result = status_raw(target, url=live_url, dbmate_bin=runtime.dbmate_bin)
+    assert status_result.exit_code == 0
+    assert "Applied: 0" in status_result.stdout
+
+    drift_result = drift(target, url=live_url, dbmate_bin=runtime.dbmate_bin)
+    assert drift_result.applied_index == 0
+    assert drift_result.drifted is False
+
+    plan_result = plan(target, url=live_url, dbmate_bin=runtime.dbmate_bin)
+    assert plan_result.applied_index == 0
+    assert plan_result.target_index == 1
+    assert plan_result.matches is False
 
 
 def test_db_migrate_requires_existing_database(

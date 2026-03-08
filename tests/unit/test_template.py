@@ -24,8 +24,10 @@ def test_render_config_template_default() -> None:
 def test_render_config_template_targets() -> None:
     rendered = render_config_template(("core", "analytics-v2"))
     assert "[core]" in rendered
+    assert 'dir = "core"' not in rendered
     assert 'url_env = "CORE_DATABASE_URL"' in rendered
     assert "[analytics-v2]" in rendered
+    assert 'dir = "analytics-v2"' not in rendered
     assert 'url_env = "ANALYTICS_V2_DATABASE_URL"' in rendered
 
 

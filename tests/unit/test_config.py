@@ -24,8 +24,8 @@ test_url_env = "MATEY_TEST_URL"
 
     config = Config.load(tmp_path)
     targets = config.targets
-    assert tuple(targets.keys()) == ("default",)
-    default = targets["default"]
+    assert tuple(targets.keys()) == ()
+    default = config.default_target
     assert default.dir == (tmp_path / "db").resolve()
     assert default.url_env == "MATEY_URL"
     assert default.test_url_env == "MATEY_TEST_URL"
@@ -71,7 +71,7 @@ test_url_env = "FILE_TEST_URL"
     )
 
     config = Config.load(tmp_path)
-    default = config.targets["default"]
+    default = config.default_target
     assert default.dir == (tmp_path / "db_file").resolve()
     assert default.url_env == "FILE_URL"
     assert default.test_url_env == "FILE_TEST_URL"
@@ -161,6 +161,25 @@ test_url_env = "AN_TEST_URL"
         Config.load(tmp_path)
 
 
+def test_default_and_named_target_dirs_cannot_collide(tmp_path: Path) -> None:
+    _write(
+        tmp_path / "matey.toml",
+        """
+dir = "db/shared"
+url_env = "MATEY_URL"
+test_url_env = "MATEY_TEST_URL"
+
+[core]
+dir = "db/shared"
+url_env = "CORE_URL"
+test_url_env = "CORE_TEST_URL"
+""".strip(),
+    )
+
+    with pytest.raises(ConfigError):
+        Config.load(tmp_path)
+
+
 def test_symlinked_target_dir_is_rejected(tmp_path: Path) -> None:
     real = tmp_path / "realdb"
     real.mkdir()
@@ -198,7 +217,8 @@ test_url_env = "AN_TEST_URL"
 
     config = Config.load(tmp_path)
     assert tuple(target.name for target in config.select(target="core")) == ("core",)
-    assert tuple(target.name for target in config.select(all_targets=True)) == ("analytics", "core")
+    assert tuple(target.name for target in config.select(target="default")) == ("default",)
+    assert tuple(target.name for target in config.select(all_targets=True)) == ("default", "analytics", "core")
 
     with pytest.raises(ConfigError):
         config.select()
