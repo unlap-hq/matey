@@ -21,7 +21,13 @@ def _github_template() -> str:
         "      - run: pixi install\n"
         "      - run: pixi run matey lint --all\n"
         "      - run: pixi run matey schema status --all\n"
-        '      - run: pixi run matey schema plan --all --base "${{ github.base_ref }}"\n'
+        "      - run: |\n"
+        '          pixi run matey schema apply --all --base "${{ github.base_ref }}"\n'
+        '          if [ -n "$(git status --porcelain)" ]; then\n'
+        "            git status --short\n"
+        "            git diff\n"
+        "            exit 1\n"
+        "          fi\n"
     )
 
 
@@ -37,7 +43,13 @@ def _gitlab_template() -> str:
         "    - pixi install\n"
         "    - pixi run matey lint --all\n"
         "    - pixi run matey schema status --all\n"
-        '    - pixi run matey schema plan --all --base "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"\n'
+        "    - |\n"
+        '      pixi run matey schema apply --all --base "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"\n'
+        '      if [ -n "$(git status --porcelain)" ]; then\n'
+        "        git status --short\n"
+        "        git diff\n"
+        "        exit 1\n"
+        "      fi\n"
     )
 
 
@@ -49,7 +61,13 @@ def _buildkite_template() -> str:
         "      - pixi install\n"
         "      - pixi run matey lint --all\n"
         "      - pixi run matey schema status --all\n"
-        '      - pixi run matey schema plan --all --base "$BUILDKITE_PULL_REQUEST_BASE_BRANCH"\n'
+        "      - |\n"
+        '        pixi run matey schema apply --all --base "$BUILDKITE_PULL_REQUEST_BASE_BRANCH"\n'
+        '        if [ -n "$(git status --porcelain)" ]; then\n'
+        "          git status --short\n"
+        "          git diff\n"
+        "          exit 1\n"
+        "        fi\n"
     )
 
 
