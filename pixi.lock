@@ -3731,11 +3731,11 @@ packages:
 - pypi: ./
   name: matey
   version: 0.1.0
-  sha256: 34eae9f87a4d8098eeb3e3eee4c39888cb6938276a76a1a78304c636e9e338cd
+  sha256: a41aec778ec31b7c8f3a1a589ced4363232e1adb9647216e5e10591312896f1e
   requires_dist:
   - boltons>=25.0.0,<26
   - cyclopts>=4.6.0,<5
-  - ibis-framework[postgres,mysql,sqlite,clickhouse,bigquery]>=12.0.0,<13
+  - google-cloud-bigquery>=3.40.1,<4
   - mashumaro[toml]>=3.20,<4
   - plumbum>=1.10.0,<2
   - portalocker>=3.2.0,<4
@@ -3743,6 +3743,7 @@ packages:
   - rich>=14.3.3,<15
   - sqlglot>=29.0.1,<30
   - testcontainers[postgres,mysql,clickhouse]>=4.14.1,<5
+  - ibis-framework[postgres,mysql,sqlite,clickhouse,bigquery]>=12.0.0,<13
   requires_python: '>=3.11,<3.15'
 - pypi: https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl
   name: mdurl
