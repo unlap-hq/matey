@@ -122,12 +122,12 @@ test_url_env = "CORE_TEST_DATABASE_URL"
     monkeypatch.chdir(tmp_path)
     captured: dict[str, object] = {}
 
-    def _fake_prepare_init_target(target, *, engine, overwrite, policy=None):
+    def _fake_prepare_init_target(target, *, engine, force, policy=None):
         del policy
         captured["target"] = target.name
         captured["dir"] = target.dir
         captured["engine"] = engine
-        captured["overwrite"] = overwrite
+        captured["force"] = force
         return cli.init.schema_api.InitPlan(
             target=target,
             engine=Engine.SQLITE,
@@ -153,7 +153,7 @@ test_url_env = "CORE_TEST_DATABASE_URL"
         "target": "default",
         "dir": (tmp_path / "db" / "root").resolve(),
         "engine": "sqlite",
-        "overwrite": False,
+        "force": False,
     }
 
 
@@ -174,11 +174,11 @@ test_url_env = "CORE_TEST_DATABASE_URL"
     monkeypatch.chdir(tmp_path)
     captured: dict[str, object] = {}
 
-    def _fake_prepare_init_target(target, *, engine, overwrite, policy=None):
+    def _fake_prepare_init_target(target, *, engine, force, policy=None):
         del policy
         captured["target"] = target.name
         captured["engine"] = engine
-        captured["overwrite"] = overwrite
+        captured["force"] = force
         return cli.init.schema_api.InitPlan(
             target=target,
             engine=Engine.SQLITE,
@@ -198,12 +198,12 @@ test_url_env = "CORE_TEST_DATABASE_URL"
             changed_files=(),
         ),
     )
-    rc = cli.main(["init", "--target", "core", "--engine", "sqlite", "--overwrite"])
+    rc = cli.main(["init", "--target", "core", "--engine", "sqlite", "--force"])
     assert rc == 0
     assert captured == {
         "target": "core",
         "engine": "sqlite",
-        "overwrite": True,
+        "force": True,
     }
 
 

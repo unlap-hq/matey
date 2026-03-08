@@ -49,12 +49,12 @@ KeepScratchOpt = Annotated[
         help="Keep scratch database after command.",
     ),
 ]
-OverwriteOpt = Annotated[
+ForceOpt = Annotated[
     bool,
     Parameter(
-        name="--overwrite",
+        name="--force",
         negative=(),
-        help="Allow overwriting existing file when writing.",
+        help="Allow init to overwrite existing init-managed artifacts.",
     ),
 ]
 SqlOpt = Annotated[
@@ -246,8 +246,8 @@ __all__ = [
     "DbmateBinOpt",
     "DiffOpt",
     "EngineOpt",
+    "ForceOpt",
     "KeepScratchOpt",
-    "OverwriteOpt",
     "SqlOpt",
     "StepsOpt",
     "TargetOpt",

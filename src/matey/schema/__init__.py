@@ -167,13 +167,13 @@ def init_target(
     target: TargetConfig,
     *,
     engine: str | None = None,
-    overwrite: bool = False,
+    force: bool = False,
     policy: LockPolicy | None = None,
 ) -> InitResult:
     plan = prepare_init_target(
         target,
         engine=engine,
-        overwrite=overwrite,
+        force=force,
         policy=policy,
     )
     return apply_init_target(plan)
@@ -183,7 +183,7 @@ def prepare_init_target(
     target: TargetConfig,
     *,
     engine: str | None = None,
-    overwrite: bool = False,
+    force: bool = False,
     policy: LockPolicy | None = None,
 ) -> InitPlan:
     with serialized_target(target.dir):
@@ -208,11 +208,11 @@ def prepare_init_target(
             for path in (target.schema, target.lockfile, migrations_dir, checkpoints_dir)
             if path.exists()
         )
-        if existing_paths and not overwrite:
+        if existing_paths and not force:
             rendered = ", ".join(str(path) for path in existing_paths)
             raise SchemaError(
                 "init target refused to overwrite existing target artifacts: "
-                f"{rendered}. Pass --overwrite to reset the target."
+                f"{rendered}. Pass --force to reset the target."
             )
 
         migrations_dir.mkdir(parents=True, exist_ok=True)
@@ -225,12 +225,12 @@ def prepare_init_target(
         )
         migration_deletes = (
             tuple(sorted(migrations_dir.rglob("*.sql"), key=lambda path: path.as_posix()))
-            if overwrite and migrations_dir.exists()
+            if force and migrations_dir.exists()
             else ()
         )
         checkpoint_deletes = (
             tuple(sorted(checkpoints_dir.rglob("*.sql"), key=lambda path: path.as_posix()))
-            if overwrite and checkpoints_dir.exists()
+            if force and checkpoints_dir.exists()
             else ()
         )
         writes, checkpoint_delta = artifacts.compute_artifact_delta(

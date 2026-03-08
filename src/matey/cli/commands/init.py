@@ -16,7 +16,7 @@ from matey.cli.template import (
 from matey.config import Config, ConfigError
 
 from ..render import Renderer
-from .common import CliUsageError, ConfigOpt, EngineOpt, OverwriteOpt, find_repo_root_or_none
+from .common import CliUsageError, ConfigOpt, EngineOpt, ForceOpt, find_repo_root_or_none
 
 DirOpt = Annotated[str | None, Parameter(name="--dir", help="Target directory relative to the config root.")]
 UrlEnvInitOpt = Annotated[str | None, Parameter(name="--url-env", help="Live database URL environment variable.")]
@@ -50,7 +50,7 @@ def register_init_command(*, root_app: App, renderer: Renderer) -> None:
         test_url_env: TestUrlEnvInitOpt = None,
         ci: CiOpt = None,
         config_only: ConfigOnlyOpt = False,
-        overwrite: OverwriteOpt = False,
+        force: ForceOpt = False,
     ) -> None:
         """Initialize matey config, zero-state target artifacts, and optional CI."""
         repo_root, config_path = resolve_init_paths(config)
@@ -76,7 +76,7 @@ def register_init_command(*, root_app: App, renderer: Renderer) -> None:
             init_plan = schema_api.prepare_init_target(
                 selected_target,
                 engine=engine,
-                overwrite=overwrite,
+                force=force,
             )
 
         if existing_text is None or existing_text != rendered:
@@ -85,7 +85,7 @@ def register_init_command(*, root_app: App, renderer: Renderer) -> None:
 
         if ci is not None:
             ci_path = repo_root / default_ci_template_path(ci)
-            write_text_file(ci_path, render_ci_template(ci), overwrite=overwrite)
+            write_text_file(ci_path, render_ci_template(ci), overwrite=force)
             renderer.template_written(str(ci_path))
 
         if init_plan is not None:
