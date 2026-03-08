@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import Literal
 
 from matey.dbmate import CmdResult, Dbmate
 from matey.paths import PathBoundaryError, describe_path_boundary_error, safe_descendant
@@ -13,8 +12,6 @@ from matey.sql import SqlError, SqlProgram, ensure_newline, unified_sql_diff
 
 from . import runtime
 from .runtime import DbError
-
-T = TypeVar("T")
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,10 +92,11 @@ def bootstrap(
 
         before = read_bootstrap_status(rt)
         if runtime.is_bigquery_family(runtime.engine_from_url(rt.conn.url)):
-            runtime.require_success(
-                rt.conn.create(),
-                context="db bootstrap create-if-needed",
-            )
+            create_result = rt.conn.create()
+            if create_result.exit_code != 0:
+                raise runtime.DbError(
+                    runtime.format_command_error("db bootstrap create-if-needed", create_result)
+                )
         try:
             statements = SqlProgram(expected_sql, engine=runtime.engine_from_url(rt.conn.url)).anchor_statements(
                 target_url=rt.conn.url
@@ -106,10 +104,11 @@ def bootstrap(
         except SqlError as error:
             raise runtime.DbError(f"db bootstrap load failed: SQL analysis failed: {error}") from error
         for index, statement in enumerate(statements, start=1):
-            runtime.require_success(
-                rt.conn.load(ensure_newline(f"{statement};")),
-                context=f"db bootstrap load statement {index}",
-            )
+            load_result = rt.conn.load(ensure_newline(f"{statement};"))
+            if load_result.exit_code != 0:
+                raise runtime.DbError(
+                    runtime.format_command_error(f"db bootstrap load statement {index}", load_result)
+                )
         after = runtime.inspect_live(rt, context="db bootstrap post-status")
         runtime.ensure_live_not_ahead(
             state=rt.state,
@@ -186,7 +185,9 @@ def down(
             steps=steps,
             context="db down precheck",
         )
-        runtime.require_success(rt.conn.rollback(steps), context=f"db down ({steps})")
+        rollback_result = rt.conn.rollback(steps)
+        if rollback_result.exit_code != 0:
+            raise runtime.DbError(runtime.format_command_error(f"db down ({steps})", rollback_result))
         after = runtime.inspect_live(rt, context="db down post-status")
         runtime.ensure_live_not_ahead(
             state=rt.state,
@@ -291,7 +292,9 @@ def execute_head_mutation(
             command=command,
             create_if_missing=create_if_missing,
         )
-        runtime.require_success(getattr(rt.conn, command)(), context=f"db {command}")
+        command_result = getattr(rt.conn, command)()
+        if command_result.exit_code != 0:
+            raise runtime.DbError(runtime.format_command_error(f"db {command}", command_result))
         after = runtime.inspect_live(rt, context=f"db {command} post-status")
         runtime.ensure_live_not_ahead(
             state=rt.state,
@@ -330,11 +333,17 @@ def read_head_mutation_status(
             context=f"db {command} precheck",
         )
         validated_pending_up = True
-        runtime.require_success(rt.conn.create(), context=f"db {command} create-if-needed")
-        _, before = runtime.read_status_checked(
-            rt.conn,
-            context=f"db {command} pre-status after create",
-        )
+        create_result = rt.conn.create()
+        if create_result.exit_code != 0:
+            raise runtime.DbError(
+                runtime.format_command_error(f"db {command} create-if-needed", create_result)
+            ) from error
+        try:
+            _, before = runtime.read_status(rt.conn)
+        except runtime.StatusError as error:
+            raise runtime.DbError(
+                runtime.format_command_error(f"db {command} pre-status after create", error.result)
+            ) from error
 
     runtime.ensure_prefix(state=rt.state, live=before)
     runtime.ensure_live_not_ahead(
@@ -372,7 +381,11 @@ def read_bootstrap_status(rt: runtime.RuntimeContext) -> runtime.LiveStatus:
             raise runtime.DbError(
                 runtime.format_command_error("db bootstrap pre-status", error.result)
             ) from error
-        runtime.require_success(rt.conn.create(), context="db bootstrap create-if-needed")
+        create_result = rt.conn.create()
+        if create_result.exit_code != 0:
+            raise runtime.DbError(
+                runtime.format_command_error("db bootstrap create-if-needed", create_result)
+            ) from error
         return runtime.LiveStatus(applied_files=(), applied_count=0)
 
     runtime.ensure_prefix(state=rt.state, live=before)
@@ -384,37 +397,6 @@ def read_bootstrap_status(rt: runtime.RuntimeContext) -> runtime.LiveStatus:
     if before.applied_count != 0:
         raise runtime.DbError("db bootstrap requires an empty or unapplied database.")
     return before
-
-
-@contextmanager
-def open_plan_runtime(
-    *,
-    target: TargetConfig,
-    url: str | None,
-    dbmate_bin: Path | None,
-    context: str,
-) -> Iterator[tuple[runtime.RuntimeContext, runtime.LiveStatus, int]]:
-    with runtime.open_runtime(target=target, url=url, dbmate_bin=dbmate_bin) as rt:
-        live = runtime.inspect_live(rt, context=f"{context} status")
-        target_index = len(rt.state.worktree_steps)
-        yield rt, live, target_index
-
-
-def _with_plan_runtime(
-    *,
-    target: TargetConfig,
-    url: str | None,
-    dbmate_bin: Path | None,
-    context: str,
-    action: Callable[[runtime.RuntimeContext, runtime.LiveStatus, int], T],
-) -> T:
-    with open_plan_runtime(
-        target=target,
-        url=url,
-        dbmate_bin=dbmate_bin,
-        context=context,
-    ) as (rt, live, target_index):
-        return action(rt, live, target_index)
 
 
 def _run_plan_mode(
@@ -429,23 +411,18 @@ def _run_plan_mode(
         "sql": "db plan sql",
         "diff": "db plan diff",
     }
-    return _with_plan_runtime(
-        target=target,
-        url=url,
-        dbmate_bin=dbmate_bin,
-        context=contexts[mode],
-        action=lambda rt, live, target_index: (
-            runtime.expected_sql_for_index(runtime=rt, index=target_index) or ""
-            if mode == "sql"
-            else _plan_result_for_mode(
-                target=target,
-                mode=mode,
-                rt=rt,
-                live=live,
-                target_index=target_index,
-            )
-        ),
-    )
+    with runtime.open_runtime(target=target, url=url, dbmate_bin=dbmate_bin) as rt:
+        live = runtime.inspect_live(rt, context=f"{contexts[mode]} status")
+        target_index = len(rt.state.worktree_steps)
+        if mode == "sql":
+            return runtime.expected_sql_for_index(runtime=rt, index=target_index) or ""
+        return _plan_result_for_mode(
+            target=target,
+            mode=mode,
+            rt=rt,
+            live=live,
+            target_index=target_index,
+        )
 
 
 def _plan_result_for_mode(

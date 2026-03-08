@@ -19,7 +19,6 @@ from . import plan as planning
 from .codegen import CodegenResult, generate_sqlalchemy_models
 from .plan import SchemaError
 
-T = TypeVar("T")
 U = TypeVar("U")
 
 
@@ -146,31 +145,32 @@ def apply(
     dbmate_bin: Path | None = None,
     policy: LockPolicy | None = None,
 ) -> ApplyResult:
-    return _with_replay_plan(
-        target=target,
-        context="apply",
-        base_ref=base_ref,
-        clean=clean,
-        test_base_url=test_base_url,
-        keep_scratch=keep_scratch,
-        dbmate_bin=dbmate_bin,
-        policy=policy,
-        after_replay=(
-            (lambda structural, _conn, replay_scratch_url: generate_sqlalchemy_models(
-                target=target,
-                engine=structural.engine,
-                url=replay_scratch_url,
-            ))
-            if target.codegen is not None and target.codegen.enabled
-            else None
-        ),
-        action=lambda structural, replay_outcome, codegen_output: _apply_result(
+    with serialized_target(target.root):
+        structural, replay_outcome, codegen_output = execute_replay_plan(
+            target=target,
+            context="apply",
+            base_ref=base_ref,
+            clean=clean,
+            test_base_url=test_base_url,
+            keep_scratch=keep_scratch,
+            dbmate_bin=dbmate_bin,
+            policy=policy,
+            after_replay=(
+                (lambda structural, _conn, replay_scratch_url: generate_sqlalchemy_models(
+                    target=target,
+                    engine=structural.engine,
+                    url=replay_scratch_url,
+                ))
+                if target.codegen is not None and target.codegen.enabled
+                else None
+            ),
+        )
+        return _apply_result(
             target=target,
             structural=structural,
             replay_outcome=replay_outcome,
             codegen_output=codegen_output,
-        ),
-    )
+        )
 
 
 def init_target(
@@ -334,34 +334,6 @@ def _apply_result(
     )
 
 
-def _with_replay_plan(
-    *,
-    target: TargetConfig,
-    context: str,
-    base_ref: str | None,
-    clean: bool,
-    test_base_url: str | None,
-    keep_scratch: bool,
-    dbmate_bin: Path | None,
-    policy: LockPolicy | None,
-    after_replay: Callable[[planning.StructuralPlan, replay.DbConnection, str], U | None] | None = None,
-    action: Callable[[planning.StructuralPlan, replay.ReplayOutcome, U | None], T],
-) -> T:
-    with serialized_target(target.root):
-        structural, replay_outcome, replay_extra = execute_replay_plan(
-            target=target,
-            context=context,
-            base_ref=base_ref,
-            clean=clean,
-            test_base_url=test_base_url,
-            keep_scratch=keep_scratch,
-            dbmate_bin=dbmate_bin,
-            policy=policy,
-            after_replay=after_replay,
-        )
-        return action(structural, replay_outcome, replay_extra)
-
-
 def _run_plan_mode(
     *,
     target: TargetConfig,
@@ -378,26 +350,25 @@ def _run_plan_mode(
         "sql": "plan sql",
         "diff": "plan diff",
     }
-    return _with_replay_plan(
-        target=target,
-        context=contexts[mode],
-        base_ref=base_ref,
-        clean=clean,
-        test_base_url=test_base_url,
-        keep_scratch=keep_scratch,
-        dbmate_bin=dbmate_bin,
-        policy=policy,
-        action=lambda structural, replay_outcome, _replay_extra: (
-            replay_outcome.replay_schema_sql
-            if mode == "sql"
-            else _plan_result_for_mode(
-                target=target,
-                mode=mode,
-                structural=structural,
-                replay_outcome=replay_outcome,
-            )
-        ),
-    )
+    with serialized_target(target.root):
+        structural, replay_outcome, _replay_extra = execute_replay_plan(
+            target=target,
+            context=contexts[mode],
+            base_ref=base_ref,
+            clean=clean,
+            test_base_url=test_base_url,
+            keep_scratch=keep_scratch,
+            dbmate_bin=dbmate_bin,
+            policy=policy,
+        )
+        if mode == "sql":
+            return replay_outcome.replay_schema_sql
+        return _plan_result_for_mode(
+            target=target,
+            mode=mode,
+            structural=structural,
+            replay_outcome=replay_outcome,
+        )
 
 
 def _plan_result_for_mode(

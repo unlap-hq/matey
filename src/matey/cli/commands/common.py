@@ -74,15 +74,6 @@ DiffOpt = Annotated[
 EngineOpt = Annotated[str | None, Parameter(name="--engine", help="Target engine for zero-state init. Required for fresh targets unless an existing lockfile supplies one.")]
 
 
-def require_cmd_success(result: CmdResult, *, context: str) -> None:
-    if result.exit_code == 0:
-        return
-    raise CliUsageError(
-        f"{context} failed (exit_code={result.exit_code}): "
-        f"argv={' '.join(result.argv)}; stderr={result.stderr.strip()!r}; stdout={result.stdout.strip()!r}"
-    )
-
-
 def _parse_dbmate_passthrough_args(args: tuple[str, ...]) -> tuple[Path | None, tuple[str, ...]] | None:
     if not args or args[0] != "dbmate":
         return None
@@ -174,7 +165,11 @@ def render_cmd_blob(
     result: CmdResult,
     context: str,
 ) -> None:
-    require_cmd_success(result, context=context)
+    if result.exit_code != 0:
+        raise CliUsageError(
+            f"{context} failed (exit_code={result.exit_code}): "
+            f"argv={' '.join(result.argv)}; stderr={result.stderr.strip()!r}; stdout={result.stdout.strip()!r}"
+        )
     renderer.stdout_blob(result.stdout)
     renderer.stderr_blob(result.stderr)
 
@@ -210,6 +205,5 @@ __all__ = [
     "handle_dbmate_passthrough",
     "plan_mode",
     "render_cmd_blob",
-    "require_cmd_success",
     "run_targets",
 ]

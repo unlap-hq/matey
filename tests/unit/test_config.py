@@ -29,7 +29,7 @@ def test_load_workspace_from_dedicated_file(tmp_path: Path) -> None:
         config_kind="workspace",
     )
 
-    assert workspace.source_kind == "workspace"
+    assert workspace.config_kind == "workspace"
     assert tuple(workspace.targets) == ("db/core",)
 
 
@@ -45,7 +45,7 @@ def test_load_workspace_falls_back_to_pyproject(tmp_path: Path) -> None:
         config_kind="pyproject",
     )
 
-    assert workspace.source_kind == "pyproject"
+    assert workspace.config_kind == "pyproject"
     assert tuple(workspace.targets) == ("db/core",)
 
 

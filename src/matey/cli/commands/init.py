@@ -74,13 +74,16 @@ def register_init_command(*, root_app: App, renderer: Renderer) -> None:
             expected_kind="dir",
         )
         current_target = TargetConfig.load(path=target_root, workspace_root=workspace_obj.root) if target_root.joinpath("config.toml").exists() else None
-        resolved_engine, resolved_url_env, resolved_test_url_env = _target_values(
-            path_value=path_value,
-            current=current_target,
-            engine=engine,
-            url_env=url_env,
-            test_url_env=test_url_env,
+        default_url_env, default_test_url_env = default_target_config_values(path_value)
+        resolved_engine = engine or (current_target.engine if current_target is not None else None)
+        resolved_url_env = url_env or (
+            current_target.url_env if current_target is not None else default_url_env
         )
+        resolved_test_url_env = test_url_env or (
+            current_target.test_url_env if current_target is not None else default_test_url_env
+        )
+        if resolved_engine is None:
+            raise ConfigError("--engine is required when creating a new target config.")
         target = TargetConfig(
             name=path_value,
             root=target_root,
@@ -134,21 +137,3 @@ def register_init_command(*, root_app: App, renderer: Renderer) -> None:
         renderer.init_target(schema_api.apply_init_target(init_plan))
 
 __all__ = ["register_init_command", "schema_api"]
-
-def _target_values(
-    *,
-    path_value: str,
-    current: TargetConfig | None,
-    engine: str | None,
-    url_env: str | None,
-    test_url_env: str | None,
-) -> tuple[str, str, str]:
-    default_url_env, default_test_url_env = default_target_config_values(path_value)
-    resolved_engine = engine or (current.engine if current is not None else None)
-    resolved_url_env = url_env or (current.url_env if current is not None else default_url_env)
-    resolved_test_url_env = test_url_env or (
-        current.test_url_env if current is not None else default_test_url_env
-    )
-    if resolved_engine is None:
-        raise ConfigError("--engine is required when creating a new target config.")
-    return resolved_engine, resolved_url_env, resolved_test_url_env

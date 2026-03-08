@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from matey.dbmate import CmdResult, DbConnection, Dbmate, DbmateError
-from matey.lockfile import LockState, WorktreeStep, build_lock_state
+from matey.lockfile import LockState, build_lock_state
 from matey.project import TargetConfig
 from matey.repo import Snapshot
 from matey.scratch import engine_from_url as scratch_engine_from_url
@@ -80,7 +80,7 @@ def open_runtime(
     dbmate_bin: Path | None,
 ) -> Iterator[RuntimeContext]:
     with serialized_target(target.root):
-        recover_target(target)
+        recover_artifacts(target.root)
         snapshot = Snapshot.from_worktree(target)
         state = build_lock_state(snapshot)
         if not state.is_clean:
@@ -89,10 +89,6 @@ def open_runtime(
         dbmate = Dbmate(migrations_dir=target.migrations, dbmate_bin=dbmate_bin)
         conn = dbmate.database(live_url)
         yield RuntimeContext(target=target, snapshot=snapshot, state=state, conn=conn)
-
-
-def recover_target(target: TargetConfig) -> None:
-    recover_artifacts(target.root)
 
 
 def resolve_live_url(*, target: TargetConfig, url: str | None) -> str:
@@ -115,15 +111,11 @@ def read_status(conn: DbConnection) -> tuple[CmdResult, LiveStatus]:
     return result, parse_status(result.stdout)
 
 
-def read_status_checked(conn: DbConnection, *, context: str) -> tuple[CmdResult, LiveStatus]:
+def inspect_live(runtime: RuntimeContext, *, context: str) -> LiveStatus:
     try:
-        return read_status(conn)
+        _, live = read_status(runtime.conn)
     except StatusError as error:
         raise DbError(format_command_error(context, error.result)) from error
-
-
-def inspect_live(runtime: RuntimeContext, *, context: str) -> LiveStatus:
-    _, live = read_status_checked(runtime.conn, context=context)
     ensure_prefix(state=runtime.state, live=live)
     return live
 
@@ -235,16 +227,24 @@ def ensure_pending_up_allowed(
     applied_count: int,
     context: str,
 ) -> None:
-    engine = migration_guard_engine(runtime.conn.url)
+    scheme = engine_from_url(runtime.conn.url)
+    engine = scheme if is_bigquery_family(scheme) or scheme in {"mysql", "clickhouse"} else None
     if engine is None:
         return
-    ensure_migration_range_allowed(
-        runtime=runtime,
-        steps=runtime.state.worktree_steps[applied_count:],
+    message = first_migration_violation_message(
+        entries=(
+            (
+                step.migration_file,
+                migration_payload(runtime=runtime, migration_file=step.migration_file),
+            )
+            for step in runtime.state.worktree_steps[applied_count:]
+        ),
         engine=engine,
         section="up",
         context=context,
     )
+    if message is not None:
+        raise DbError(message)
 
 
 def ensure_rollback_allowed(
@@ -254,46 +254,25 @@ def ensure_rollback_allowed(
     steps: int,
     context: str,
 ) -> None:
-    engine = migration_guard_engine(runtime.conn.url)
+    scheme = engine_from_url(runtime.conn.url)
+    engine = scheme if is_bigquery_family(scheme) or scheme in {"mysql", "clickhouse"} else None
     if engine is None or applied_count <= 0:
         return
     start = max(applied_count - steps, 0)
-    ensure_migration_range_allowed(
-        runtime=runtime,
-        steps=runtime.state.worktree_steps[start:applied_count],
-        engine=engine,
-        section="down",
-        context=context,
-    )
-
-
-def ensure_migration_range_allowed(
-    *,
-    runtime: RuntimeContext,
-    steps: tuple[WorktreeStep, ...],
-    engine: str,
-    section: str,
-    context: str,
-) -> None:
     message = first_migration_violation_message(
         entries=(
             (
                 step.migration_file,
                 migration_payload(runtime=runtime, migration_file=step.migration_file),
             )
-            for step in steps
+            for step in runtime.state.worktree_steps[start:applied_count]
         ),
         engine=engine,
-        section=section,
+        section="down",
         context=context,
     )
     if message is not None:
         raise DbError(message)
-
-
-def migration_guard_engine(url: str) -> str | None:
-    scheme = engine_from_url(url)
-    return scheme if is_bigquery_family(scheme) or scheme in {"mysql", "clickhouse"} else None
 
 
 def migration_payload(*, runtime: RuntimeContext, migration_file: str) -> bytes:
@@ -369,14 +348,9 @@ def dump_live_schema(conn: DbConnection, *, context: str) -> str:
         dump_result = conn.dump()
     except DbmateError as error:
         raise DbError(f"{context} failed: {error}") from error
-    require_success(dump_result, context=context)
+    if dump_result.exit_code != 0:
+        raise DbError(format_command_error(context, dump_result))
     return dump_result.stdout
-
-
-def require_success(result: CmdResult, *, context: str) -> None:
-    if result.exit_code == 0:
-        return
-    raise DbError(format_command_error(context, result))
 
 
 def format_command_error(context: str, result: CmdResult) -> str:
@@ -413,14 +387,10 @@ __all__ = [
     "is_missing_db_status_error",
     "live_relation",
     "live_status_path_mode",
-    "migration_guard_engine",
     "migration_payload",
     "open_runtime",
     "parse_status",
     "read_status",
-    "read_status_checked",
-    "recover_target",
-    "require_success",
     "resolve_live_url",
     "verify_expected_schema",
 ]

@@ -94,7 +94,12 @@ class ConfigEditor:
     def render_workspace(self, *, target_paths: tuple[str, ...]) -> str:
         doc = tomlkit.document()
         section = self._workspace_section(doc, create=True)
-        section["targets"] = sorted(_normalized_target_paths(target_paths))
+        section["targets"] = tuple(
+            sorted(
+                normalize_target_path_ref(path, label="target path")
+                for path in target_paths
+            )
+        )
         return tomlkit.dumps(doc)
 
     def update_workspace(self, *, existing_text: str, target_path: str | None) -> str:
@@ -102,7 +107,11 @@ class ConfigEditor:
         section = self._workspace_section(parsed, create=True)
         targets = section.get("targets")
         values = [str(item) for item in targets] if isinstance(targets, list) else []
-        normalized = _normalize_target_path(target_path) if target_path is not None else None
+        normalized = (
+            normalize_target_path_ref(target_path, label="target path")
+            if target_path is not None
+            else None
+        )
         if normalized is not None and normalized not in values:
             values.append(normalized)
         section["targets"] = sorted(values)
@@ -258,19 +267,8 @@ class Workspace:
             return candidate, "workspace"
         return None
 
-    @property
-    def source_path(self) -> Path | None:
-        return None if self.config_kind == "none" else self.config_path
-
-    @property
-    def source_kind(self) -> Literal["workspace", "pyproject", "none"]:
-        return self.config_kind
-
-    def editor(self) -> ConfigEditor:
-        return ConfigEditor("pyproject" if self.config_kind == "pyproject" else "workspace")
-
     def render_updated(self, *, target_path: str | None, existing_text: str | None = None) -> str:
-        editor = self.editor()
+        editor = ConfigEditor("pyproject" if self.config_kind == "pyproject" else "workspace")
         if existing_text is None:
             existing_text = self.config_path.read_text(encoding="utf-8") if self.config_path.exists() else None
         if existing_text is None:
@@ -502,16 +500,6 @@ def _set_codegen(doc: Table, codegen: CodegenConfig | None) -> None:
             del table["options"]
     else:
         table["options"] = codegen.options
-
-
-def _normalize_target_path(path: str | None) -> str | None:
-    if path is None:
-        return None
-    return normalize_target_path_ref(path, label="target path")
-
-
-def _normalized_target_paths(target_paths: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(sorted(filter(None, (_normalize_target_path(path) for path in target_paths))))
 
 
 __all__ = [

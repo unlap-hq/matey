@@ -9,12 +9,13 @@ from pathlib import Path
 from typing import TypeVar
 from urllib.parse import urlsplit
 
-from matey.dbmate import CmdResult, DbConnection, Dbmate, DbmateError
+from matey.dbmate import DbConnection, Dbmate, DbmateError
 from matey.lockfile import WorktreeStep
 from matey.scratch import Engine, ScratchLease
 from matey.sql import (
     SqlError,
     SqlProgram,
+    decode_sql_text,
     ensure_newline,
     first_migration_violation_message,
 )
@@ -54,10 +55,12 @@ def run_replay_checks(
             context="replay",
         ) as (replay_conn, replay_scratch_url):
             if structural.tail_steps:
-                require_ok(
-                    replay_conn.migrate(),
-                    context="replay tail migrations",
-                )
+                migrate_result = replay_conn.migrate()
+                if migrate_result.exit_code != 0:
+                    raise SchemaError(
+                        f"replay tail migrations failed (exit_code={migrate_result.exit_code}): "
+                        f"argv={' '.join(migrate_result.argv)}; stderr={migrate_result.stderr.strip()!r}; stdout={migrate_result.stdout.strip()!r}"
+                    )
             replay_schema_sql = dump_schema(replay_conn, context="replay")
             if after_replay is not None:
                 replay_extra = after_replay(replay_conn, replay_scratch_url)
@@ -114,7 +117,10 @@ def run_down_roundtrip(
                 write_tail_migration(migrations_dir, structural, step)
                 try:
                     program = SqlProgram(
-                        migration_sql_text(structural, step),
+                        decode_sql_text(
+                            migration_payload(structural, step),
+                            label=f"migration {step.migration_file}",
+                        ),
                         engine=structural.engine.value,
                     )
                     has_down = program.has_executable_down()
@@ -129,10 +135,12 @@ def run_down_roundtrip(
                         step_conn, context=f"down baseline {step.migration_file}"
                     )
 
-                require_ok(
-                    step_conn.migrate(),
-                    context=f"down-roundtrip migrate {step.migration_file}",
-                )
+                migrate_result = step_conn.migrate()
+                if migrate_result.exit_code != 0:
+                    raise SchemaError(
+                        f"down-roundtrip migrate {step.migration_file} failed (exit_code={migrate_result.exit_code}): "
+                        f"argv={' '.join(migrate_result.argv)}; stderr={migrate_result.stderr.strip()!r}; stdout={migrate_result.stdout.strip()!r}"
+                    )
                 checkpoint_sql_by_file[step.checkpoint_file] = dump_schema(
                     step_conn,
                     context=f"checkpoint capture {step.migration_file}",
@@ -142,10 +150,12 @@ def run_down_roundtrip(
                     down_skipped.append(step.migration_file)
                     continue
 
-                require_ok(
-                    step_conn.rollback(1),
-                    context=f"down-roundtrip rollback {step.migration_file}",
-                )
+                rollback_result = step_conn.rollback(1)
+                if rollback_result.exit_code != 0:
+                    raise SchemaError(
+                        f"down-roundtrip rollback {step.migration_file} failed (exit_code={rollback_result.exit_code}): "
+                        f"argv={' '.join(rollback_result.argv)}; stderr={rollback_result.stderr.strip()!r}; stdout={rollback_result.stdout.strip()!r}"
+                    )
                 after_rollback = dump_schema(
                     step_conn,
                     context=f"down rollback dump {step.migration_file}",
@@ -172,10 +182,12 @@ def run_down_roundtrip(
                         f"Down roundtrip mismatch for {step.migration_file}: rollback state differs from baseline."
                     )
 
-                require_ok(
-                    step_conn.migrate(),
-                    context=f"down-roundtrip reapply {step.migration_file}",
-                )
+                reapply_result = step_conn.migrate()
+                if reapply_result.exit_code != 0:
+                    raise SchemaError(
+                        f"down-roundtrip reapply {step.migration_file} failed (exit_code={reapply_result.exit_code}): "
+                        f"argv={' '.join(reapply_result.argv)}; stderr={reapply_result.stderr.strip()!r}; stdout={reapply_result.stdout.strip()!r}"
+                    )
                 down_checked.append(step.migration_file)
 
     return checkpoint_sql_by_file, tuple(down_checked), tuple(down_skipped), down_scratch_url
@@ -238,8 +250,18 @@ def bootstrap_scratch(
     context: str,
 ) -> None:
     if engine in {Engine.POSTGRES, Engine.MYSQL, Engine.CLICKHOUSE}:
-        require_ok(conn.wait(60), context=f"{context} wait")
-    require_ok(conn.create(), context=f"{context} create")
+        wait_result = conn.wait(60)
+        if wait_result.exit_code != 0:
+            raise SchemaError(
+                f"{context} wait failed (exit_code={wait_result.exit_code}): "
+                f"argv={' '.join(wait_result.argv)}; stderr={wait_result.stderr.strip()!r}; stdout={wait_result.stdout.strip()!r}"
+            )
+    create_result = conn.create()
+    if create_result.exit_code != 0:
+        raise SchemaError(
+            f"{context} create failed (exit_code={create_result.exit_code}): "
+            f"argv={' '.join(create_result.argv)}; stderr={create_result.stderr.strip()!r}; stdout={create_result.stdout.strip()!r}"
+        )
     if anchor_sql is not None:
         program = SqlProgram(anchor_sql, engine=engine.value)
         try:
@@ -247,10 +269,12 @@ def bootstrap_scratch(
         except SqlError as error:
             raise SchemaError(f"{context} load anchor failed: {error}") from error
         for index, statement in enumerate(statements, start=1):
-            require_ok(
-                conn.load(ensure_newline(f"{statement};")),
-                context=f"{context} load anchor statement {index}",
-            )
+            load_result = conn.load(ensure_newline(f"{statement};"))
+            if load_result.exit_code != 0:
+                raise SchemaError(
+                    f"{context} load anchor statement {index} failed (exit_code={load_result.exit_code}): "
+                    f"argv={' '.join(load_result.argv)}; stderr={load_result.stderr.strip()!r}; stdout={load_result.stdout.strip()!r}"
+                )
 
 
 def explicit_scratch_cleanup(
@@ -269,7 +293,12 @@ def explicit_scratch_cleanup(
             if sqlite_path is not None:
                 sqlite_path.unlink(missing_ok=True)
             return
-        require_ok(conn.drop(), context="scratch cleanup drop")
+        drop_result = conn.drop()
+        if drop_result.exit_code != 0:
+            raise SchemaError(
+                f"scratch cleanup drop failed (exit_code={drop_result.exit_code}): "
+                f"argv={' '.join(drop_result.argv)}; stderr={drop_result.stderr.strip()!r}; stdout={drop_result.stdout.strip()!r}"
+            )
 
     return _cleanup
 
@@ -318,29 +347,17 @@ def migration_payload(structural: StructuralPlan, step: WorktreeStep) -> bytes:
     return payload
 
 
-def migration_sql_text(structural: StructuralPlan, step: WorktreeStep) -> str:
-    try:
-        return migration_payload(structural, step).decode("utf-8")
-    except UnicodeDecodeError as error:
-        raise SchemaError(f"Unable to decode migration {step.migration_file} as UTF-8.") from error
-
-
 def dump_schema(conn: DbConnection, *, context: str) -> str:
     try:
         result = conn.dump()
     except DbmateError as error:
         raise SchemaError(f"{context} dump failed: {error}") from error
-    require_ok(result, context=f"{context} dump")
+    if result.exit_code != 0:
+        raise SchemaError(
+            f"{context} dump failed (exit_code={result.exit_code}): "
+            f"argv={' '.join(result.argv)}; stderr={result.stderr.strip()!r}; stdout={result.stdout.strip()!r}"
+        )
     return ensure_newline(result.stdout)
-
-
-def require_ok(result: CmdResult, *, context: str) -> None:
-    if result.exit_code == 0:
-        return
-    raise SchemaError(
-        f"{context} failed (exit_code={result.exit_code}): "
-        f"argv={' '.join(result.argv)}; stderr={result.stderr.strip()!r}; stdout={result.stdout.strip()!r}"
-    )
 
 
 def validate_tail_migration_targets(structural: StructuralPlan) -> None:
@@ -365,8 +382,6 @@ __all__ = [
     "dump_schema",
     "lease_bootstrapped_connection",
     "migration_payload",
-    "migration_sql_text",
-    "require_ok",
     "run_down_roundtrip",
     "run_replay_checks",
     "validate_tail_migration_targets",
