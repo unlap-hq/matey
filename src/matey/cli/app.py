@@ -12,7 +12,7 @@ from matey.repo import GitRepoError, SnapshotError
 from matey.scratch import ScratchError
 from matey.tx import TxError
 
-from .commands import common, db, init, schema
+from .commands import common, db, init, lint, schema
 from .render import Renderer
 
 
@@ -37,7 +37,7 @@ db_app = App(
     help_flags=["--help"],
     print_error=False,
     exit_on_error=False,
-    sort_key=10,
+    sort_key=40,
 )
 schema_app = App(
     name="schema",
@@ -45,7 +45,7 @@ schema_app = App(
     help_flags=["--help"],
     print_error=False,
     exit_on_error=False,
-    sort_key=20,
+    sort_key=30,
 )
 renderer = Renderer.create()
 db.register_db_commands(
@@ -60,6 +60,9 @@ schema.register_schema_commands(
 init.register_init_command(
     root_app=app,
     renderer=renderer,
+)
+lint.register_lint_command(
+    root_app=app,
 )
 app.command(db_app)
 app.command(schema_app)
@@ -121,6 +124,7 @@ __all__ = [
     "db",
     "db_app",
     "init",
+    "lint",
     "main",
     "schema",
     "schema_app",

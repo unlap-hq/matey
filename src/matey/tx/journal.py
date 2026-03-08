@@ -11,6 +11,7 @@ from matey.paths import (
     PathBoundaryError,
     RelativePathError,
     describe_path_boundary_error,
+    ensure_non_symlink_path,
     normalize_relative_posix_path,
     safe_descendant,
     safe_relative_descendant,
@@ -42,6 +43,18 @@ class TxManifest:
 
 def tx_root(target_root: Path) -> Path:
     return target_root / ".matey" / "tx"
+
+
+def ensure_tx_target_dir(target_dir: Path) -> Path:
+    try:
+        return ensure_non_symlink_path(
+            target_dir,
+            label="target directory",
+            allow_missing_leaf=True,
+            expected_kind="dir",
+        )
+    except PathBoundaryError as error:
+        raise TxError(describe_path_boundary_error(error)) from error
 
 
 def ensure_safe_tx_root(target_root: Path) -> Path:

@@ -254,30 +254,7 @@ def _resolve_targets(
     _require_env_name(defaults["test_url_env"], source="defaults.test_url_env")
 
     root = repo_root.resolve()
-    default_dir = defaults["dir"]
-    try:
-        normalized_default_dir = normalize_relative_posix_path(
-            default_dir,
-            label="dir",
-        )
-    except RelativePathError as error:
-        raise ConfigError(str(error)) from error
-    try:
-        default_dir_path = safe_descendant(
-            root=root,
-            candidate=root / Path(normalized_default_dir),
-            label="dir",
-            allow_missing_leaf=True,
-            expected_kind="dir",
-        )
-    except PathBoundaryError as error:
-        raise ConfigError(
-            describe_path_boundary_error(
-                error,
-                path=root / Path(normalized_default_dir),
-                symlink_message="dir uses symlinked path segment",
-            )
-        ) from error
+    default_dir_path = _resolve_target_dir(root=root, dir_value=defaults["dir"], source="dir")
 
     default_target = TargetConfig(
         name="default",
@@ -297,30 +274,7 @@ def _resolve_targets(
 
         _require_env_name(url_env, source=f"{name}.url_env")
         _require_env_name(test_url_env, source=f"{name}.test_url_env")
-        try:
-            normalized_dir = normalize_relative_posix_path(
-                dir_value,
-                label=f"{name}.dir: dir",
-            )
-        except RelativePathError as error:
-            raise ConfigError(str(error)) from error
-
-        try:
-            dir_path = safe_descendant(
-                root=root,
-                candidate=root / Path(normalized_dir),
-                label=f"{name}.dir dir",
-                allow_missing_leaf=True,
-                expected_kind="dir",
-            )
-        except PathBoundaryError as error:
-            raise ConfigError(
-                describe_path_boundary_error(
-                    error,
-                    path=root / Path(normalized_dir),
-                    symlink_message=f"{name}.dir: dir uses symlinked path segment",
-                )
-            ) from error
+        dir_path = _resolve_target_dir(root=root, dir_value=dir_value, source=f"{name}.dir")
 
         previous = seen_dirs.get(dir_path)
         if previous is not None:
@@ -336,6 +290,30 @@ def _resolve_targets(
         )
 
     return resolved, default_target
+
+
+def _resolve_target_dir(*, root: Path, dir_value: str, source: str) -> Path:
+    try:
+        normalized_dir = normalize_relative_posix_path(dir_value, label=source)
+    except RelativePathError as error:
+        raise ConfigError(str(error)) from error
+    candidate = root / Path(normalized_dir)
+    try:
+        return safe_descendant(
+            root=root,
+            candidate=candidate,
+            label=source,
+            allow_missing_leaf=True,
+            expected_kind="dir",
+        )
+    except PathBoundaryError as error:
+        raise ConfigError(
+            describe_path_boundary_error(
+                error,
+                path=candidate,
+                symlink_message=f"{source} uses symlinked path segment",
+            )
+        ) from error
 
 
 def normalize_target_names(targets: tuple[str, ...]) -> tuple[str, ...]:

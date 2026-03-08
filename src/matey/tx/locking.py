@@ -10,9 +10,7 @@ from pathlib import Path
 
 from portalocker import RLock
 
-from matey.paths import PathBoundaryError, describe_path_boundary_error, ensure_non_symlink_path
-
-from .journal import TxError
+from .journal import ensure_tx_target_dir
 
 _TARGET_LOCK_FILE = "tx.lock"
 _RLOCKS_GUARD = threading.Lock()
@@ -21,15 +19,7 @@ _RLOCKS_BY_PATH: weakref.WeakValueDictionary[Path, RLock] = weakref.WeakValueDic
 
 @contextmanager
 def serialized_target(target_dir: Path) -> Iterator[None]:
-    try:
-        target_root = ensure_non_symlink_path(
-            target_dir,
-            label="target directory",
-            allow_missing_leaf=True,
-            expected_kind="dir",
-        )
-    except PathBoundaryError as error:
-        raise TxError(describe_path_boundary_error(error)) from error
+    target_root = ensure_tx_target_dir(target_dir)
     lock_path = target_lock_path(target_root)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with target_rlock(lock_path):

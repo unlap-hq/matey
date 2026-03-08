@@ -7,8 +7,6 @@ from pathlib import Path
 
 from boltons.fileutils import AtomicSaver
 
-from matey.paths import PathBoundaryError, describe_path_boundary_error, ensure_non_symlink_path
-
 from .journal import (
     BACKUP_DIR,
     STAGED_DIR,
@@ -21,6 +19,7 @@ from .journal import (
     create_tx_dir,
     ensure_regular_journal_file,
     ensure_safe_tx_root,
+    ensure_tx_target_dir,
     normalize_deletes,
     normalize_writes,
     read_manifest,
@@ -32,15 +31,7 @@ from .locking import serialized_target
 
 
 def recover_artifacts(target_dir: Path) -> None:
-    try:
-        target_root = ensure_non_symlink_path(
-            target_dir,
-            label="target directory",
-            allow_missing_leaf=True,
-            expected_kind="dir",
-        )
-    except PathBoundaryError as error:
-        raise TxError(describe_path_boundary_error(error)) from error
+    target_root = ensure_tx_target_dir(target_dir)
     with serialized_target(target_root):
         recover_artifacts_unlocked(target_root)
 
@@ -50,15 +41,7 @@ def commit_artifacts(
     writes: dict[Path, bytes],
     deletes: tuple[Path, ...],
 ) -> tuple[Path, ...]:
-    try:
-        target_root = ensure_non_symlink_path(
-            target_dir,
-            label="target directory",
-            allow_missing_leaf=True,
-            expected_kind="dir",
-        )
-    except PathBoundaryError as error:
-        raise TxError(describe_path_boundary_error(error)) from error
+    target_root = ensure_tx_target_dir(target_dir)
     with serialized_target(target_root):
         return commit_artifacts_unlocked(target_root, writes=writes, deletes=deletes)
 

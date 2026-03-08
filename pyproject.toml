@@ -11,6 +11,7 @@ license = { file = "LICENSE" }
 requires-python = ">=3.11,<3.15"
 dependencies = [
   "boltons>=25.0.0,<26",
+  "clickhouse-sqlalchemy>=0.3.2,<0.4",
   "cyclopts>=4.6.0,<5",
   "google-cloud-bigquery>=3.40.1,<4",
   "ibis-framework[postgres,mysql,sqlite,clickhouse,bigquery]>=12.0.0,<13",
@@ -19,6 +20,10 @@ dependencies = [
   "portalocker>=3.2.0,<4",
   "pygit2>=1.19.1,<2",
   "rich>=14.3.3,<15",
+  "sqlacodegen>=4.0.2,<5",
+  "sqlalchemy>=2.0.48,<3",
+  "sqlalchemy-bigquery>=1.16.0,<2",
+  "sqlfluff>=4.0.4,<5",
   "sqlglot>=29.0.1,<30",
   "testcontainers[postgres,mysql,clickhouse]>=4.14.1,<5",
   "tomlkit>=0.14.0,<0.15",

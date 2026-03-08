@@ -224,7 +224,7 @@ def register_db_commands(*, db_app: App, root_app: App, renderer: Renderer) -> N
             body=render_target,
         )
 
-    @root_app.command(name="dbmate", sort_key=90, help_flags=[])
+    @root_app.command(name="dbmate", sort_key=50, help_flags=[])
     def dbmate_passthrough_command(*args: str, dbmate_bin: DbmateBinOpt = None) -> None:
         """Run dbmate directly with verbatim arguments."""
         # Keep a registered command so the root help surface advertises dbmate,

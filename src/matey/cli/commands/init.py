@@ -40,7 +40,7 @@ TargetOpt = Annotated[str | None, Parameter(name="--target", help="Initialize or
 
 
 def register_init_command(*, root_app: App, renderer: Renderer) -> None:
-    @root_app.command(name="init", sort_key=30)
+    @root_app.command(name="init", sort_key=10)
     def init_command(
         target: TargetOpt = None,
         config: ConfigOpt = None,
