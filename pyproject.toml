@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "matey"
-version = "0.1.0"
+version = "0.1.1"
 description = "Schema-safe database workflow with validated replay, bootstrap, data, and codegen"
 readme = "README.md"
 license = { file = "LICENSE" }

@@ -6,6 +6,7 @@ import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+
 from packaging.tags import sys_tags
 
 try:
@@ -259,7 +260,9 @@ def _default_platform_tag() -> str:
     import sys
 
     tag = next(
-        iter(t for t in sys_tags() if "manylinux" not in t.platform and "musllinux" not in t.platform)
+        iter(
+            t for t in sys_tags() if "manylinux" not in t.platform and "musllinux" not in t.platform
+        )
     )
     platform = tag.platform
     if sys.platform == "darwin":

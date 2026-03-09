@@ -4403,8 +4403,8 @@ packages:
   requires_python: '>=3.9'
 - pypi: ./
   name: matey
-  version: 0.1.0
-  sha256: 7182dddd1d94e6a4704b0a6384b2378ed1b857ea38c6b643627512ed3dd61326
+  version: 0.1.1
+  sha256: ad0728125ee465ea2db848939d2baab669da9f3a02e32b8102c22488574ce6ed
   requires_dist:
   - boltons>=25.0.0,<26
   - clickhouse-sqlalchemy>=0.3.2,<0.4
