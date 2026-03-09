@@ -30,7 +30,7 @@ def app_version() -> str:
 
 app = App(
     name="matey",
-    help="matey: opinionated dbmate wrapper for repeatable migrations + schema safety.",
+    help="matey: schema-safe database workflow with validated replay, bootstrap, data, and codegen.",
     version=app_version,
     help_flags=["--help"],
     print_error=False,

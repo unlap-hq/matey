@@ -4021,7 +4021,7 @@ packages:
 - pypi: ./
   name: matey
   version: 0.1.0
-  sha256: 37474046b1479fdd5b016aa6e1f53050b27ae62056cdf910ed2af19d90aff210
+  sha256: b316cec9a3d5d4446c27e8335a37f612c01d317f2f2a43a077c919ae4ba8cf3d
   requires_dist:
   - boltons>=25.0.0,<26
   - clickhouse-sqlalchemy>=0.3.2,<0.4

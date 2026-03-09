@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "matey"
 version = "0.1.0"
-description = "Opinionated dbmate wrapper for repeatable migrations and schema safety"
+description = "Schema-safe database workflow with validated replay, bootstrap, data, and codegen"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11,<3.15"
