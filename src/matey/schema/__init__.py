@@ -233,6 +233,7 @@ def prepare_init_target(
 
         migrations_dir.mkdir(parents=True, exist_ok=True)
         checkpoints_dir.mkdir(parents=True, exist_ok=True)
+        data_dir.mkdir(parents=True, exist_ok=True)
 
         desired_artifacts = artifacts.build_zero_target_artifacts(
             target=target,
