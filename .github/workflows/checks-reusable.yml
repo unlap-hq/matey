@@ -304,17 +304,30 @@ jobs:
         with:
           cache: true
 
+      - name: Build publishable Linux wheel
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: pixi run -q build-wheel-publish
+
       - name: Build wheel
+        if: ${{ matrix.os != 'ubuntu-latest' }}
         run: pixi run -q build-wheel
 
       - name: Validate wheel
         run: pixi run -q twine-check
 
       - name: Upload dist artifact
+        if: ${{ matrix.os != 'ubuntu-latest' }}
         uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.os }}
           path: dist/
+
+      - name: Upload repaired Linux wheel artifact
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: wheelhouse/
 
       - name: Upload dbmate build logs
         if: failure()

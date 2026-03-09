@@ -12,6 +12,7 @@ __pycache__/
 .matey/
 
 dist/
+wheelhouse/
 build/
 *.egg-info/
 

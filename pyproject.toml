@@ -34,6 +34,7 @@ matey = "matey.__main__:main"
 
 [dependency-groups]
 dev = [
+  "auditwheel>=6.6.0,<7",
   "build>=1.4.0,<2",
   "hypothesis>=6.151.9,<7",
   "pytest>=9.0.2,<10",
@@ -102,6 +103,8 @@ test-integration = "pytest -q -m integration"
 test = "pytest -q -m 'not integration'"
 build-dbmate = "python build_hooks/build_dbmate.py"
 build-wheel = { cmd = "python -m build --wheel", depends-on = ["build-dbmate"] }
+repair-wheel = "auditwheel repair dist/*.whl -w wheelhouse"
+build-wheel-publish = { depends-on = ["build-wheel", "repair-wheel"] }
 build-sdist = "python -m build --sdist"
-twine-check = "python -m twine check dist/*"
+twine-check = "python -c \"from pathlib import Path; import subprocess, sys; files=[str(p) for d in ('dist','wheelhouse') for p in Path(d).glob('*') if p.is_file()]; sys.exit(subprocess.run([sys.executable, '-m', 'twine', 'check', *files], check=False).returncode if files else 0)\""
 build = { depends-on = ["build-wheel", "build-sdist"] }
