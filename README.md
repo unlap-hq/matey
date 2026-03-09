@@ -44,7 +44,7 @@ Notes:
 | SQLAlchemy codegen from validated schema | Yes | No | No | No | Yes |
 | BigQuery support | Yes | Yes | Yes | Yes | No |
 | BigQuery emulator support | Yes | Partial | No | No | No |
-| ClickHouse support | Yes | Yes | Partial | Partial | No |
+| ClickHouse support | Yes | Yes | Yes | Partial | No |
 | Migration autogeneration | No | No | No | No | Partial |
 
 ## How matey works
