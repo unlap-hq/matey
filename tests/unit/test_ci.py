@@ -20,7 +20,7 @@ from matey.project import (
 
 def test_render_workspace_config_default() -> None:
     workspace = Workspace(
-        root=Path(), config_path=Path("missing.toml"), config_kind="workspace", targets=()
+        root=Path(), repo_root=None, config_path=Path("missing.toml"), config_kind="workspace", targets=()
     )
     rendered = workspace.render_config(target_paths=())
     assert rendered == "targets = []\n"
@@ -28,7 +28,7 @@ def test_render_workspace_config_default() -> None:
 
 def test_render_workspace_config_targets() -> None:
     workspace = Workspace(
-        root=Path(), config_path=Path("missing.toml"), config_kind="workspace", targets=()
+        root=Path(), repo_root=None, config_path=Path("missing.toml"), config_kind="workspace", targets=()
     )
     rendered = workspace.update_config(
         existing_text='targets = ["services/analytics/db"]\n',
@@ -40,7 +40,7 @@ def test_render_workspace_config_targets() -> None:
 
 def test_update_workspace_text_adds_target() -> None:
     workspace = Workspace(
-        root=Path(), config_path=Path("missing.toml"), config_kind="workspace", targets=()
+        root=Path(), repo_root=None, config_path=Path("missing.toml"), config_kind="workspace", targets=()
     )
     rendered = workspace.update_config(
         existing_text='targets = ["db/core"]\n',
@@ -112,11 +112,17 @@ def test_default_target_config_values() -> None:
     ],
 )
 def test_render_ci_template(provider: TemplateProvider, expected_base_var: str) -> None:
-    content = render_ci_template(provider)
+    content = render_ci_template(provider, workspace_ref=".")
     assert "pixi run matey lint --all" in content
     assert "pixi run matey schema apply --all --base" in content
     assert "git status --porcelain" in content
     assert expected_base_var in content
+
+
+def test_render_ci_template_monorepo_workspace() -> None:
+    content = render_ci_template("github", workspace_ref="services/db")
+    assert "cd services/db" in content
+    assert 'pixi run matey schema apply --all --base "${{ github.base_ref }}"' in content
 
 
 def test_default_ci_template_path() -> None:

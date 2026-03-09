@@ -111,6 +111,7 @@ class TargetConfig:
 @dataclass(frozen=True, slots=True)
 class Workspace:
     root: Path
+    repo_root: Path | None
     config_path: Path
     config_kind: Literal["workspace", "pyproject", "none"]
     targets: tuple[TargetConfig, ...]
@@ -120,10 +121,12 @@ class Workspace:
         cls,
         *,
         root: Path,
+        repo_root: Path | None = None,
         config_path: Path | None,
         config_kind: Literal["workspace", "pyproject", "none"],
     ) -> Workspace:
         resolved_root = root.resolve()
+        resolved_repo_root = repo_root.resolve() if repo_root is not None else None
         resolved_config_path = (
             resolved_root / WORKSPACE_CONFIG_FILE
             if config_path is None and config_kind == "none"
@@ -135,7 +138,12 @@ class Workspace:
         )
         if resolved_config_path is None:
             raise ConfigError("config_path is required when config_kind is not 'none'.")
-        return cls._from_paths(resolved_root, resolved_config_path, config_kind)
+        return cls._from_paths(
+            resolved_root,
+            resolved_repo_root,
+            resolved_config_path,
+            config_kind,
+        )
 
     @classmethod
     def discover(
@@ -150,41 +158,49 @@ class Workspace:
             resolved = resolved.resolve()
             if not resolved.is_dir():
                 raise ConfigError("--workspace must point to a directory.")
-            return cls._from_root(resolved, create_default=True)
+            return cls._from_root(resolved, repo_root=_find_repo_root_or_none(resolved), create_default=True)
 
         cwd = start.resolve()
         if local := cls._discover_existing(cwd):
-            return cls._from_paths(cwd, local[0], local[1])
+            return cls._from_paths(cwd, _find_repo_root_or_none(cwd), local[0], local[1])
 
         repo_root = _find_repo_root_or_none(cwd)
         if repo_root is not None:
             if discovered := cls._discover_existing(repo_root):
-                return cls._from_paths(repo_root, discovered[0], discovered[1])
-            return cls._from_root(repo_root, create_default=True)
+                return cls._from_paths(repo_root, repo_root, discovered[0], discovered[1])
+            return cls._from_root(repo_root, repo_root=repo_root, create_default=True)
 
         if allow_create_fallback:
-            return cls._from_root(cwd, create_default=True)
+            return cls._from_root(cwd, repo_root=None, create_default=True)
 
         raise ConfigError(
             "Path is not inside a git repository and no local workspace config was found."
         )
 
     @classmethod
-    def _from_root(cls, root: Path, *, create_default: bool) -> Workspace:
+    def _from_root(
+        cls,
+        root: Path,
+        repo_root: Path | None,
+        *,
+        create_default: bool,
+    ) -> Workspace:
         if discovered := cls._discover_existing(root):
-            return cls._from_paths(root, discovered[0], discovered[1])
+            return cls._from_paths(root, repo_root, discovered[0], discovered[1])
         config_path = root / WORKSPACE_CONFIG_FILE
         del create_default
-        return cls._from_paths(root, config_path, "none")
+        return cls._from_paths(root, repo_root, config_path, "none")
 
     @classmethod
     def _from_paths(
         cls,
         root: Path,
+        repo_root: Path | None,
         config_path: Path,
         config_kind: Literal["workspace", "pyproject", "none"],
     ) -> Workspace:
         root = root.resolve()
+        resolved_repo_root = repo_root.resolve() if repo_root is not None else None
         if config_kind == "none":
             targets: tuple[TargetConfig, ...] = ()
         else:
@@ -206,6 +222,7 @@ class Workspace:
             )
         return cls(
             root=root,
+            repo_root=resolved_repo_root,
             config_path=config_path,
             config_kind=config_kind,
             targets=targets,

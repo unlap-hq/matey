@@ -7,7 +7,25 @@ from typing import Literal
 TemplateProvider = Literal["github", "gitlab", "buildkite"]
 
 
-def _github_template() -> str:
+def _prefix_workspace_commands(workspace_ref: str, body: str) -> str:
+    if workspace_ref == ".":
+        return body
+    return f"cd {workspace_ref}\n{body}"
+
+
+def _github_template(*, workspace_ref: str) -> str:
+    commands = _prefix_workspace_commands(
+        workspace_ref,
+        "pixi install\n"
+        "pixi run matey lint --all\n"
+        "pixi run matey schema status --all\n"
+        'pixi run matey schema apply --all --base "${{ github.base_ref }}"\n'
+        'if [ -n "$(git status --porcelain)" ]; then\n'
+        "  git status --short\n"
+        "  git diff\n"
+        "  exit 1\n"
+        "fi\n",
+    )
     return (
         "name: matey-schema\n"
         "on:\n"
@@ -18,20 +36,24 @@ def _github_template() -> str:
         "    steps:\n"
         "      - uses: actions/checkout@v4\n"
         "      - uses: prefix-dev/setup-pixi@v0\n"
-        "      - run: pixi install\n"
-        "      - run: pixi run matey lint --all\n"
-        "      - run: pixi run matey schema status --all\n"
         "      - run: |\n"
-        '          pixi run matey schema apply --all --base "${{ github.base_ref }}"\n'
-        '          if [ -n "$(git status --porcelain)" ]; then\n'
-        "            git status --short\n"
-        "            git diff\n"
-        "            exit 1\n"
-        "          fi\n"
+        + "".join(f"          {line}\n" for line in commands.rstrip().splitlines())
     )
 
 
-def _gitlab_template() -> str:
+def _gitlab_template(*, workspace_ref: str) -> str:
+    commands = _prefix_workspace_commands(
+        workspace_ref,
+        "pixi install\n"
+        "pixi run matey lint --all\n"
+        "pixi run matey schema status --all\n"
+        'pixi run matey schema apply --all --base "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"\n'
+        'if [ -n "$(git status --porcelain)" ]; then\n'
+        "  git status --short\n"
+        "  git diff\n"
+        "  exit 1\n"
+        "fi\n",
+    )
     return (
         "stages:\n"
         "  - validate\n"
@@ -40,38 +62,32 @@ def _gitlab_template() -> str:
         "  stage: validate\n"
         "  image: ghcr.io/prefix-dev/pixi:latest\n"
         "  script:\n"
-        "    - pixi install\n"
-        "    - pixi run matey lint --all\n"
-        "    - pixi run matey schema status --all\n"
-        "    - |\n"
-        '      pixi run matey schema apply --all --base "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"\n'
-        '      if [ -n "$(git status --porcelain)" ]; then\n'
-        "        git status --short\n"
-        "        git diff\n"
-        "        exit 1\n"
-        "      fi\n"
+        + "".join(f"    - {line}\n" for line in commands.rstrip().splitlines())
     )
 
 
-def _buildkite_template() -> str:
+def _buildkite_template(*, workspace_ref: str) -> str:
+    commands = _prefix_workspace_commands(
+        workspace_ref,
+        "pixi install\n"
+        "pixi run matey lint --all\n"
+        "pixi run matey schema status --all\n"
+        'pixi run matey schema apply --all --base "$BUILDKITE_PULL_REQUEST_BASE_BRANCH"\n'
+        'if [ -n "$(git status --porcelain)" ]; then\n'
+        "  git status --short\n"
+        "  git diff\n"
+        "  exit 1\n"
+        "fi\n",
+    )
     return (
         "steps:\n"
         '  - label: ":matey: schema"\n'
         "    command:\n"
-        "      - pixi install\n"
-        "      - pixi run matey lint --all\n"
-        "      - pixi run matey schema status --all\n"
-        "      - |\n"
-        '        pixi run matey schema apply --all --base "$BUILDKITE_PULL_REQUEST_BASE_BRANCH"\n'
-        '        if [ -n "$(git status --porcelain)" ]; then\n'
-        "          git status --short\n"
-        "          git diff\n"
-        "          exit 1\n"
-        "        fi\n"
+        + "".join(f"      - {line}\n" for line in commands.rstrip().splitlines())
     )
 
 
-_CI_TEMPLATES: dict[TemplateProvider, Callable[[], str]] = {
+_CI_TEMPLATES: dict[TemplateProvider, Callable[..., str]] = {
     "github": _github_template,
     "gitlab": _gitlab_template,
     "buildkite": _buildkite_template,
@@ -90,11 +106,11 @@ def default_ci_template_path(provider: TemplateProvider) -> Path:
     return path
 
 
-def render_ci_template(provider: TemplateProvider) -> str:
+def render_ci_template(provider: TemplateProvider, *, workspace_ref: str) -> str:
     render = _CI_TEMPLATES.get(provider)
     if render is None:
         raise ValueError(f"Unsupported CI provider: {provider!r}")
-    return render()
+    return render(workspace_ref=workspace_ref)
 
 
 def write_text_file(path: Path, content: str, *, overwrite: bool) -> None:

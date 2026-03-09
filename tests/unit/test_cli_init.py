@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from importlib import import_module
 from pathlib import Path
 
@@ -33,6 +34,7 @@ def test_init_defaults_to_current_directory_target(tmp_path: Path, monkeypatch) 
 
 
 def test_init_with_ci_writes_default_ci_path(tmp_path: Path, monkeypatch) -> None:
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
     monkeypatch.chdir(tmp_path)
 
     rc = cli.main(
@@ -53,6 +55,35 @@ def test_init_with_ci_writes_default_ci_path(tmp_path: Path, monkeypatch) -> Non
     ci_path = tmp_path / ".github" / "workflows" / "matey-schema.yml"
     assert ci_path.exists()
     assert "${{ github.base_ref }}" in ci_path.read_text(encoding="utf-8")
+
+
+def test_init_with_ci_in_subworkspace_writes_at_repo_root(tmp_path: Path, monkeypatch) -> None:
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    workspace = tmp_path / "services" / "db"
+    workspace.mkdir(parents=True)
+    (workspace / "matey.toml").write_text('targets = []\n', encoding="utf-8")
+    monkeypatch.chdir(workspace)
+
+    rc = cli.main(
+        [
+            "init",
+            "--engine",
+            "sqlite",
+            "--url-env",
+            "DATABASE_URL",
+            "--test-url-env",
+            "TEST_DATABASE_URL",
+            "--ci",
+            "github",
+        ]
+    )
+
+    assert rc == 0
+    ci_path = tmp_path / ".github" / "workflows" / "matey-schema.yml"
+    assert ci_path.exists()
+    content = ci_path.read_text(encoding="utf-8")
+    assert "cd services/db" in content
+    assert not (workspace / ".github" / "workflows" / "matey-schema.yml").exists()
 
 
 def test_init_target_creates_workspace_target_and_zero_state(tmp_path: Path, monkeypatch) -> None:
