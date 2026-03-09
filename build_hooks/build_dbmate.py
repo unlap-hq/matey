@@ -428,8 +428,7 @@ def _collect_go_dependency_licenses(
     report_file.write_text(report_output + ("\n" if report_output else ""), encoding="utf-8")
     if report_result.returncode != 0 and go_licenses_enforce:
         raise RuntimeError(
-            "go-licenses report failed and MATEY_GO_LICENSES_ENFORCE is enabled. "
-            f"See {report_file}"
+            f"go-licenses report failed and MATEY_GO_LICENSES_ENFORCE is enabled. See {report_file}"
         )
 
     save_result = _run_capture(

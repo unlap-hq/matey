@@ -162,7 +162,6 @@ def read_state(tx_dir: Path) -> str:
     return state
 
 
-
 def normalize_path_items(
     *,
     target_root: Path,

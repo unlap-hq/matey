@@ -70,4 +70,6 @@ def _reflect_object_names(engine) -> tuple[str, ...]:
         view_names = tuple(inspector.get_view_names())
     except NotImplementedError:
         view_names = ()
-    return tuple(sorted(name for name in {*table_names, *view_names} if name != "schema_migrations"))
+    return tuple(
+        sorted(name for name in {*table_names, *view_names} if name != "schema_migrations")
+    )

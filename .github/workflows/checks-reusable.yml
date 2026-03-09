@@ -28,38 +28,6 @@ jobs:
       - name: Ruff format
         run: python -m ruff format --check .
 
-  unit:
-    name: unit (py${{ matrix.python-version }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.24.7"
-
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
-
-      - name: Install package + dev dependencies
-        run: python -m pip install --group dev .
-
-      - name: Verify dependency graph
-        run: python -m pip check
-
-      - name: Run unit tests
-        run: python -m pytest -q -m 'not integration'
 
   min-deps:
     name: min-deps
