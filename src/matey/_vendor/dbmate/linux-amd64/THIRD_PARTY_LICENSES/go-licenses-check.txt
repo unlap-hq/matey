@@ -1,47 +1,47 @@
-W0309 03:51:13.973263  906456 library.go:141] "golang.org/x/sys/unix" contains non-Go code that can't be inspected for further dependencies:
+W0309 04:04:06.907431 1047416 library.go:141] "golang.org/x/sys/unix" contains non-Go code that can't be inspected for further dependencies:
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/golang.org/x/sys@v0.40.0/unix/asm_linux_amd64.s
-W0309 03:51:13.973417  906456 library.go:141] "golang.org/x/crypto/chacha20poly1305" contains non-Go code that can't be inspected for further dependencies:
+W0309 04:04:06.907596 1047416 library.go:141] "golang.org/x/crypto/chacha20poly1305" contains non-Go code that can't be inspected for further dependencies:
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/golang.org/x/crypto@v0.47.0/chacha20poly1305/chacha20poly1305_amd64.s
-W0309 03:51:13.973423  906456 library.go:141] "golang.org/x/crypto/internal/poly1305" contains non-Go code that can't be inspected for further dependencies:
+W0309 04:04:06.907602 1047416 library.go:141] "golang.org/x/crypto/internal/poly1305" contains non-Go code that can't be inspected for further dependencies:
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/golang.org/x/crypto@v0.47.0/internal/poly1305/sum_amd64.s
-W0309 03:51:13.973426  906456 library.go:141] "golang.org/x/sys/cpu" contains non-Go code that can't be inspected for further dependencies:
+W0309 04:04:06.907605 1047416 library.go:141] "golang.org/x/sys/cpu" contains non-Go code that can't be inspected for further dependencies:
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/golang.org/x/sys@v0.40.0/cpu/cpu_gc_x86.s
-W0309 03:51:13.973454  906456 library.go:141] "github.com/cespare/xxhash/v2" contains non-Go code that can't be inspected for further dependencies:
+W0309 04:04:06.907637 1047416 library.go:141] "github.com/cespare/xxhash/v2" contains non-Go code that can't be inspected for further dependencies:
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/cespare/xxhash/v2@v2.3.0/xxhash_amd64.s
-W0309 03:51:13.973514  906456 library.go:141] "github.com/apache/arrow/go/v15/arrow/bitutil" contains non-Go code that can't be inspected for further dependencies:
+W0309 04:04:06.907701 1047416 library.go:141] "github.com/apache/arrow/go/v15/arrow/bitutil" contains non-Go code that can't be inspected for further dependencies:
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/apache/arrow/go/v15@v15.0.2/arrow/bitutil/bitmap_ops_avx2_amd64.s
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/apache/arrow/go/v15@v15.0.2/arrow/bitutil/bitmap_ops_sse4_amd64.s
-W0309 03:51:13.973520  906456 library.go:141] "github.com/apache/arrow/go/v15/arrow/memory" contains non-Go code that can't be inspected for further dependencies:
+W0309 04:04:06.907708 1047416 library.go:141] "github.com/apache/arrow/go/v15/arrow/memory" contains non-Go code that can't be inspected for further dependencies:
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/apache/arrow/go/v15@v15.0.2/arrow/memory/memory_avx2_amd64.s
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/apache/arrow/go/v15@v15.0.2/arrow/memory/memory_sse4_amd64.s
-W0309 03:51:13.973542  906456 library.go:141] "github.com/apache/arrow/go/v15/internal/utils" contains non-Go code that can't be inspected for further dependencies:
+W0309 04:04:06.907731 1047416 library.go:141] "github.com/apache/arrow/go/v15/internal/utils" contains non-Go code that can't be inspected for further dependencies:
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/apache/arrow/go/v15@v15.0.2/internal/utils/min_max_avx2_amd64.s
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/apache/arrow/go/v15@v15.0.2/internal/utils/min_max_sse4_amd64.s
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/apache/arrow/go/v15@v15.0.2/internal/utils/transpose_ints_avx2_amd64.s
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/apache/arrow/go/v15@v15.0.2/internal/utils/transpose_ints_sse4_amd64.s
-W0309 03:51:13.973546  906456 library.go:141] "github.com/zeebo/xxh3" contains non-Go code that can't be inspected for further dependencies:
+W0309 04:04:06.907735 1047416 library.go:141] "github.com/zeebo/xxh3" contains non-Go code that can't be inspected for further dependencies:
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/zeebo/xxh3@v1.1.0/accum_vector_avx512_amd64.s
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/zeebo/xxh3@v1.1.0/accum_vector_avx_amd64.s
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/zeebo/xxh3@v1.1.0/accum_vector_sse_amd64.s
-W0309 03:51:13.973548  906456 library.go:141] "github.com/klauspost/cpuid/v2" contains non-Go code that can't be inspected for further dependencies:
+W0309 04:04:06.907738 1047416 library.go:141] "github.com/klauspost/cpuid/v2" contains non-Go code that can't be inspected for further dependencies:
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/klauspost/cpuid/v2@v2.3.0/cpuid_amd64.s
-W0309 03:51:13.973556  906456 library.go:141] "github.com/klauspost/compress/zstd" contains non-Go code that can't be inspected for further dependencies:
+W0309 04:04:06.907748 1047416 library.go:141] "github.com/klauspost/compress/zstd" contains non-Go code that can't be inspected for further dependencies:
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/klauspost/compress@v1.18.3/zstd/fse_decoder_amd64.s
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/klauspost/compress@v1.18.3/zstd/matchlen_amd64.s
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/klauspost/compress@v1.18.3/zstd/seqdec_amd64.s
-W0309 03:51:13.973561  906456 library.go:141] "github.com/klauspost/compress/huff0" contains non-Go code that can't be inspected for further dependencies:
+W0309 04:04:06.907753 1047416 library.go:141] "github.com/klauspost/compress/huff0" contains non-Go code that can't be inspected for further dependencies:
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/klauspost/compress@v1.18.3/huff0/decompress_amd64.s
-W0309 03:51:13.973564  906456 library.go:141] "github.com/klauspost/compress/internal/cpuinfo" contains non-Go code that can't be inspected for further dependencies:
+W0309 04:04:06.907757 1047416 library.go:141] "github.com/klauspost/compress/internal/cpuinfo" contains non-Go code that can't be inspected for further dependencies:
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/klauspost/compress@v1.18.3/internal/cpuinfo/cpuinfo_amd64.s
-W0309 03:51:13.973567  906456 library.go:141] "github.com/klauspost/compress/zstd/internal/xxhash" contains non-Go code that can't be inspected for further dependencies:
+W0309 04:04:06.907761 1047416 library.go:141] "github.com/klauspost/compress/zstd/internal/xxhash" contains non-Go code that can't be inspected for further dependencies:
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/klauspost/compress@v1.18.3/zstd/internal/xxhash/xxhash_amd64.s
-W0309 03:51:13.973571  906456 library.go:141] "github.com/pierrec/lz4/v4/internal/lz4block" contains non-Go code that can't be inspected for further dependencies:
+W0309 04:04:06.907765 1047416 library.go:141] "github.com/pierrec/lz4/v4/internal/lz4block" contains non-Go code that can't be inspected for further dependencies:
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/pierrec/lz4/v4@v4.1.25/internal/lz4block/decode_amd64.s
-W0309 03:51:13.973612  906456 library.go:141] "github.com/segmentio/asm/bswap" contains non-Go code that can't be inspected for further dependencies:
+W0309 04:04:06.907812 1047416 library.go:141] "github.com/segmentio/asm/bswap" contains non-Go code that can't be inspected for further dependencies:
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/segmentio/asm@v1.2.1/bswap/swap64_amd64.s
-W0309 03:51:13.973640  906456 library.go:141] "filippo.io/edwards25519/field" contains non-Go code that can't be inspected for further dependencies:
+W0309 04:04:06.907843 1047416 library.go:141] "filippo.io/edwards25519/field" contains non-Go code that can't be inspected for further dependencies:
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/filippo.io/edwards25519@v1.1.0/field/fe_amd64.s
-W0309 03:51:13.973652  906456 library.go:141] "github.com/mattn/go-sqlite3" contains non-Go code that can't be inspected for further dependencies:
+W0309 04:04:06.907859 1047416 library.go:141] "github.com/mattn/go-sqlite3" contains non-Go code that can't be inspected for further dependencies:
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/mattn/go-sqlite3@v1.14.33/sqlite3-binding.c
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/mattn/go-sqlite3@v1.14.33/sqlite3_opt_unlock_notify.c
 /vol/zraid1/Projects/AI3/unlap-worktree/matey/.matey/go/gopath/pkg/mod/github.com/mattn/go-sqlite3@v1.14.33/sqlite3-binding.h

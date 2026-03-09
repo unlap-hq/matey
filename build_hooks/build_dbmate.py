@@ -6,6 +6,7 @@ import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+from packaging.tags import sys_tags
 
 try:
     from hatchling.builders.hooks.plugin.interface import BuildHookInterface
@@ -252,6 +253,20 @@ def _output_binary_path(root: Path, goos: str, goarch: str) -> Path:
     output_dir = root / "src" / "matey" / "_vendor" / "dbmate" / f"{goos}-{goarch}"
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir / binary_name
+
+
+def _default_platform_tag() -> str:
+    import sys
+
+    tag = next(
+        iter(t for t in sys_tags() if "manylinux" not in t.platform and "musllinux" not in t.platform)
+    )
+    platform = tag.platform
+    if sys.platform == "darwin":
+        from hatchling.builders.macos import process_macos_plat_tag
+
+        platform = process_macos_plat_tag(platform, compat=False)
+    return platform
 
 
 def _module_name_from_go_mod(module_root: Path) -> str | None:
@@ -583,7 +598,8 @@ class CustomBuildHook(BuildHookInterface):  # type: ignore[misc]
         del version
         build_dbmate(Path(self.root))
         build_data["pure_python"] = False
-        build_data["infer_tag"] = True
+        build_data["infer_tag"] = False
+        build_data["tag"] = f"py3-none-{_default_platform_tag()}"
 
 
 if __name__ == "__main__":
