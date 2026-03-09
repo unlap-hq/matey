@@ -414,12 +414,23 @@ def _collect_go_dependency_licenses(
             f"go-licenses check failed and MATEY_GO_LICENSES_ENFORCE is enabled. See {check_file}"
         )
 
-    report = _run(
+    report_result = _run_capture(
         [str(go_licenses_binary), "report", source_info.package_ref],
         cwd=source_info.package_cwd,
         env=env,
     )
-    (third_party_dir / "go-licenses-report.txt").write_text(report + "\n", encoding="utf-8")
+    report_output = "\n".join(
+        text
+        for text in ((report_result.stdout or "").strip(), (report_result.stderr or "").strip())
+        if text
+    )
+    report_file = third_party_dir / "go-licenses-report.txt"
+    report_file.write_text(report_output + ("\n" if report_output else ""), encoding="utf-8")
+    if report_result.returncode != 0 and go_licenses_enforce:
+        raise RuntimeError(
+            "go-licenses report failed and MATEY_GO_LICENSES_ENFORCE is enabled. "
+            f"See {report_file}"
+        )
 
     save_result = _run_capture(
         [

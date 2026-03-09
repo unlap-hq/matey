@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -162,28 +162,6 @@ def read_state(tx_dir: Path) -> str:
     return state
 
 
-def normalize_writes(*, target_root: Path, writes: Mapping[Path, bytes]) -> dict[str, bytes]:
-    return dict(
-        normalize_path_items(
-            target_root=target_root,
-            items=writes.items(),
-            reject_duplicates=True,
-            duplicate_error_prefix="Duplicate write target after normalization",
-        )
-    )
-
-
-def normalize_deletes(*, target_root: Path, deletes: tuple[Path, ...]) -> tuple[str, ...]:
-    return tuple(
-        rel
-        for rel, _ in normalize_path_items(
-            target_root=target_root,
-            items=((path, None) for path in deletes),
-            reject_duplicates=False,
-            duplicate_error_prefix="",
-        )
-    )
-
 
 def normalize_path_items(
     *,
@@ -293,8 +271,6 @@ __all__ = [
     "create_tx_dir",
     "ensure_regular_journal_file",
     "ensure_safe_tx_root",
-    "normalize_deletes",
-    "normalize_writes",
     "read_manifest",
     "read_state",
     "tx_root",

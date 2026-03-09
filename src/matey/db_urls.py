@@ -15,7 +15,7 @@ from matey import Engine
 @dataclass(frozen=True, slots=True)
 class SqlAlchemyTarget:
     url: str
-    env: dict[str, str]
+    connect_args: dict[str, Any]
     engine_kwargs: dict[str, Any]
 
 
@@ -47,7 +47,7 @@ def sqlalchemy_target(*, engine: Engine, url: str) -> SqlAlchemyTarget:
                     fragment=parsed.fragment,
                 )
             ),
-            env={},
+            connect_args={},
             engine_kwargs={},
         )
 
@@ -62,7 +62,7 @@ def sqlalchemy_target(*, engine: Engine, url: str) -> SqlAlchemyTarget:
                     fragment=parsed.fragment,
                 )
             ),
-            env={},
+            connect_args={},
             engine_kwargs={},
         )
 
@@ -77,7 +77,7 @@ def sqlalchemy_target(*, engine: Engine, url: str) -> SqlAlchemyTarget:
                     fragment=parsed.fragment,
                 )
             ),
-            env={},
+            connect_args={},
             engine_kwargs={},
         )
 
@@ -85,15 +85,20 @@ def sqlalchemy_target(*, engine: Engine, url: str) -> SqlAlchemyTarget:
         project, location, dataset = parse_bigquery_url(url)
         return SqlAlchemyTarget(
             url=f"bigquery://{project}/{dataset}",
-            env={},
+            connect_args={},
             engine_kwargs={"location": location} if location is not None else {},
         )
 
     if engine is Engine.BIGQUERY_EMULATOR:
         hostport, project, location, dataset = bqemu.parse_bigquery_emulator_url(url)
+        client = bigquery.Client(
+            project=project,
+            credentials=AnonymousCredentials(),
+            client_options={"api_endpoint": f"http://{hostport}"},
+        )
         return SqlAlchemyTarget(
-            url=f"bigquery://{project}/{dataset}",
-            env={"BIGQUERY_EMULATOR_HOST": f"http://{hostport}"},
+            url=f"bigquery://{project}/{dataset}?user_supplied_client=true",
+            connect_args={"client": client},
             engine_kwargs={"location": location} if location is not None else {},
         )
 

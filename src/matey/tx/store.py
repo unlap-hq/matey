@@ -20,8 +20,7 @@ from .journal import (
     ensure_regular_journal_file,
     ensure_safe_tx_root,
     ensure_tx_target_dir,
-    normalize_deletes,
-    normalize_writes,
+    normalize_path_items,
     read_manifest,
     read_state,
     write_manifest,
@@ -116,8 +115,23 @@ def commit_artifacts_unlocked(
     deletes: tuple[Path, ...],
 ) -> tuple[Path, ...]:
     recover_artifacts_unlocked(target_root)
-    normalized_writes = normalize_writes(target_root=target_root, writes=writes)
-    normalized_deletes = normalize_deletes(target_root=target_root, deletes=deletes)
+    normalized_writes = dict(
+        normalize_path_items(
+            target_root=target_root,
+            items=writes.items(),
+            reject_duplicates=True,
+            duplicate_error_prefix="Duplicate write target after normalization",
+        )
+    )
+    normalized_deletes = tuple(
+        rel
+        for rel, _ in normalize_path_items(
+            target_root=target_root,
+            items=((path, None) for path in deletes),
+            reject_duplicates=False,
+            duplicate_error_prefix="",
+        )
+    )
     overlapping_paths = sorted(set(normalized_writes).intersection(normalized_deletes))
     if overlapping_paths:
         raise TxError(

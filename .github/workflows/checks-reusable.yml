@@ -163,27 +163,7 @@ jobs:
         run: python -m pip install --group dev .
 
       - name: Upgrade runtime dependencies
-        run: |
-          python - <<'PY' > .ci/latest-reqs.txt
-          from __future__ import annotations
-
-          import pathlib
-          import tomllib
-
-          from packaging.requirements import Requirement
-
-          pyproject = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
-          reqs: list[str] = []
-          for raw in pyproject["project"]["dependencies"]:
-              req = Requirement(raw)
-              extras = f"[{','.join(sorted(req.extras))}]" if req.extras else ""
-              reqs.append(f"{req.name}{extras}")
-          print("\n".join(sorted(set(reqs))))
-          PY
-          python -m pip install --upgrade -r .ci/latest-reqs.txt
-
-      - name: Reinstall matey against latest deps
-        run: python -m pip install --no-deps --force-reinstall .
+        run: python -m pip install --upgrade -e .
 
       - name: Verify dependency graph
         run: python -m pip check
@@ -268,9 +248,14 @@ jobs:
         if: ${{ steps.preflight.outputs.enabled != 'true' }}
         run: echo "Skipping real BigQuery integration subset; required URL/auth secrets are not configured."
 
-  build:
-    name: build
-    runs-on: ubuntu-latest
+  build-wheel:
+    name: build-wheel (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
     steps:
       - uses: actions/checkout@v4
 
@@ -290,14 +275,49 @@ jobs:
       - name: Install build tooling
         run: python -m pip install build twine
 
-      - name: Build distributions
-        run: python -m build
+      - name: Build wheel
+        run: python -m build --wheel
 
-      - name: Validate distributions
+      - name: Validate wheel
         run: python -m twine check dist/*
 
       - name: Upload dist artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dist
+          name: dist-${{ matrix.os }}
+          path: dist/
+
+  build-sdist:
+    name: build-sdist
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.7"
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install build tooling
+        run: python -m pip install build twine
+
+      - name: Build sdist
+        run: python -m build --sdist
+
+      - name: Validate sdist
+        run: python -m twine check dist/*
+
+      - name: Upload sdist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-sdist
           path: dist/

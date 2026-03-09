@@ -252,5 +252,4 @@ __all__ = [
     "build_zero_target_artifacts",
     "collect_checkpoint_texts",
     "compute_artifact_delta",
-    "zero_schema_sql",
 ]
