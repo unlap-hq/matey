@@ -30,21 +30,21 @@ Notes:
 
 - `bigquery-emulator` is supported, but it has narrower semantics than real BigQuery.
 
-## Feature grid
+## Feature matrix
 
 | Feature | matey | dbmate | Flyway | Liquibase | Alembic |
 |---|---:|---:|---:|---:|---:|
 | SQL-file migrations | Yes | Yes | Yes | Yes | Partial |
-| Explicit multi-target workspace | Yes | No | No | No | No |
+| Repo-native multi-target workspace | Yes | No | No | No | No |
 | Validated replay in scratch DBs | Yes | No | No | No | No |
-| Committed `schema.sql` artifact | Yes | Yes | No | No | No |
-| Checkpoints + lockfile artifacts | Yes | No | No | No | No |
-| Bootstrap empty DB to head | Yes | No | Partial | Partial | No |
+| Canonical committed `schema.sql` | Yes | Yes | No | No | No |
+| Verified intermediate schema states | Yes | No | No | No | No |
+| Fast bootstrap without replay | Yes | No | Partial | Partial | No |
 | Live data artifact workflow | Yes | No | No | Partial | No |
 | SQLAlchemy codegen from validated schema | Yes | No | No | No | Yes |
-| BigQuery support | Yes | Partial | Partial | Partial | No |
-| BigQuery emulator support | Yes | No | No | No | No |
-| ClickHouse support | Yes | No | Partial | Partial | No |
+| BigQuery support | Yes | Yes | Yes | Yes | No |
+| BigQuery emulator support | Yes | Partial | No | No | No |
+| ClickHouse support | Yes | Yes | Partial | Partial | No |
 | Migration autogeneration | No | No | No | No | Partial |
 
 ## How matey works
