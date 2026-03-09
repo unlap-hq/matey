@@ -127,8 +127,12 @@ def register_init_command(*, root_app: App, renderer: Renderer) -> None:
 
         if ci is not None:
             if workspace_obj.repo_root is None:
-                raise ConfigError("--ci requires a git repository so CI files can be written at the repo root.")
-            workspace_ref = workspace_obj.root.relative_to(workspace_obj.repo_root).as_posix() or "."
+                raise ConfigError(
+                    "--ci requires a git repository so CI files can be written at the repo root."
+                )
+            workspace_ref = (
+                workspace_obj.root.relative_to(workspace_obj.repo_root).as_posix() or "."
+            )
             ci_path = workspace_obj.repo_root / default_ci_template_path(ci)
             write_text_file(
                 ci_path,

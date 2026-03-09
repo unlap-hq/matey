@@ -20,7 +20,11 @@ from matey.project import (
 
 def test_render_workspace_config_default() -> None:
     workspace = Workspace(
-        root=Path(), repo_root=None, config_path=Path("missing.toml"), config_kind="workspace", targets=()
+        root=Path(),
+        repo_root=None,
+        config_path=Path("missing.toml"),
+        config_kind="workspace",
+        targets=(),
     )
     rendered = workspace.render_config(target_paths=())
     assert rendered == "targets = []\n"
@@ -28,7 +32,11 @@ def test_render_workspace_config_default() -> None:
 
 def test_render_workspace_config_targets() -> None:
     workspace = Workspace(
-        root=Path(), repo_root=None, config_path=Path("missing.toml"), config_kind="workspace", targets=()
+        root=Path(),
+        repo_root=None,
+        config_path=Path("missing.toml"),
+        config_kind="workspace",
+        targets=(),
     )
     rendered = workspace.update_config(
         existing_text='targets = ["services/analytics/db"]\n',
@@ -40,7 +48,11 @@ def test_render_workspace_config_targets() -> None:
 
 def test_update_workspace_text_adds_target() -> None:
     workspace = Workspace(
-        root=Path(), repo_root=None, config_path=Path("missing.toml"), config_kind="workspace", targets=()
+        root=Path(),
+        repo_root=None,
+        config_path=Path("missing.toml"),
+        config_kind="workspace",
+        targets=(),
     )
     rendered = workspace.update_config(
         existing_text='targets = ["db/core"]\n',

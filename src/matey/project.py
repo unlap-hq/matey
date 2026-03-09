@@ -158,7 +158,9 @@ class Workspace:
             resolved = resolved.resolve()
             if not resolved.is_dir():
                 raise ConfigError("--workspace must point to a directory.")
-            return cls._from_root(resolved, repo_root=_find_repo_root_or_none(resolved), create_default=True)
+            return cls._from_root(
+                resolved, repo_root=_find_repo_root_or_none(resolved), create_default=True
+            )
 
         cwd = start.resolve()
         if local := cls._discover_existing(cwd):
@@ -299,7 +301,9 @@ class Workspace:
         else:
             cwd = Path.cwd().resolve()
             cwd_matches = tuple(
-                target for target in self.targets if cwd == target.root or cwd.is_relative_to(target.root)
+                target
+                for target in self.targets
+                if cwd == target.root or cwd.is_relative_to(target.root)
             )
             if len(cwd_matches) == 1:
                 selected = cwd_matches

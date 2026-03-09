@@ -61,8 +61,7 @@ def _gitlab_template(*, workspace_ref: str) -> str:
         "matey_schema:\n"
         "  stage: validate\n"
         "  image: ghcr.io/prefix-dev/pixi:latest\n"
-        "  script:\n"
-        + "".join(f"    - {line}\n" for line in commands.rstrip().splitlines())
+        "  script:\n" + "".join(f"    - {line}\n" for line in commands.rstrip().splitlines())
     )
 
 
@@ -79,11 +78,8 @@ def _buildkite_template(*, workspace_ref: str) -> str:
         "  exit 1\n"
         "fi\n",
     )
-    return (
-        "steps:\n"
-        '  - label: ":matey: schema"\n'
-        "    command:\n"
-        + "".join(f"      - {line}\n" for line in commands.rstrip().splitlines())
+    return 'steps:\n  - label: ":matey: schema"\n    command:\n' + "".join(
+        f"      - {line}\n" for line in commands.rstrip().splitlines()
     )
 
 

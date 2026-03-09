@@ -61,7 +61,7 @@ def test_init_with_ci_in_subworkspace_writes_at_repo_root(tmp_path: Path, monkey
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
     workspace = tmp_path / "services" / "db"
     workspace.mkdir(parents=True)
-    (workspace / "matey.toml").write_text('targets = []\n', encoding="utf-8")
+    (workspace / "matey.toml").write_text("targets = []\n", encoding="utf-8")
     monkeypatch.chdir(workspace)
 
     rc = cli.main(
