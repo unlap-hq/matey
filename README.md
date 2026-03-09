@@ -1,5 +1,10 @@
 # matey
 
+[![Checks](https://github.com/unlap-hq/matey/actions/workflows/checks.yml/badge.svg)](https://github.com/unlap-hq/matey/actions/workflows/checks.yml)
+[![PyPI version](https://img.shields.io/pypi/v/matey.svg)](https://pypi.org/project/matey/)
+[![Python versions](https://img.shields.io/pypi/pyversions/matey.svg)](https://pypi.org/project/matey/)
+[![License](https://img.shields.io/pypi/l/matey.svg)](LICENSE)
+
 `matey` is a database migration system for teams that want more than “run some SQL files”.
 
 Install:
@@ -391,3 +396,7 @@ Per-platform wheel build notices are written under:
 ```text
 src/matey/_vendor/dbmate/<goos>-<goarch>/THIRD_PARTY_LICENSES/
 ```
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).
