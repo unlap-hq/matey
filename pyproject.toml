@@ -75,12 +75,16 @@ platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
 [tool.pixi.dependencies]
 clang = ">=21.1.8,<22"
 clangxx = ">=21.1.8,<22"
-go = ">=1.26.0,<2"
+go = "1.26.1.*"
 mysql-client = ">=9.5.0,<10"
 mysql-devel = ">=9.5.0,<10"
 pkg-config = ">=0.29.2,<0.30"
 postgresql = ">=18.3,<19"
 python = "3.11.*"
+
+[tool.pixi.target.win-64.dependencies]
+gcc = ">=15.2.0,<16"
+gxx_win-64 = ">=15.2.0,<16"
 
 [tool.pixi.pypi-dependencies]
 matey = { path = ".", editable = true }

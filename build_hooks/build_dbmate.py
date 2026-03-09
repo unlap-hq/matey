@@ -110,24 +110,30 @@ def _log_dir(*, cwd: Path | None, env: dict[str, str] | None) -> Path | None:
     return None
 
 
-def _write_failure_log(*, command: list[str], cwd: Path | None, env: dict[str, str] | None, result: subprocess.CompletedProcess[str]) -> Path | None:
+def _write_failure_log(
+    *,
+    command: list[str],
+    cwd: Path | None,
+    env: dict[str, str] | None,
+    result: subprocess.CompletedProcess[str],
+) -> Path | None:
     log_dir = _log_dir(cwd=cwd, env=env)
     if log_dir is None:
         return None
     log_dir.mkdir(parents=True, exist_ok=True)
-    stem = Path(command[0]).name.replace('.', '_') or 'command'
+    stem = Path(command[0]).name.replace(".", "_") or "command"
     log_path = log_dir / f"{stem}-failure.log"
     rendered = [
         f"command: {' '.join(command)}",
         f"cwd: {cwd if cwd else '<none>'}",
         f"exit_code: {result.returncode}",
-        '',
-        '--- stdout ---',
+        "",
+        "--- stdout ---",
         result.stdout,
-        '--- stderr ---',
+        "--- stderr ---",
         result.stderr,
     ]
-    log_path.write_text("\n".join(rendered), encoding='utf-8')
+    log_path.write_text("\n".join(rendered), encoding="utf-8")
     return log_path
 
 
@@ -210,14 +216,28 @@ def _build_env(root: Path, *, base_environ: Mapping[str, str], cgo_enabled: str)
     env["CGO_ENABLED"] = cgo_enabled
     if env.get("CGO_ENABLED") == "1":
         # In some conda/pixi environments Go defaults to a non-existent compiler
-        # wrapper (for example x86_64-conda-linux-gnu-cc). Fall back to clang
-        # toolchain when available.
+        # wrapper (for example x86_64-conda-linux-gnu-cc). On Windows, prefer a
+        # MinGW-compatible GCC toolchain if present; clang ends up driving the
+        # MSVC linker and fails on the GNU-style linker script Go emits for CGO.
+        # On non-Windows hosts, clang is still a reasonable fallback.
         cc = env.get("CC")
         cxx = env.get("CXX")
-        if (not cc or shutil.which(cc) is None) and shutil.which("clang") is not None:
-            env["CC"] = "clang"
-        if (not cxx or shutil.which(cxx) is None) and shutil.which("clang++") is not None:
-            env["CXX"] = "clang++"
+        if os.name == "nt":
+            if not cc or shutil.which(cc) is None:
+                for candidate in ("gcc", "x86_64-w64-mingw32-gcc"):
+                    if shutil.which(candidate) is not None:
+                        env["CC"] = candidate
+                        break
+            if not cxx or shutil.which(cxx) is None:
+                for candidate in ("g++", "x86_64-w64-mingw32-g++"):
+                    if shutil.which(candidate) is not None:
+                        env["CXX"] = candidate
+                        break
+        else:
+            if (not cc or shutil.which(cc) is None) and shutil.which("clang") is not None:
+                env["CC"] = "clang"
+            if (not cxx or shutil.which(cxx) is None) and shutil.which("clang++") is not None:
+                env["CXX"] = "clang++"
     return env
 
 
