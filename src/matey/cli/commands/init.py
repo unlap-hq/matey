@@ -15,7 +15,6 @@ from matey.cli.ci import (
 from matey.paths import normalize_target_path_ref, safe_descendant
 from matey.project import (
     DEFAULT_CODEGEN,
-    ConfigEditor,
     ConfigError,
     TargetConfig,
     Workspace,
@@ -107,26 +106,14 @@ def register_init_command(*, root_app: App, renderer: Renderer) -> None:
         existing_target_text = (
             target.config_path.read_text(encoding="utf-8") if target.config_path.exists() else None
         )
-        editor = ConfigEditor("workspace")
-        target_rendered = (
-            editor.render_target(
-                engine=resolved_engine,
-                url_env=resolved_url_env,
-                test_url_env=resolved_test_url_env,
-                codegen=target.codegen,
+        target_rendered = target.render_config(existing_text=existing_target_text)
+        workspace_rendered = (
+            workspace_obj.render_config(target_paths=(path_value,))
+            if existing_workspace_text is None
+            else workspace_obj.update_config(
+                existing_text=existing_workspace_text,
+                target_path=path_value,
             )
-            if existing_target_text is None
-            else editor.update_target(
-                existing_text=existing_target_text,
-                engine=resolved_engine,
-                url_env=resolved_url_env,
-                test_url_env=resolved_test_url_env,
-                codegen=target.codegen,
-            )
-        )
-        workspace_rendered = workspace_obj.render_updated(
-            target_path=path_value,
-            existing_text=existing_workspace_text,
         )
         init_plan = schema_api.prepare_init_target(target, engine=resolved_engine, force=force)
 

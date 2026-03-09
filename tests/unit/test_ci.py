@@ -12,26 +12,37 @@ from matey.cli.ci import (
 )
 from matey.project import (
     CodegenConfig,
-    ConfigEditor,
+    TargetConfig,
+    Workspace,
     default_target_config_values,
 )
 
 
 def test_render_workspace_config_default() -> None:
-    rendered = ConfigEditor("workspace").render_workspace(target_paths=())
+    workspace = Workspace(
+        root=Path(), config_path=Path("missing.toml"), config_kind="workspace", targets=()
+    )
+    rendered = workspace.render_config(target_paths=())
     assert rendered == "targets = []\n"
 
 
 def test_render_workspace_config_targets() -> None:
-    rendered = ConfigEditor("workspace").render_workspace(
-        target_paths=("db/core", "services/analytics/db")
+    workspace = Workspace(
+        root=Path(), config_path=Path("missing.toml"), config_kind="workspace", targets=()
+    )
+    rendered = workspace.update_config(
+        existing_text='targets = ["services/analytics/db"]\n',
+        target_path="db/core",
     )
     assert '"db/core"' in rendered
     assert '"services/analytics/db"' in rendered
 
 
 def test_update_workspace_text_adds_target() -> None:
-    rendered = ConfigEditor("workspace").update_workspace(
+    workspace = Workspace(
+        root=Path(), config_path=Path("missing.toml"), config_kind="workspace", targets=()
+    )
+    rendered = workspace.update_config(
         existing_text='targets = ["db/core"]\n',
         target_path="db/analytics",
     )
@@ -40,23 +51,28 @@ def test_update_workspace_text_adds_target() -> None:
 
 
 def test_render_target_config_default() -> None:
-    rendered = ConfigEditor("workspace").render_target(
+    rendered = TargetConfig(
+        name=".",
+        root=Path(),
         engine="postgres",
         url_env="DATABASE_URL",
         test_url_env="TEST_DATABASE_URL",
-    )
+        codegen=None,
+    ).render_config()
     assert 'engine = "postgres"' in rendered
     assert 'url_env = "DATABASE_URL"' in rendered
     assert "[codegen]" not in rendered
 
 
 def test_render_target_config_with_codegen() -> None:
-    rendered = ConfigEditor("workspace").render_target(
+    rendered = TargetConfig(
+        name=".",
+        root=Path(),
         engine="postgres",
         url_env="DATABASE_URL",
         test_url_env="TEST_DATABASE_URL",
         codegen=CodegenConfig(enabled=True, generator="tables", options=None),
-    )
+    ).render_config()
     assert "[codegen]" in rendered
     assert "enabled = true" in rendered
     assert 'out = "models.py"' not in rendered
@@ -64,11 +80,15 @@ def test_render_target_config_with_codegen() -> None:
 
 
 def test_update_target_config_preserves_unknown_keys() -> None:
-    rendered = ConfigEditor("workspace").update_target(
-        existing_text='engine = "sqlite"\nurl_env = "OLD_URL"\ntest_url_env = "OLD_TEST_URL"\ncustom = "keep"\n',
+    rendered = TargetConfig(
+        name=".",
+        root=Path(),
         engine="postgres",
         url_env="DATABASE_URL",
         test_url_env="TEST_DATABASE_URL",
+        codegen=None,
+    ).render_config(
+        existing_text='engine = "sqlite"\nurl_env = "OLD_URL"\ntest_url_env = "OLD_TEST_URL"\ncustom = "keep"\n'
     )
     assert 'engine = "postgres"' in rendered
     assert 'url_env = "DATABASE_URL"' in rendered

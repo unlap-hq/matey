@@ -99,81 +99,13 @@ class TargetConfig:
     def models(self) -> Path:
         return self.root / "models.py"
 
-
-@dataclass(slots=True)
-class ConfigEditor:
-    kind: Literal["workspace", "pyproject"]
-
-    def render_workspace(self, *, target_paths: tuple[str, ...]) -> str:
-        doc = tomlkit.document()
-        section = self._workspace_section(doc, create=True)
-        section["targets"] = tuple(
-            sorted(normalize_target_path_ref(path, label="target path") for path in target_paths)
-        )
+    def render_config(self, *, existing_text: str | None = None) -> str:
+        doc = tomlkit.document() if existing_text is None else tomlkit.parse(existing_text)
+        doc["engine"] = self.engine
+        doc["url_env"] = self.url_env
+        doc["test_url_env"] = self.test_url_env
+        _set_codegen(doc, self.codegen)
         return tomlkit.dumps(doc)
-
-    def update_workspace(self, *, existing_text: str, target_path: str | None) -> str:
-        parsed = tomlkit.parse(existing_text)
-        section = self._workspace_section(parsed, create=True)
-        targets = section.get("targets")
-        values = [str(item) for item in targets] if isinstance(targets, list) else []
-        normalized = (
-            normalize_target_path_ref(target_path, label="target path")
-            if target_path is not None
-            else None
-        )
-        if normalized is not None and normalized not in values:
-            values.append(normalized)
-        section["targets"] = sorted(values)
-        return tomlkit.dumps(parsed)
-
-    def render_target(
-        self,
-        *,
-        engine: str,
-        url_env: str,
-        test_url_env: str,
-        codegen: CodegenConfig | None = None,
-    ) -> str:
-        doc = tomlkit.document()
-        doc["engine"] = engine
-        doc["url_env"] = url_env
-        doc["test_url_env"] = test_url_env
-        _set_codegen(doc, codegen)
-        return tomlkit.dumps(doc)
-
-    def update_target(
-        self,
-        *,
-        existing_text: str,
-        engine: str,
-        url_env: str,
-        test_url_env: str,
-        codegen: CodegenConfig | None = None,
-    ) -> str:
-        parsed = tomlkit.parse(existing_text)
-        parsed["engine"] = engine
-        parsed["url_env"] = url_env
-        parsed["test_url_env"] = test_url_env
-        _set_codegen(parsed, codegen)
-        return tomlkit.dumps(parsed)
-
-    def _workspace_section(self, doc: Table, *, create: bool) -> Table:
-        if self.kind == "workspace":
-            return doc
-        tool = doc.get("tool")
-        if not isinstance(tool, Table):
-            if not create:
-                raise ConfigError("pyproject.toml is missing [tool] table.")
-            tool = tomlkit.table()
-            doc["tool"] = tool
-        matey = tool.get("matey")
-        if not isinstance(matey, Table):
-            if not create:
-                raise ConfigError("pyproject.toml is missing [tool.matey] table.")
-            matey = tomlkit.table()
-            tool["matey"] = matey
-        return matey
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,17 +223,32 @@ class Workspace:
             return candidate, "workspace"
         return None
 
-    def render_updated(self, *, target_path: str | None, existing_text: str | None = None) -> str:
-        editor = ConfigEditor("pyproject" if self.config_kind == "pyproject" else "workspace")
-        if existing_text is None:
-            existing_text = (
-                self.config_path.read_text(encoding="utf-8") if self.config_path.exists() else None
+    def render_config(self, *, target_paths: tuple[str, ...] | None = None) -> str:
+        doc = tomlkit.document()
+        section = _workspace_section(doc, kind=self.config_kind, create=True)
+        values = (
+            tuple(
+                sorted(
+                    normalize_target_path_ref(path, label="target path") for path in target_paths
+                )
             )
-        if existing_text is None:
-            return editor.render_workspace(
-                target_paths=(target_path,) if target_path is not None else ()
-            )
-        return editor.update_workspace(existing_text=existing_text, target_path=target_path)
+            if target_paths is not None
+            else self.target_paths
+        )
+        section["targets"] = values
+        return tomlkit.dumps(doc)
+
+    def update_config(self, *, existing_text: str, target_path: str | None) -> str:
+        doc = tomlkit.parse(existing_text)
+        section = _workspace_section(doc, kind=self.config_kind, create=True)
+        targets = section.get("targets")
+        values = [str(item) for item in targets] if isinstance(targets, list) else []
+        if target_path is not None:
+            normalized = normalize_target_path_ref(target_path, label="target path")
+            if normalized not in values:
+                values.append(normalized)
+        section["targets"] = sorted(values)
+        return tomlkit.dumps(doc)
 
     @property
     def target_paths(self) -> tuple[str, ...]:
@@ -407,6 +354,29 @@ def _parse_workspace_targets(
         seen.add(target_path)
         paths.append(target_path)
     return tuple(paths)
+
+
+def _workspace_section(
+    doc: TOMLDocument | Table,
+    *,
+    kind: Literal["workspace", "pyproject", "none"],
+    create: bool,
+) -> Table:
+    if kind != "pyproject":
+        return doc
+    tool = doc.get("tool")
+    if not isinstance(tool, Table):
+        if not create:
+            raise ConfigError("pyproject.toml is missing [tool] table.")
+        tool = tomlkit.table()
+        doc["tool"] = tool
+    matey = tool.get("matey")
+    if not isinstance(matey, Table):
+        if not create:
+            raise ConfigError("pyproject.toml is missing [tool.matey] table.")
+        matey = tomlkit.table()
+        tool["matey"] = matey
+    return matey
 
 
 def _pyproject_has_matey(path: Path) -> bool:
@@ -549,7 +519,6 @@ __all__ = [
     "TARGET_CONFIG_FILE",
     "WORKSPACE_CONFIG_FILE",
     "CodegenConfig",
-    "ConfigEditor",
     "ConfigError",
     "TargetConfig",
     "Workspace",
