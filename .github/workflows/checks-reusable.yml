@@ -2,15 +2,6 @@ name: Checks Reusable
 
 on:
   workflow_call:
-    secrets:
-      MATEY_BIGQUERY_TEST_URL:
-        required: false
-      GCP_SERVICE_ACCOUNT_JSON:
-        required: false
-      GCP_WORKLOAD_IDENTITY_PROVIDER:
-        required: false
-      GCP_SERVICE_ACCOUNT:
-        required: false
 
 jobs:
   lint:
@@ -20,13 +11,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up pixi
-        uses: prefix-dev/setup-pixi@v0.8.14
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          cache: true
+          python-version: "3.11"
 
-      - name: Ruff + project lint
-        run: pixi run -q lint
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install package + dev dependencies
+        run: python -m pip install --group dev .
+
+      - name: Ruff lint
+        run: python -m ruff check .
+
+      - name: Ruff format
+        run: python -m ruff format --check .
 
   unit:
     name: unit (py${{ matrix.python-version }})
@@ -259,27 +259,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up pixi
+        uses: prefix-dev/setup-pixi@v0.8.14
         with:
-          python-version: "3.11"
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.24.7"
-
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
-
-      - name: Install build tooling
-        run: python -m pip install build twine
+          cache: true
 
       - name: Build wheel
-        run: python -m build --wheel
+        run: pixi run -q build-wheel
 
       - name: Validate wheel
-        run: python -m twine check dist/*
+        run: pixi run -q twine-check
 
       - name: Upload dist artifact
         uses: actions/upload-artifact@v4
@@ -294,27 +283,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up pixi
+        uses: prefix-dev/setup-pixi@v0.8.14
         with:
-          python-version: "3.11"
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.24.7"
-
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
-
-      - name: Install build tooling
-        run: python -m pip install build twine
+          cache: true
 
       - name: Build sdist
-        run: python -m build --sdist
+        run: pixi run -q build-sdist
 
       - name: Validate sdist
-        run: python -m twine check dist/*
+        run: pixi run -q twine-check
 
       - name: Upload sdist artifact
         uses: actions/upload-artifact@v4
