@@ -297,7 +297,19 @@ class Workspace:
                 )
             selected = self.targets
         else:
-            if len(self.targets) == 1:
+            cwd = Path.cwd().resolve()
+            cwd_matches = tuple(
+                target for target in self.targets if cwd == target.root or cwd.is_relative_to(target.root)
+            )
+            if len(cwd_matches) == 1:
+                selected = cwd_matches
+            elif len(cwd_matches) > 1:
+                available = ", ".join(target.name for target in cwd_matches)
+                raise ConfigError(
+                    "Current directory is inside multiple configured targets; choose one with --path. "
+                    f"Matching paths: {available}"
+                )
+            elif len(self.targets) == 1:
                 selected = self.targets
             elif not self.targets:
                 raise ConfigError(
