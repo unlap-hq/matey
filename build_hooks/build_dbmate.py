@@ -97,15 +97,57 @@ def _load_build_env(environ: Mapping[str, str]) -> _BuildEnv:
     )
 
 
+def _log_dir(*, cwd: Path | None, env: dict[str, str] | None) -> Path | None:
+    if env:
+        gobin = env.get("GOBIN")
+        if gobin:
+            return Path(gobin).parent / "logs"
+        gopath = env.get("GOPATH")
+        if gopath:
+            return Path(gopath).parent / "logs"
+    if cwd is not None:
+        return cwd / ".matey" / "go" / "logs"
+    return None
+
+
+def _write_failure_log(*, command: list[str], cwd: Path | None, env: dict[str, str] | None, result: subprocess.CompletedProcess[str]) -> Path | None:
+    log_dir = _log_dir(cwd=cwd, env=env)
+    if log_dir is None:
+        return None
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stem = Path(command[0]).name.replace('.', '_') or 'command'
+    log_path = log_dir / f"{stem}-failure.log"
+    rendered = [
+        f"command: {' '.join(command)}",
+        f"cwd: {cwd if cwd else '<none>'}",
+        f"exit_code: {result.returncode}",
+        '',
+        '--- stdout ---',
+        result.stdout,
+        '--- stderr ---',
+        result.stderr,
+    ]
+    log_path.write_text("\n".join(rendered), encoding='utf-8')
+    return log_path
+
+
 def _run(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> str:
     result = subprocess.run(
         command,
         cwd=str(cwd) if cwd else None,
         env=env,
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
     )
+    if result.returncode != 0:
+        joined = " ".join(command)
+        log_path = _write_failure_log(command=command, cwd=cwd, env=env, result=result)
+        extra = f"; log={log_path}" if log_path is not None else ""
+        raise RuntimeError(
+            f"Command failed (exit_code={result.returncode}): {joined}{extra}; "
+            f"stderr={result.stderr.strip()!r}; stdout={result.stdout.strip()!r}"
+        )
     return result.stdout.strip()
 
 
