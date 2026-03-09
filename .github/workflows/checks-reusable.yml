@@ -1,0 +1,303 @@
+name: Checks Reusable
+
+on:
+  workflow_call:
+    secrets:
+      MATEY_BIGQUERY_TEST_URL:
+        required: false
+      GCP_SERVICE_ACCOUNT_JSON:
+        required: false
+      GCP_WORKLOAD_IDENTITY_PROVIDER:
+        required: false
+      GCP_SERVICE_ACCOUNT:
+        required: false
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pixi
+        uses: prefix-dev/setup-pixi@v0.8.14
+        with:
+          cache: true
+
+      - name: Ruff + project lint
+        run: pixi run -q lint
+
+  unit:
+    name: unit (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.7"
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install package + dev dependencies
+        run: python -m pip install --group dev .
+
+      - name: Verify dependency graph
+        run: python -m pip check
+
+      - name: Run unit tests
+        run: python -m pytest -q -m 'not integration'
+
+  min-deps:
+    name: min-deps
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.7"
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install package + dev dependencies
+        run: python -m pip install --group dev .
+
+      - name: Build minimum runtime constraints
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+
+          import pathlib
+          import tomllib
+
+          from packaging.requirements import Requirement
+          from packaging.version import Version
+
+          pyproject = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+          raw_requirements = list(pyproject["project"]["dependencies"])
+
+          def floor_version(req: Requirement) -> str | None:
+              floor: Version | None = None
+              for spec in req.specifier:
+                  if spec.operator == "==":
+                      return spec.version
+                  if spec.operator in {">=", "~="}:
+                      candidate = Version(spec.version)
+                      if floor is None or candidate > floor:
+                          floor = candidate
+              return str(floor) if floor is not None else None
+
+          pins: list[str] = []
+          for raw in raw_requirements:
+              req = Requirement(raw)
+              extras = f"[{','.join(sorted(req.extras))}]" if req.extras else ""
+              marker = f"; {req.marker}" if req.marker else ""
+              floor = floor_version(req)
+              if floor:
+                  pins.append(f"{req.name}{extras}=={floor}{marker}")
+              else:
+                  spec = str(req.specifier) if req.specifier else ""
+                  pins.append(f"{req.name}{extras}{spec}{marker}")
+
+          constraints_path = pathlib.Path(".ci/min-constraints.txt")
+          constraints_path.parent.mkdir(parents=True, exist_ok=True)
+          constraints_path.write_text("\n".join(sorted(set(pins))) + "\n")
+          print(constraints_path.read_text())
+          PY
+
+      - name: Install minimum runtime dependencies
+        run: python -m pip install --upgrade --force-reinstall -r .ci/min-constraints.txt
+
+      - name: Reinstall matey against minimum deps
+        run: python -m pip install --no-deps --force-reinstall .
+
+      - name: Verify dependency graph
+        run: python -m pip check
+
+      - name: Run unit tests
+        run: python -m pytest -q -m 'not integration'
+
+  latest-deps:
+    name: latest-deps
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.7"
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install package + dev dependencies
+        run: python -m pip install --group dev .
+
+      - name: Upgrade runtime dependencies
+        run: |
+          python - <<'PY' > .ci/latest-reqs.txt
+          from __future__ import annotations
+
+          import pathlib
+          import tomllib
+
+          from packaging.requirements import Requirement
+
+          pyproject = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+          reqs: list[str] = []
+          for raw in pyproject["project"]["dependencies"]:
+              req = Requirement(raw)
+              extras = f"[{','.join(sorted(req.extras))}]" if req.extras else ""
+              reqs.append(f"{req.name}{extras}")
+          print("\n".join(sorted(set(reqs))))
+          PY
+          python -m pip install --upgrade -r .ci/latest-reqs.txt
+
+      - name: Reinstall matey against latest deps
+        run: python -m pip install --no-deps --force-reinstall .
+
+      - name: Verify dependency graph
+        run: python -m pip check
+
+      - name: Run unit tests
+        run: python -m pytest -q -m 'not integration'
+
+  integration-local:
+    name: integration-local
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pixi
+        uses: prefix-dev/setup-pixi@v0.8.14
+        with:
+          cache: true
+
+      - name: Run local integration matrix
+        run: pixi run -q pytest tests/integration -m integration -ra
+
+  integration-bigquery:
+    name: integration-bigquery
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MATEY_BIGQUERY_TEST_URL: ${{ secrets.MATEY_BIGQUERY_TEST_URL }}
+      GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check BigQuery integration prerequisites
+        id: preflight
+        shell: bash
+        run: |
+          if [[ -z "${MATEY_BIGQUERY_TEST_URL}" ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -n "${GCP_WORKLOAD_IDENTITY_PROVIDER}" && -n "${GCP_SERVICE_ACCOUNT}" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "auth=wif" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -n "${GCP_SERVICE_ACCOUNT_JSON}" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "auth=json" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "enabled=false" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Google Cloud (WIF)
+        if: ${{ steps.preflight.outputs.enabled == 'true' && steps.preflight.outputs.auth == 'wif' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - name: Authenticate to Google Cloud (service account key)
+        if: ${{ steps.preflight.outputs.enabled == 'true' && steps.preflight.outputs.auth == 'json' }}
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ env.GCP_SERVICE_ACCOUNT_JSON }}
+
+      - name: Set up pixi
+        if: ${{ steps.preflight.outputs.enabled == 'true' }}
+        uses: prefix-dev/setup-pixi@v0.8.14
+        with:
+          cache: true
+
+      - name: Run real BigQuery integration subset
+        if: ${{ steps.preflight.outputs.enabled == 'true' }}
+        run: pixi run -q pytest tests/integration -m integration -k 'bigquery and not emulator' -ra
+
+      - name: Skip real BigQuery integration subset
+        if: ${{ steps.preflight.outputs.enabled != 'true' }}
+        run: echo "Skipping real BigQuery integration subset; required URL/auth secrets are not configured."
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.7"
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install build tooling
+        run: python -m pip install build twine
+
+      - name: Build distributions
+        run: python -m build
+
+      - name: Validate distributions
+        run: python -m twine check dist/*
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
